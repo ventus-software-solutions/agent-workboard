@@ -234,7 +234,95 @@ test("refreshes an open board after external task changes without discarding dra
   await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
 });
 
+test("shows the Agents view and filters board tasks by agent", async ({ page }) => {
+  const projectName = uniqueName("E2E Agents Project");
+  const projectKey = uniqueKey("AGT");
+  const currentTaskTitle = uniqueName("Build agents registry UI");
+  const blockedTaskTitle = uniqueName("Unblock ad hoc agent");
+  const testerTaskTitle = uniqueName("Verify agent registry");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  for (const task of [
+    {
+      title: currentTaskTitle,
+      role: "implementer",
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      priority: "high",
+      labels: ["backend", "agents"]
+    },
+    {
+      title: blockedTaskTitle,
+      role: "implementer",
+      status: "blocked",
+      assignee: "implementer-adhoc-ui",
+      priority: "high",
+      labels: ["frontend", "ui"]
+    },
+    {
+      title: testerTaskTitle,
+      role: "tester",
+      status: "ready",
+      assignee: "test-agent",
+      priority: "normal",
+      labels: ["tests"]
+    }
+  ]) {
+    const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+      data: {
+        projectId: project.id,
+        ...task
+      }
+    });
+    expect(taskResponse.ok()).toBe(true);
+  }
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Implementer Agent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reviewer Agent" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Test Agent" })).toBeVisible();
+
+  const backendCard = page.getByTestId("agent-card").filter({ hasText: "implementer-backend-1" });
+  await expect(backendCard).toBeVisible();
+  await expect(backendCard).toContainText("Busy");
+  await expect(backendCard).toContainText(currentTaskTitle);
+  await expect(backendCard).toContainText("backend");
+
+  const adHocCard = page.getByTestId("agent-card").filter({ hasText: "implementer-adhoc-ui" });
+  await expect(adHocCard).toBeVisible();
+  await expect(adHocCard).toContainText("Task Assignee");
+  await expect(adHocCard).toContainText("Blocked");
+  await expect(adHocCard).toContainText(blockedTaskTitle);
+
+  await backendCard.getByRole("button", { name: currentTaskTitle, exact: true }).click();
+  await expect(page.locator(".drawer")).toContainText(currentTaskTitle);
+  await closeDrawerIfOpen(page);
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await backendCard.getByRole("button", { name: "Assigned tasks" }).click();
+  await expect(taskCard(page, currentTaskTitle)).toBeVisible();
+  await expect(taskCard(page, blockedTaskTitle)).toHaveCount(0);
+  await expect(taskCard(page, testerTaskTitle)).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect(backendCard).toBeVisible();
+  const hasHorizontalOverflow = await page.locator(".agentsRegistry").evaluate((registry) => registry.scrollWidth > registry.clientWidth + 1);
+  expect(hasHorizontalOverflow).toBe(false);
+});
+
 async function createTask(page, { title, role, priority, assignee, labels, description }) {
+  await closeDrawerIfOpen(page);
   await page.getByRole("button", { name: "Task", exact: true }).click();
   const dialog = page.locator(".dialog");
   await dialog.getByLabel("Title").fill(title);
@@ -291,10 +379,12 @@ async function expectCardContentInsideCard(page, title) {
 
 async function closeDrawerIfOpen(page) {
   const drawer = page.locator(".drawer");
-  if ((await drawer.count()) === 0) {
+  const closeButton = drawer.getByRole("button", { name: "Close" });
+  const visible = await closeButton.isVisible({ timeout: 5000 }).catch(() => false);
+  if (!visible) {
     return;
   }
-  await drawer.getByRole("button", { name: "Close" }).click();
+  await closeButton.click();
   await expect(drawer).toHaveCount(0);
 }
 

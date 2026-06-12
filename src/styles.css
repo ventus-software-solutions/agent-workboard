@@ -590,6 +590,199 @@ button {
   cursor: not-allowed;
 }
 
+.agentsRegistry {
+  display: grid;
+  gap: 20px;
+}
+
+.agentGroup {
+  display: grid;
+  gap: 12px;
+}
+
+.agentGroupHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 12px;
+}
+
+.agentGroupHeader h3 {
+  margin: 3px 0 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.agentGroupStats,
+.agentMeta,
+.agentCounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.agentGroupStats span,
+.agentMeta span,
+.agentCounts span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #20262d;
+  color: #bcc7d2;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.agentGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(285px, 100%), 1fr));
+  gap: 12px;
+}
+
+.agentCard {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #323a43;
+  border-radius: 8px;
+  background: #171b20;
+}
+
+.agentCardHeader,
+.agentIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.agentCardHeader {
+  justify-content: space-between;
+}
+
+.agentIdentity {
+  flex: 1;
+}
+
+.agentIdentity > div {
+  min-width: 0;
+}
+
+.agentIdentity h4,
+.agentIdentity p,
+.agentCurrentTask p,
+.agentTaskLinks p {
+  margin: 0;
+}
+
+.agentIdentity h4 {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.agentIdentity p,
+.agentCurrentTask p,
+.agentTaskLinks p {
+  color: #aeb9c6;
+  font-size: 13px;
+}
+
+.agentIcon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #20333b;
+  color: #9ee7ff;
+}
+
+.agentStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #2d3340;
+  color: #d7e0ea;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.agentStatus-busy .agentStatusBadge {
+  background: #213a43;
+  color: #aee7f6;
+}
+
+.agentStatus-blocked .agentStatusBadge {
+  background: #4a242b;
+  color: #ffb1bf;
+}
+
+.agentStatus-review .agentStatusBadge,
+.agentStatus-assigned .agentStatusBadge {
+  background: #332a1b;
+  color: #ffd991;
+}
+
+.agentStatus-idle .agentStatusBadge {
+  background: #203b31;
+  color: #bdf2d1;
+}
+
+.agentStatus-stale .agentStatusBadge {
+  background: #34363c;
+  color: #c5ced7;
+}
+
+.agentSpecialties {
+  gap: 6px;
+}
+
+.agentCurrentTask,
+.agentTaskLinks {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.agentTaskLinks > div {
+  display: grid;
+  gap: 6px;
+}
+
+.agentTaskLinks .linkButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 0;
+  border-top: 1px solid #252b32;
+}
+
+.agentTaskLinks .linkButton span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.agentTaskLinks .linkButton small {
+  color: #9aa6b4;
+}
+
+.agentCardActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .kanbanBoard {
   display: grid;
   grid-template-columns: repeat(7, minmax(230px, 1fr));
@@ -1381,6 +1574,20 @@ button {
   .boardArea,
   .projectRail {
     padding: 14px;
+  }
+
+  .agentGroupHeader,
+  .agentCardHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .agentCardActions {
+    justify-content: stretch;
+  }
+
+  .agentCardActions .ghostButton {
+    width: 100%;
   }
 
   .formGrid {
