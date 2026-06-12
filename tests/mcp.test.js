@@ -24,6 +24,18 @@ describe("Agent Workboard MCP tools", () => {
       acquireAgentSlot: vi.fn(),
       updateTask: vi.fn(),
       addComment: vi.fn(),
+      listCapabilities: vi.fn(() => [
+        {
+          id: "cap_mcp_workflow_tools",
+          name: "MCP workflow tools",
+          status: "live"
+        }
+      ]),
+      getCapability: vi.fn(() => ({
+        id: "cap_mcp_workflow_tools",
+        name: "MCP workflow tools",
+        status: "live"
+      })),
       getNextTaskForAgent: vi.fn(() => ({
         task: { id: "task_123" },
         selection: { reason: "assigned_to_agent" }
@@ -66,5 +78,28 @@ describe("Agent Workboard MCP tools", () => {
         reason: "no_ready_work"
       }
     });
+
+    const listCapabilities = registrations.find((registration) => registration.name === "list_capabilities");
+    expect(parseTextResult(await listCapabilities.handler({ q: "MCP", status: "live" }))).toMatchObject({
+      capabilities: [
+        {
+          id: "cap_mcp_workflow_tools",
+          status: "live"
+        }
+      ]
+    });
+    expect(fakeStore.listCapabilities).toHaveBeenCalledWith({
+      q: "MCP",
+      status: "live"
+    });
+
+    const getCapability = registrations.find((registration) => registration.name === "get_capability");
+    expect(parseTextResult(await getCapability.handler({ capabilityId: "cap_mcp_workflow_tools" }))).toMatchObject({
+      capability: {
+        id: "cap_mcp_workflow_tools",
+        status: "live"
+      }
+    });
+    expect(fakeStore.getCapability).toHaveBeenCalledWith("cap_mcp_workflow_tools");
   });
 });

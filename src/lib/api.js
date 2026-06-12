@@ -47,6 +47,13 @@ export const api = {
     }),
   projects: () => request("/api/projects"),
   createProject: (project) => request("/api/projects", { method: "POST", body: JSON.stringify(project) }),
+  capabilities: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ""));
+    return request(`/api/capabilities${params.size ? `?${params}` : ""}`);
+  },
+  createCapability: (capability) => request("/api/capabilities", { method: "POST", body: JSON.stringify(capability) }),
+  updateCapability: (capabilityId, patch) =>
+    request(`/api/capabilities/${capabilityId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   tasks: (filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks${params.size ? `?${params}` : ""}`);

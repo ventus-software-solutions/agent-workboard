@@ -15,6 +15,7 @@ export const STATUSES = [
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
 export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
 export const TALK_KINDS = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+export const CAPABILITY_STATUSES = ["proposed", "planned", "in_progress", "review", "live", "broken", "deprecated", "superseded"];
 
 const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
@@ -58,6 +59,94 @@ const STATUS_IDS = new Set(STATUSES.map((status) => status.id));
 const ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const PRIORITY_IDS = new Set(PRIORITIES);
 const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
+const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
+
+const DEFAULT_CAPABILITY_SEEDS = [
+  {
+    id: "cap_task_relationships",
+    name: "Task dependencies and subtasks",
+    summary: "First-class task prerequisites, blockers, parent tasks, and child task relationships.",
+    status: "planned",
+    ownerRole: "implementer",
+    surfaces: ["Task model", "Task drawer", "get_next_task"],
+    acceptanceNotes: ["Tasks can show prerequisite state without relying on free-text comments."],
+    notes: "Tracked as DOGFOOD dependency/subtask workflow work."
+  },
+  {
+    id: "cap_live_board_updates",
+    name: "Live board updates",
+    summary: "Open boards refresh when other clients claim, comment, move, or complete tasks.",
+    status: "planned",
+    ownerRole: "implementer",
+    surfaces: ["Board UI", "Task drawer", "API"],
+    acceptanceNotes: ["Operators see cross-session changes within a few seconds without losing unsaved edits."]
+  },
+  {
+    id: "cap_mcp_workflow_tools",
+    name: "MCP workflow tools",
+    summary: "MCP tools let agents bootstrap, pick work, claim tasks, post comments, update presence, and report no eligible work.",
+    status: "live",
+    ownerRole: "implementer",
+    ownerAgent: "mcp-agent",
+    surfaces: ["MCP server", "Agent docs", "Continuous-work API"],
+    verificationEvidence: ["Task task_6e614bf3c8dd completed with continuous-work helper evidence."],
+    notes: "Local main has the rebuilt minimal helper merge."
+  },
+  {
+    id: "cap_agent_slots_heartbeat",
+    name: "Agent slots and heartbeat",
+    summary: "Agents acquire typed slots and publish presence/heartbeat state for operator visibility and queue selection.",
+    status: "live",
+    ownerRole: "implementer",
+    surfaces: ["Agent slots API", "Presence API", "Agent docs"],
+    verificationEvidence: ["Slot bootstrap and presence endpoints are available in the running board."]
+  },
+  {
+    id: "cap_agent_talks",
+    name: "Agent Talks coordination channel",
+    summary: "Shared coordination channel for agents and the operator to exchange lightweight progress and handoff notes.",
+    status: "in_progress",
+    ownerRole: "implementer",
+    surfaces: ["Operator UI", "MCP tools"],
+    acceptanceNotes: ["Agents can post/read shared coordination messages without abusing task comments."]
+  },
+  {
+    id: "cap_completion_records",
+    name: "Completion records",
+    summary: "Done tasks require structured completion evidence such as merge commits, no-code notes, audits, or superseded links.",
+    status: "live",
+    ownerRole: "reviewer",
+    surfaces: ["Task drawer", "Task model", "MCP update_task_status"],
+    verificationEvidence: ["Store/API tests enforce completion records before done."]
+  },
+  {
+    id: "cap_reviewer_merge_ownership",
+    name: "Reviewer merge ownership",
+    summary: "Reviewer agents own approve/request-changes outcomes, merge evidence, and final done transitions.",
+    status: "live",
+    ownerRole: "reviewer",
+    surfaces: ["Agent docs", "Task workflow"],
+    verificationEvidence: ["Reviewer instructions require merge evidence and completion records."]
+  },
+  {
+    id: "cap_task_revision_stale_writes",
+    name: "Task revision and stale-write protection",
+    summary: "Task updates reject stale client writes and preserve operator drafts on conflict.",
+    status: "planned",
+    ownerRole: "implementer",
+    surfaces: ["Task API", "Task drawer"],
+    acceptanceNotes: ["409 conflicts show clear recovery actions without discarding local draft changes."]
+  },
+  {
+    id: "cap_local_loopback_security",
+    name: "Local loopback security boundary",
+    summary: "Local deployment binds to loopback by default and documents the local-only trust boundary.",
+    status: "planned",
+    ownerRole: "implementer",
+    surfaces: ["Docker", "Server binding", "Docs"],
+    acceptanceNotes: ["The development service is not exposed broadly by default."]
+  }
+];
 
 const DEFAULT_AGENT_TYPES = [
   {
@@ -295,6 +384,7 @@ function defaultData() {
       }
     ],
     events: [],
+    capabilities: defaultCapabilities(createdAt),
     agentPresence: {},
     talkMessages: [],
     agentTypes: defaultAgentTypes(),
@@ -401,6 +491,10 @@ export class WorkboardStore {
     return COMPLETION_TYPES;
   }
 
+  capabilityStatuses() {
+    return CAPABILITY_STATUSES;
+  }
+
   migrateData() {
     let migrated = false;
     if (!Array.isArray(this.data.events)) {
@@ -413,6 +507,10 @@ export class WorkboardStore {
     }
     if (!Array.isArray(this.data.talkMessages)) {
       this.data.talkMessages = [];
+      migrated = true;
+    }
+    if (!Array.isArray(this.data.capabilities)) {
+      this.data.capabilities = [];
       migrated = true;
     }
 
@@ -456,6 +554,10 @@ export class WorkboardStore {
         task.completion = null;
         migrated = true;
       }
+    }
+
+    if (this.ensureDefaultCapabilities()) {
+      migrated = true;
     }
 
     if (this.ensureAgentSlotSchema()) {
@@ -865,6 +967,77 @@ export class WorkboardStore {
     return message;
   }
 
+  listCapabilities(filters = {}) {
+    this.ensureDefaultCapabilities();
+    const projectId = normalizeText(filters.projectId);
+    const status = normalizeText(filters.status);
+    const ownerRole = normalizeText(filters.ownerRole);
+    const ownerAgent = normalizeText(filters.ownerAgent);
+    const relatedTaskId = normalizeText(filters.relatedTaskId || filters.taskId);
+    const q = normalizeText(filters.q).toLowerCase();
+    const hasLiveFilter = Object.prototype.hasOwnProperty.call(filters, "live");
+    const liveFilter = String(filters.live).toLowerCase() === "true";
+
+    return this.data.capabilities
+      .filter((capability) => !projectId || !capability.projectId || capability.projectId === projectId)
+      .filter((capability) => !status || capability.status === status)
+      .filter((capability) => !ownerRole || capability.ownerRole === ownerRole)
+      .filter((capability) => !ownerAgent || capability.ownerAgent === ownerAgent)
+      .filter((capability) => !relatedTaskId || capability.relatedTaskIds.includes(relatedTaskId))
+      .filter((capability) => !hasLiveFilter || capability.live === liveFilter)
+      .filter((capability) => {
+        if (!q) return true;
+        return capabilitySearchText(capability).includes(q);
+      })
+      .sort((a, b) => capabilityStatusRank(a.status) - capabilityStatusRank(b.status) || b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  getCapability(capabilityId) {
+    this.ensureDefaultCapabilities();
+    const idValue = normalizeCapabilityId(capabilityId);
+    const capability = this.data.capabilities.find((candidate) => candidate.id === idValue);
+    if (!capability) {
+      throw Object.assign(new Error("Capability not found."), { status: 404 });
+    }
+    return capability;
+  }
+
+  async createCapability(input) {
+    this.ensureDefaultCapabilities();
+    const createdAt = now();
+    const capability = this.normalizeCapabilityInput(input, {
+      existing: null,
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    if (this.data.capabilities.some((candidate) => candidate.id === capability.id)) {
+      throw Object.assign(new Error("Capability id already exists."), { status: 409 });
+    }
+
+    this.data.capabilities.push(capability);
+    await this.save();
+    return capability;
+  }
+
+  async updateCapability(capabilityId, patch) {
+    this.ensureDefaultCapabilities();
+    const capability = this.getCapability(capabilityId);
+    const nextCapability = this.normalizeCapabilityInput(patch, {
+      existing: capability,
+      createdAt: capability.createdAt,
+      updatedAt: now()
+    });
+
+    if (JSON.stringify(capability) === JSON.stringify(nextCapability)) {
+      return capability;
+    }
+
+    Object.assign(capability, nextCapability);
+    await this.save();
+    return capability;
+  }
+
   async createTask(input) {
     const projectId = normalizeText(input.projectId);
     const project = this.data.projects.find((candidate) => candidate.id === projectId);
@@ -893,6 +1066,9 @@ export class WorkboardStore {
     }
 
     const completion = status === "done" ? normalizeCompletionRecord(completionInput, { actor }) : null;
+    if (completion) {
+      this.validateCompletionCapabilityLinks(completion, projectId);
+    }
     const task = {
       id: id("task"),
       projectId,
@@ -919,6 +1095,9 @@ export class WorkboardStore {
       ]
     };
     this.data.tasks.push(task);
+    if (completion) {
+      this.applyCompletionCapabilityLinks(task);
+    }
     await this.save();
     return task;
   }
@@ -958,6 +1137,7 @@ export class WorkboardStore {
 
     if (hasCompletionPatch) {
       nextCompletion = normalizeCompletionRecord(completionPatch, { actor: actorId });
+      this.validateCompletionCapabilityLinks(nextCompletion, task.projectId);
     }
 
     for (const field of ["title", "description", "assignee"]) {
@@ -1032,6 +1212,9 @@ export class WorkboardStore {
           : `Updated ${changes.join(", ")}.`,
       createdAt: task.updatedAt
     });
+    if (task.status === "done" && task.completion?.capabilityIds?.length) {
+      this.applyCompletionCapabilityLinks(task);
+    }
     await this.save();
     return task;
   }
@@ -1437,6 +1620,135 @@ export class WorkboardStore {
     return "implementer-general";
   }
 
+  ensureDefaultCapabilities() {
+    if (!Array.isArray(this.data.capabilities)) {
+      this.data.capabilities = [];
+    }
+
+    let migrated = false;
+    const createdAt = now();
+    const existingIds = new Set(this.data.capabilities.map((capability) => capability.id));
+    for (const seed of defaultCapabilities(createdAt)) {
+      if (!existingIds.has(seed.id)) {
+        this.data.capabilities.push(seed);
+        migrated = true;
+      }
+    }
+
+    for (const capability of this.data.capabilities) {
+      const normalized = this.normalizeCapabilityInput(capability, {
+        existing: capability,
+        createdAt: capability.createdAt || createdAt,
+        updatedAt: capability.updatedAt || capability.createdAt || createdAt,
+        migrating: true
+      });
+      if (JSON.stringify(capability) !== JSON.stringify(normalized)) {
+        Object.assign(capability, normalized);
+        migrated = true;
+      }
+    }
+
+    return migrated;
+  }
+
+  normalizeCapabilityInput(input, { existing = null, createdAt = now(), updatedAt = now(), migrating = false } = {}) {
+    const source = input && typeof input === "object" ? input : {};
+    const base = existing || {};
+    const capabilityId = existing ? base.id : normalizeCapabilityId(source.id) || id("cap");
+    const name = normalizeText(source.name ?? base.name);
+    if (!name) {
+      throw Object.assign(new Error("Capability name is required."), { status: 400 });
+    }
+
+    const statusInput = normalizeText(source.status ?? base.status) || "planned";
+    if (!CAPABILITY_STATUS_IDS.has(statusInput)) {
+      throw Object.assign(new Error("Capability status is invalid."), { status: 400 });
+    }
+
+    const relatedTaskIds = "relatedTaskIds" in source || "taskIds" in source
+      ? normalizeStringList(source.relatedTaskIds || source.taskIds)
+      : [...(base.relatedTaskIds || [])];
+    const explicitProjectId = normalizeText(source.projectId ?? base.projectId);
+    const projectId = this.resolveCapabilityProjectId(explicitProjectId, relatedTaskIds, { migrating });
+
+    return {
+      id: capabilityId,
+      projectId,
+      name,
+      summary: normalizeText(source.summary ?? base.summary),
+      status: statusInput,
+      live: statusInput === "live",
+      ownerRole: normalizeText(source.ownerRole ?? base.ownerRole),
+      ownerAgent: normalizeText(source.ownerAgent ?? base.ownerAgent),
+      relatedTaskIds,
+      surfaces: "surfaces" in source ? normalizeStringList(source.surfaces) : [...(base.surfaces || [])],
+      blockers: "blockers" in source ? normalizeStringList(source.blockers) : [...(base.blockers || [])],
+      dependencies: "dependencies" in source ? normalizeStringList(source.dependencies) : [...(base.dependencies || [])],
+      acceptanceNotes:
+        "acceptanceNotes" in source ? normalizeStringList(source.acceptanceNotes) : [...(base.acceptanceNotes || [])],
+      verificationEvidence:
+        "verificationEvidence" in source
+          ? normalizeStringList(source.verificationEvidence)
+          : [...(base.verificationEvidence || [])],
+      lastVerifiedAt: normalizeText(source.lastVerifiedAt ?? base.lastVerifiedAt),
+      notes: normalizeText(source.notes ?? base.notes),
+      createdAt: normalizeText(source.createdAt ?? base.createdAt) || createdAt,
+      updatedAt: updatedAt || createdAt
+    };
+  }
+
+  resolveCapabilityProjectId(projectId, relatedTaskIds, { migrating = false } = {}) {
+    if (projectId && !this.data.projects.some((project) => project.id === projectId)) {
+      throw Object.assign(new Error("Capability project not found."), { status: 400 });
+    }
+
+    if (relatedTaskIds.length === 0) {
+      return projectId;
+    }
+
+    const tasks = relatedTaskIds.map((taskId) => this.data.tasks.find((task) => task.id === taskId));
+    if (tasks.some((task) => !task)) {
+      if (migrating) {
+        return projectId;
+      }
+      throw Object.assign(new Error("Capability related task not found."), { status: 400 });
+    }
+
+    const linkedProjectIds = [...new Set(tasks.map((task) => task.projectId))];
+    if (linkedProjectIds.length > 1 || (projectId && linkedProjectIds[0] !== projectId)) {
+      throw Object.assign(new Error("Capability task links must stay within one project."), { status: 400 });
+    }
+    return projectId || linkedProjectIds[0];
+  }
+
+  validateCompletionCapabilityLinks(completion, taskProjectId) {
+    for (const capabilityId of completion.capabilityIds || []) {
+      const capability = this.getCapability(capabilityId);
+      if (capability.projectId && capability.projectId !== taskProjectId) {
+        throw Object.assign(new Error("Completion capability links must stay within the task project."), { status: 400 });
+      }
+    }
+  }
+
+  applyCompletionCapabilityLinks(task) {
+    const completedAt = task.completion?.completedAt || task.updatedAt || now();
+    for (const capabilityId of task.completion?.capabilityIds || []) {
+      const capability = this.getCapability(capabilityId);
+      if (!capability.projectId) {
+        capability.projectId = task.projectId;
+      }
+      if (!capability.relatedTaskIds.includes(task.id)) {
+        capability.relatedTaskIds.push(task.id);
+      }
+      const evidence = `Task ${task.id} completed with ${task.completion.completionType} evidence.`;
+      if (!capability.verificationEvidence.includes(evidence)) {
+        capability.verificationEvidence.push(evidence);
+      }
+      capability.lastVerifiedAt = completedAt;
+      capability.updatedAt = now();
+    }
+  }
+
   resolveWorkAgentProfile(agentId, input = {}) {
     const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
     const type = slot ? this.data.agentTypes.find((candidate) => candidate.id === slot.typeId) : null;
@@ -1472,6 +1784,16 @@ function normalizeLabels(value) {
 function normalizeMentions(value) {
   const list = Array.isArray(value) ? value : normalizeText(value).split(",");
   return [...new Set(list.map((mention) => normalizeText(mention).replace(/^@+/, "")).filter(Boolean))].slice(0, 24);
+}
+
+function normalizeCapabilityId(value) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
 }
 
 function normalizeStringList(value) {
@@ -1677,6 +1999,7 @@ function normalizeCompletionRecord(value, { actor } = {}) {
   const supersededByTaskId = normalizeText(input.supersededByTaskId);
   const notes = normalizeText(input.notes);
   const tests = normalizeStringList(input.tests);
+  const capabilityIds = normalizeStringList(input.capabilityIds).map(normalizeCapabilityId).filter(Boolean);
 
   if (branch) record.branch = branch;
   if (commitSha) record.commitSha = commitSha;
@@ -1685,6 +2008,7 @@ function normalizeCompletionRecord(value, { actor } = {}) {
   if (supersededByTaskId) record.supersededByTaskId = supersededByTaskId;
   if (notes) record.notes = notes;
   if (tests.length > 0) record.tests = tests;
+  if (capabilityIds.length > 0) record.capabilityIds = capabilityIds;
 
   if (completionType === "merged") {
     if (!record.commitSha) {
@@ -1738,6 +2062,31 @@ function priorityRank(priority) {
   return PRIORITIES.indexOf(priority);
 }
 
+function capabilityStatusRank(status) {
+  const index = CAPABILITY_STATUSES.indexOf(status);
+  return index === -1 ? CAPABILITY_STATUSES.length : index;
+}
+
+function capabilitySearchText(capability) {
+  return [
+    capability.id,
+    capability.name,
+    capability.summary,
+    capability.status,
+    capability.ownerRole,
+    capability.ownerAgent,
+    capability.notes,
+    ...(capability.relatedTaskIds || []),
+    ...(capability.surfaces || []),
+    ...(capability.blockers || []),
+    ...(capability.dependencies || []),
+    ...(capability.acceptanceNotes || []),
+    ...(capability.verificationEvidence || [])
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -1754,6 +2103,29 @@ function defaultAgentTypes() {
 
 function defaultAgentSlots(types = DEFAULT_AGENT_TYPES) {
   return types.flatMap((type) => type.slotIds.map((slotId, index) => createAgentSlot(type, slotId, index + 1)));
+}
+
+function defaultCapabilities(timestamp = now()) {
+  return DEFAULT_CAPABILITY_SEEDS.map((capability) => ({
+    id: capability.id,
+    projectId: capability.projectId || "",
+    name: capability.name,
+    summary: capability.summary || "",
+    status: capability.status,
+    live: capability.status === "live",
+    ownerRole: capability.ownerRole || "",
+    ownerAgent: capability.ownerAgent || "",
+    relatedTaskIds: [...(capability.relatedTaskIds || [])],
+    surfaces: [...(capability.surfaces || [])],
+    blockers: [...(capability.blockers || [])],
+    dependencies: [...(capability.dependencies || [])],
+    acceptanceNotes: [...(capability.acceptanceNotes || [])],
+    verificationEvidence: [...(capability.verificationEvidence || [])],
+    lastVerifiedAt: capability.lastVerifiedAt || "",
+    notes: capability.notes || "",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  }));
 }
 
 function createAgentSlot(type, slotId, slotNumber) {

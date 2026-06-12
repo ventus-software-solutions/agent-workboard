@@ -7,12 +7,15 @@ import {
   ChevronRight,
   ClipboardList,
   Clock3,
+  Database,
   FileUp,
   Filter,
   FolderKanban,
+  Link2,
   MessageSquarePlus,
   Paperclip,
   Plus,
+  RefreshCw,
   Search,
   Send,
   ShieldCheck,
@@ -57,17 +60,20 @@ function formatDate(value) {
 }
 
 export function App() {
-  const [meta, setMeta] = useState({ roles: [], statuses: [], completionTypes: [] });
+  const [meta, setMeta] = useState({ roles: [], statuses: [], completionTypes: [], capabilityStatuses: [] });
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [projectTasks, setProjectTasks] = useState([]);
   const [talks, setTalks] = useState([]);
+  const [capabilities, setCapabilities] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
   const [staleWork, setStaleWork] = useState([]);
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
+  const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
+  const [view, setView] = useState("board");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [error, setError] = useState("");
@@ -81,7 +87,7 @@ export function App() {
     const [metaResult, projectsResult] = await Promise.all([api.meta(), api.projects()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -91,9 +97,10 @@ export function App() {
           }),
           api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
-          api.staleInProgressTasks({ projectId: nextProjectId })
+          api.staleInProgressTasks({ projectId: nextProjectId }),
+          api.capabilities({ projectId: nextProjectId, ...capabilityFilters })
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
@@ -101,6 +108,7 @@ export function App() {
     setProjectTasks(projectTasksResult.tasks);
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
+    setCapabilities(capabilitiesResult.capabilities);
     setLoading(false);
   }
 
@@ -126,6 +134,30 @@ export function App() {
     setTalks(result.messages);
   }
 
+  async function refreshCapabilities(overrides = {}) {
+    const nextFilters = { ...capabilityFilters, ...overrides };
+    setCapabilityFilters(nextFilters);
+    if (!selectedProjectId) return;
+    const result = await api.capabilities({ projectId: selectedProjectId, ...nextFilters });
+    setCapabilities(result.capabilities);
+  }
+
+  async function openLinkedTask(taskId) {
+    try {
+      setError("");
+      if (!projectTasks.some((task) => task.id === taskId)) {
+        const result = await api.tasks({ projectId: selectedProjectId });
+        setFilters({ q: "", role: "", assignee: "" });
+        setTasks(result.tasks);
+        setProjectTasks(result.tasks);
+      }
+      setView("board");
+      setSelectedTaskId(taskId);
+    } catch (nextError) {
+      setError(nextError.message);
+    }
+  }
+
   useEffect(() => {
     loadAll().catch((nextError) => {
       setError(nextError.message);
@@ -135,7 +167,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    Promise.all([refreshTasks(), refreshTalks()]).catch((nextError) => setError(nextError.message));
+    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
 
   const boardStats = useMemo(() => {
@@ -145,10 +177,16 @@ export function App() {
     return { open, blocked, review };
   }, [tasks]);
 
+  const capabilityStats = useMemo(() => {
+    const live = capabilities.filter((capability) => capability.status === "live").length;
+    const attention = capabilities.filter((capability) => ["broken", "planned", "in_progress", "review"].includes(capability.status)).length;
+    return { live, attention };
+  }, [capabilities]);
+
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await Promise.all([refreshTasks(), refreshTalks()]);
+    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities()]);
     return result;
   }
 
@@ -214,6 +252,17 @@ export function App() {
           <span>Project</span>
         </button>
 
+        <div className="viewSwitch">
+          <button className={view === "board" ? "selected" : ""} onClick={() => setView("board")}>
+            <FolderKanban size={16} />
+            <span>Board</span>
+          </button>
+          <button className={view === "capabilities" ? "selected" : ""} onClick={() => setView("capabilities")}>
+            <Database size={16} />
+            <span>Capabilities</span>
+          </button>
+        </div>
+
         <div className="projectList">
           {projects.map((project) => (
             <button
@@ -251,50 +300,71 @@ export function App() {
         <header className="topBar">
           <div>
             <div className="eyebrow">Project</div>
-            <h2>{selectedProject?.name || "No project"}</h2>
+            <h2>{view === "capabilities" ? "Capability Registry" : selectedProject?.name || "No project"}</h2>
           </div>
           <div className="topStats">
-            <Stat icon={Clock3} label="Open" value={boardStats.open} />
-            <Stat icon={AlertCircle} label="Blocked" value={boardStats.blocked} />
-            <Stat icon={ShieldCheck} label="Review" value={boardStats.review} />
+            {view === "capabilities" ? (
+              <>
+                <Stat icon={CheckCircle2} label="Live" value={capabilityStats.live} />
+                <Stat icon={AlertCircle} label="Attention" value={capabilityStats.attention} />
+              </>
+            ) : (
+              <>
+                <Stat icon={Clock3} label="Open" value={boardStats.open} />
+                <Stat icon={AlertCircle} label="Blocked" value={boardStats.blocked} />
+                <Stat icon={ShieldCheck} label="Review" value={boardStats.review} />
+              </>
+            )}
           </div>
-          <button className="primaryButton" onClick={() => setIsCreatingTask(true)} disabled={!selectedProjectId}>
-            <Plus size={17} />
-            <span>Task</span>
+          <button
+            className="primaryButton"
+            onClick={() => (view === "capabilities" ? refreshCapabilities() : setIsCreatingTask(true))}
+            disabled={!selectedProjectId}
+          >
+            {view === "capabilities" ? <RefreshCw size={17} /> : <Plus size={17} />}
+            <span>{view === "capabilities" ? "Refresh" : "Task"}</span>
           </button>
         </header>
 
-        <div className="filterBar">
-          <label className="searchBox">
-            <Search size={17} />
-            <input
-              value={filters.q}
-              placeholder="Search tasks"
-              onChange={(event) => refreshTasks({ q: event.target.value })}
-            />
-          </label>
-          <label className="agentFilter">
-            <Filter size={16} />
-            <input
-              value={filters.assignee}
-              placeholder="Agent"
-              onChange={(event) => refreshTasks({ assignee: event.target.value })}
-            />
-          </label>
-          {filters.role && (
-            <button className="ghostButton" onClick={() => refreshTasks({ role: "" })}>
-              <X size={15} />
-              <span>{filters.role}</span>
-            </button>
-          )}
-        </div>
+        {view === "capabilities" ? (
+          <CapabilityFilters
+            filters={capabilityFilters}
+            statuses={meta.capabilityStatuses}
+            onChange={refreshCapabilities}
+          />
+        ) : (
+          <div className="filterBar">
+            <label className="searchBox">
+              <Search size={17} />
+              <input
+                value={filters.q}
+                placeholder="Search tasks"
+                onChange={(event) => refreshTasks({ q: event.target.value })}
+              />
+            </label>
+            <label className="agentFilter">
+              <Filter size={16} />
+              <input
+                value={filters.assignee}
+                placeholder="Agent"
+                onChange={(event) => refreshTasks({ assignee: event.target.value })}
+              />
+            </label>
+            {filters.role && (
+              <button className="ghostButton" onClick={() => refreshTasks({ role: "" })}>
+                <X size={15} />
+                <span>{filters.role}</span>
+              </button>
+            )}
+          </div>
+        )}
 
         <AgentTalksPanel
           talks={talks}
           tasks={projectTasks}
           filters={talkFilters}
           onFilterChange={refreshTalks}
-          onSelectTask={setSelectedTaskId}
+          onSelectTask={openLinkedTask}
           onPost={(draft) =>
             mutate(async () => {
               await api.postTalk(selectedProjectId, draft);
@@ -321,6 +391,12 @@ export function App() {
 
         {loading ? (
           <div className="emptyState">Loading workboard...</div>
+        ) : view === "capabilities" ? (
+          <CapabilityRegistry
+            capabilities={capabilities}
+            tasks={projectTasks}
+            onOpenTask={openLinkedTask}
+          />
         ) : (
           <KanbanBoard
             statuses={meta.statuses}
@@ -346,6 +422,7 @@ export function App() {
           statuses={meta.statuses}
           roles={meta.roles}
           completionTypes={meta.completionTypes}
+          capabilities={capabilities}
           onClose={() => setSelectedTaskId("")}
           onMutate={runMutation}
           onReload={() => refreshTasks()}
@@ -554,6 +631,126 @@ function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask })
   );
 }
 
+function CapabilityFilters({ filters, statuses, onChange }) {
+  return (
+    <div className="filterBar">
+      <label className="searchBox">
+        <Search size={17} />
+        <input
+          value={filters.q}
+          placeholder="Search capabilities"
+          onChange={(event) => onChange({ q: event.target.value })}
+        />
+      </label>
+      <label className="agentFilter">
+        <Filter size={16} />
+        <select value={filters.status} onChange={(event) => onChange({ status: event.target.value })}>
+          <option value="">Any status</option>
+          {statuses.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
+      </label>
+      {filters.status && (
+        <button className="ghostButton" onClick={() => onChange({ status: "" })}>
+          <X size={15} />
+          <span>{filters.status}</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
+  if (capabilities.length === 0) {
+    return <div className="emptyState">No capabilities match the current filters.</div>;
+  }
+
+  return (
+    <div className="capabilityRegistry">
+      {capabilities.map((capability) => (
+        <article className="capabilityCard" key={capability.id}>
+          <div className="capabilityHeader">
+            <div>
+              <div className="capabilityTitleRow">
+                <h3>{capability.name}</h3>
+                <span className={`capabilityStatus ${capability.status}`}>{capability.status}</span>
+                {capability.live && <span className="liveBadge">live</span>}
+              </div>
+              <p>{capability.summary || "No summary recorded."}</p>
+            </div>
+            <code>{capability.id}</code>
+          </div>
+
+          <div className="capabilityMeta">
+            <span>{capability.ownerAgent || capability.ownerRole || "No owner"}</span>
+            {capability.lastVerifiedAt && <span>Verified {new Date(capability.lastVerifiedAt).toLocaleString()}</span>}
+          </div>
+
+          {capability.surfaces.length > 0 && (
+            <div className="tagRow">
+              {capability.surfaces.map((surface) => (
+                <span key={surface}>{surface}</span>
+              ))}
+            </div>
+          )}
+
+          {capability.relatedTaskIds.length > 0 && (
+            <div className="capabilityLinkedTasks">
+              <div className="sectionLabel">Linked Tasks</div>
+              {capability.relatedTaskIds.map((taskId) => (
+                <button key={taskId} className="ghostButton" onClick={() => onOpenTask(taskId)}>
+                  <Link2 size={14} />
+                  <span>{taskTitle(tasks, taskId)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {(capability.blockers.length > 0 || capability.dependencies.length > 0) && (
+            <div className="capabilityNotes">
+              {capability.dependencies.length > 0 && <p>Dependencies: {capability.dependencies.join(", ")}</p>}
+              {capability.blockers.length > 0 && <p>Blockers: {capability.blockers.join(", ")}</p>}
+            </div>
+          )}
+
+          {capability.acceptanceNotes.length > 0 && (
+            <div className="capabilityNotes">
+              <strong>Acceptance</strong>
+              {capability.acceptanceNotes.map((note) => (
+                <p key={note}>{note}</p>
+              ))}
+            </div>
+          )}
+
+          {capability.verificationEvidence.length > 0 && (
+            <div className="capabilityNotes">
+              <strong>Evidence</strong>
+              {capability.verificationEvidence.slice(0, 3).map((evidence) => (
+                <p key={evidence}>{evidence}</p>
+              ))}
+            </div>
+          )}
+
+          {capability.notes && <p className="capabilityFreeform">{capability.notes}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function taskTitle(tasks, taskId) {
+  const task = tasks.find((candidate) => candidate.id === taskId);
+  return task?.title || taskId;
+}
+
+function capabilityName(capabilities, capabilityId) {
+  const capability = capabilities.find((candidate) => candidate.id === capabilityId);
+  return capability?.name || capabilityId;
+}
+
 function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
   const [draggedTaskId, setDraggedTaskId] = useState("");
   const [dropStatusId, setDropStatusId] = useState("");
@@ -732,7 +929,7 @@ function TaskCard({
   );
 }
 
-function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate, onReload }) {
+function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onClose, onMutate, onReload }) {
   const [comment, setComment] = useState("");
   const [drawerError, setDrawerError] = useState(null);
   const [retryAction, setRetryAction] = useState(null);
@@ -833,6 +1030,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate,
       <CompletionPanel
         task={task}
         completionTypes={completionTypes}
+        capabilities={capabilities}
         draft={completionDraft}
         setDraft={setCompletionDraft}
         showForm={showCompletionForm}
@@ -1021,6 +1219,7 @@ function defaultCompletionDraft(task) {
     tests: (completion.tests || []).join("\n"),
     reviewTaskId: completion.reviewTaskId || "",
     supersededByTaskId: completion.supersededByTaskId || "",
+    capabilityIds: completion.capabilityIds || [],
     notes: completion.notes || ""
   };
 }
@@ -1035,20 +1234,28 @@ function completionPayload(draft) {
     tests: draft.tests
       .split(/\r?\n|,/)
       .map((item) => item.trim())
-      .filter(Boolean)
+      .filter(Boolean),
+    capabilityIds: draft.capabilityIds || []
   };
 }
 
-function CompletionPanel({ task, completionTypes, draft, setDraft, showForm, setShowForm, onComplete }) {
+function CompletionPanel({ task, completionTypes, capabilities, draft, setDraft, showForm, setShowForm, onComplete }) {
   const completion = task.completion;
   const editableTypes = (completionTypes || []).filter((type) => type !== "legacy-needs-audit");
   const type = draft.completionType;
+  const capabilityIds = draft.capabilityIds || [];
   const canComplete =
     type === "merged"
       ? draft.commitSha.trim()
       : type === "superseded"
         ? draft.supersededByTaskId.trim() || draft.notes.trim()
         : draft.notes.trim();
+  const toggleCapability = (capabilityId) => {
+    const nextIds = capabilityIds.includes(capabilityId)
+      ? capabilityIds.filter((idValue) => idValue !== capabilityId)
+      : [...capabilityIds, capabilityId];
+    setDraft({ ...draft, capabilityIds: nextIds });
+  };
 
   return (
     <div className="drawerSection completionSection">
@@ -1069,6 +1276,9 @@ function CompletionPanel({ task, completionTypes, draft, setDraft, showForm, set
           {completion.tests?.length > 0 && <p>Tests: {completion.tests.join(", ")}</p>}
           {completion.reviewTaskId && <p>Review task: {completion.reviewTaskId}</p>}
           {completion.supersededByTaskId && <p>Superseded by: {completion.supersededByTaskId}</p>}
+          {completion.capabilityIds?.length > 0 && (
+            <p>Capabilities: {completion.capabilityIds.map((capabilityId) => capabilityName(capabilities, capabilityId)).join(", ")}</p>
+          )}
           {completion.notes && <p>{completion.notes}</p>}
         </div>
       ) : (
@@ -1130,6 +1340,27 @@ function CompletionPanel({ task, completionTypes, draft, setDraft, showForm, set
                 Review Task
                 <input value={draft.reviewTaskId} onChange={(event) => setDraft({ ...draft, reviewTaskId: event.target.value })} />
               </label>
+              {capabilities.length > 0 && (
+                <div className="wide capabilityPicker">
+                  <div className="sectionTitle">
+                    <Database size={16} />
+                    <span>Capability Evidence</span>
+                  </div>
+                  <div className="capabilityCheckboxes">
+                    {capabilities.map((capability) => (
+                      <label key={capability.id}>
+                        <input
+                          type="checkbox"
+                          checked={capabilityIds.includes(capability.id)}
+                          onChange={() => toggleCapability(capability.id)}
+                        />
+                        <span>{capability.name}</span>
+                        <code>{capability.status}</code>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
               <label className="wide">
                 Notes
                 <textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />

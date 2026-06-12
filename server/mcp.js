@@ -68,6 +68,37 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
   );
 
   server.registerTool(
+    "list_capabilities",
+    {
+      title: "List capabilities",
+      description: "Search the product capability registry by project, status, owner, related task, live state, or text query.",
+      inputSchema: {
+        projectId: z.string().optional(),
+        status: z.string().optional(),
+        ownerRole: z.string().optional(),
+        ownerAgent: z.string().optional(),
+        relatedTaskId: z.string().optional(),
+        taskId: z.string().optional(),
+        live: z.boolean().optional(),
+        q: z.string().optional()
+      }
+    },
+    async (input) => asText({ capabilities: store.listCapabilities(input) })
+  );
+
+  server.registerTool(
+    "get_capability",
+    {
+      title: "Get capability",
+      description: "Read one product capability with status, ownership, task links, blockers, and verification evidence.",
+      inputSchema: {
+        capabilityId: z.string()
+      }
+    },
+    async (input) => asText({ capability: store.getCapability(input.capabilityId) })
+  );
+
+  server.registerTool(
     "create_task",
     {
       title: "Create task",
@@ -201,6 +232,7 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
             tests: z.array(z.string()).optional(),
             reviewTaskId: z.string().optional(),
             supersededByTaskId: z.string().optional(),
+            capabilityIds: z.array(z.string()).optional(),
             notes: z.string().optional()
           })
           .optional(),
