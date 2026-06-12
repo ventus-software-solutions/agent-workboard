@@ -46,6 +46,12 @@ export const api = {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks${params.size ? `?${params}` : ""}`);
   },
+  talks: (projectId, filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/projects/${projectId}/talks${params.size ? `?${params}` : ""}`);
+  },
+  postTalk: (projectId, message) =>
+    request(`/api/projects/${projectId}/talks`, { method: "POST", body: JSON.stringify(message) }),
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),

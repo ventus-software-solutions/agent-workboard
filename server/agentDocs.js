@@ -118,6 +118,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
       claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
       bootstrap: `${baseUrl}/api/bootstrap`,
       agentSlots: `${baseUrl}/api/agent-slots`,
+      talks: `${baseUrl}/api/projects/{projectId}/talks`,
       ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
     },
@@ -129,6 +130,8 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
         "get_next_task",
         "claim_task",
         "update_presence",
+        "post_talk_message",
+        "list_talk_messages",
         "add_comment",
         "update_task_status",
         "report_no_eligible_work"
@@ -179,6 +182,11 @@ export function renderAgentDocMarkdown(doc) {
     "",
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
+    "",
+    "## Agent Talks",
+    `Use project-scoped Agent Talks for coordination: ${doc.api.talks}.`,
+    "Use Talks for claim announcements, blocker broadcasts, review requests, handoffs, questions, and decisions that affect more than one task.",
+    "Use task comments for evidence, plans, review findings, test output, and status-specific history for one task.",
     "",
     ...(doc.reviewerMerge.length
       ? [
@@ -250,6 +258,7 @@ function sharedWorkflow() {
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",
+    "Post an Agent Talks message for cross-task coordination, blocker broadcasts, review requests, handoffs, questions, or decisions.",
     "Do implementation work in the task worktree, not in the shared main checkout.",
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",
     "Move the task to review, testing, done, or blocked according to the result. Done requires a completion record.",

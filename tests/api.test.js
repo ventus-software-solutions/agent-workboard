@@ -95,6 +95,77 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("posts and lists project Agent Talks through the API", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Talks API Project" }).expect(201)).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({ projectId: project.id, title: "Review via talks", status: "review" })
+        .expect(201)
+    ).body.task;
+
+    const posted = await request(app)
+      .post(`/api/projects/${project.id}/talks`)
+      .send({
+        authorAgentId: "implementer-01",
+        kind: "review-request",
+        body: "Please review this slice.",
+        relatedTaskId: task.id,
+        mentions: ["reviewer-agent"]
+      })
+      .expect(201);
+
+    expect(posted.body.message).toMatchObject({
+      projectId: project.id,
+      authorAgentId: "implementer-01",
+      kind: "review-request",
+      body: "Please review this slice.",
+      relatedTaskId: task.id,
+      mentions: ["reviewer-agent"],
+      relatedTask: {
+        id: task.id,
+        title: "Review via talks"
+      }
+    });
+
+    const filtered = await request(app)
+      .get(`/api/projects/${project.id}/talks?kind=review-request&agentId=implementer-01&taskId=${task.id}`)
+      .expect(200);
+
+    expect(filtered.body.messages).toHaveLength(1);
+    expect(filtered.body.messages[0]).toMatchObject({
+      id: posted.body.message.id,
+      relatedTask: {
+        id: task.id,
+        status: "review"
+      }
+    });
+  });
+
+  it("validates Agent Talks API related tasks and exposes MCP tool names", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Talk Validation API" }).expect(201)).body.project;
+    const otherProject = (await request(app).post("/api/projects").send({ name: "Other Talk Validation API" }).expect(201)).body
+      .project;
+    const otherTask = (
+      await request(app).post("/api/tasks").send({ projectId: otherProject.id, title: "Wrong project task" }).expect(201)
+    ).body.task;
+
+    const invalid = await request(app)
+      .post(`/api/projects/${project.id}/talks`)
+      .send({
+        authorAgentId: "implementer-01",
+        kind: "question",
+        body: "Wrong project?",
+        relatedTaskId: otherTask.id
+      })
+      .expect(400);
+
+    expect(invalid.body.error.message).toMatch(/same project/i);
+
+    const tools = await request(app).get("/api/mcp/tools").expect(200);
+    expect(tools.body.tools).toEqual(expect.arrayContaining(["post_talk_message", "list_talk_messages"]));
+  });
+
   it("claims a task through a stale-safe first-class endpoint", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Claim API Project" })).body.project;
     const task = (

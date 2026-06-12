@@ -190,7 +190,7 @@ button {
 .boardArea {
   min-width: 0;
   padding: 20px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .topBar {
@@ -255,6 +255,11 @@ button {
 
 .searchBox input,
 .agentFilter input,
+.talkFilters input,
+.talkFilters select,
+.talkComposer input,
+.talkComposer select,
+.talkComposer textarea,
 .formGrid input,
 .formGrid select,
 .formGrid textarea,
@@ -266,11 +271,151 @@ button {
   background: transparent;
 }
 
+.talksPanel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #2f3741;
+  border-radius: 8px;
+  background: #151a20;
+}
+
+.talksHeader {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.talksHeader h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.talkFilters,
+.talkComposer {
+  display: grid;
+  gap: 8px;
+}
+
+.talkFilters {
+  grid-template-columns: minmax(130px, 0.8fr) minmax(120px, 0.8fr) minmax(180px, 1.4fr);
+}
+
+.talkFilters input,
+.talkFilters select,
+.talkComposer input,
+.talkComposer select,
+.talkComposer textarea {
+  min-height: 36px;
+  padding: 8px 9px;
+  border: 1px solid #333a43;
+  border-radius: 8px;
+  background: #11161b;
+}
+
+.talkComposer {
+  grid-template-columns: minmax(120px, 0.75fr) minmax(120px, 0.75fr) minmax(180px, 1fr) minmax(150px, 1fr) minmax(260px, 2fr) auto;
+  align-items: stretch;
+}
+
+.talkComposer textarea {
+  min-height: 38px;
+  max-height: 90px;
+  resize: vertical;
+}
+
+.talkList {
+  display: grid;
+  gap: 8px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.talkMessage {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #333a43;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #1d232a;
+}
+
+.talkKind-blocker {
+  border-left-color: #ff8fa0;
+}
+
+.talkKind-review-request {
+  border-left-color: #9ee7ff;
+}
+
+.talkKind-decision {
+  border-left-color: #ffd991;
+}
+
+.talkMessageHeader,
+.talkMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.talkMessageHeader time {
+  margin-left: auto;
+  color: #82909f;
+  font-size: 12px;
+}
+
+.talkKind {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #27313b;
+  color: #c7d3df;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.talkMessage p {
+  margin: 0;
+  color: #d6e0ea;
+  line-height: 1.35;
+}
+
+.talkMeta button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid #384752;
+  border-radius: 8px;
+  background: #18222a;
+  color: #bdeafa;
+}
+
+.talkMeta span,
+.talkEmpty {
+  color: #8f9baa;
+  font-size: 12px;
+}
+
+.talkEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 54px;
+  border: 1px dashed #343b44;
+  border-radius: 8px;
+}
+
 .kanbanBoard {
   display: grid;
   grid-template-columns: repeat(7, minmax(230px, 1fr));
   gap: 12px;
-  height: calc(100vh - 142px);
+  height: calc(100vh - 456px);
+  min-height: 340px;
   overflow-x: auto;
   padding-bottom: 10px;
 }
@@ -796,6 +941,12 @@ button {
   }
 
   .topBar {
+    grid-template-columns: 1fr;
+  }
+
+  .talksHeader,
+  .talkFilters,
+  .talkComposer {
     grid-template-columns: 1fr;
   }
 

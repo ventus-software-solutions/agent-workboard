@@ -14,6 +14,7 @@ export const STATUSES = [
 
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
 export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
+export const TALK_KINDS = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
 
 const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
@@ -295,6 +296,7 @@ function defaultData() {
     ],
     events: [],
     agentPresence: {},
+    talkMessages: [],
     agentTypes: defaultAgentTypes(),
     agentSlots: defaultAgentSlots()
   };
@@ -407,6 +409,10 @@ export class WorkboardStore {
     }
     if (!this.data.agentPresence || typeof this.data.agentPresence !== "object" || Array.isArray(this.data.agentPresence)) {
       this.data.agentPresence = {};
+      migrated = true;
+    }
+    if (!Array.isArray(this.data.talkMessages)) {
+      this.data.talkMessages = [];
       migrated = true;
     }
 
@@ -769,6 +775,75 @@ export class WorkboardStore {
       });
   }
 
+  listTalkMessages(filters = {}) {
+    const projectId = normalizeText(filters.projectId);
+    if (projectId) {
+      this.getProject(projectId);
+    }
+
+    const kind = normalizeText(filters.kind);
+    const agentId = normalizeText(filters.agentId || filters.authorAgentId);
+    const taskId = normalizeText(filters.taskId || filters.relatedTaskId);
+    const q = normalizeText(filters.q).toLowerCase();
+
+    return this.data.talkMessages
+      .filter((message) => !projectId || message.projectId === projectId)
+      .filter((message) => !kind || message.kind === kind)
+      .filter((message) => !agentId || message.authorAgentId === agentId)
+      .filter((message) => !taskId || message.relatedTaskId === taskId)
+      .filter((message) => {
+        if (!q) return true;
+        return [message.authorAgentId, message.kind, message.body, message.relatedTaskId, ...message.mentions]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async addTalkMessage(projectIdInput, input) {
+    const projectId = normalizeText(projectIdInput || input.projectId);
+    this.getProject(projectId);
+
+    const authorAgentId = normalizeText(input.authorAgentId || input.author);
+    if (!authorAgentId) {
+      throw Object.assign(new Error("Talk message authorAgentId is required."), { status: 400 });
+    }
+
+    const kind = normalizeText(input.kind) || "update";
+    if (!TALK_KINDS.includes(kind)) {
+      throw Object.assign(new Error(`Talk message kind must be one of: ${TALK_KINDS.join(", ")}.`), { status: 400 });
+    }
+
+    const body = normalizeText(input.body);
+    if (!body) {
+      throw Object.assign(new Error("Talk message body is required."), { status: 400 });
+    }
+
+    const relatedTaskId = normalizeText(input.relatedTaskId);
+    if (relatedTaskId) {
+      const task = this.getTask(relatedTaskId);
+      if (task.projectId !== projectId) {
+        throw Object.assign(new Error("Related task must belong to the same project as the talk message."), { status: 400 });
+      }
+    }
+
+    const createdAt = now();
+    const message = {
+      id: id("talk"),
+      projectId,
+      authorAgentId,
+      kind,
+      body,
+      relatedTaskId,
+      mentions: normalizeMentions(input.mentions),
+      createdAt
+    };
+    this.data.talkMessages.unshift(message);
+    await this.save();
+    return message;
+  }
+
   async createTask(input) {
     const projectId = normalizeText(input.projectId);
     const project = this.data.projects.find((candidate) => candidate.id === projectId);
@@ -833,6 +908,14 @@ export class WorkboardStore {
       throw Object.assign(new Error("Task not found."), { status: 404 });
     }
     return task;
+  }
+
+  getProject(projectId) {
+    const project = this.data.projects.find((candidate) => candidate.id === projectId);
+    if (!project) {
+      throw Object.assign(new Error("Project not found."), { status: 404 });
+    }
+    return project;
   }
 
   async updateTask(taskId, patch, actor = "operator") {
@@ -1295,6 +1378,11 @@ function validOr(value, allowed, fallback) {
 function normalizeLabels(value) {
   const list = Array.isArray(value) ? value : normalizeText(value).split(",");
   return [...new Set(list.map((label) => normalizeText(label).toLowerCase()).filter(Boolean))].slice(0, 12);
+}
+
+function normalizeMentions(value) {
+  const list = Array.isArray(value) ? value : normalizeText(value).split(",");
+  return [...new Set(list.map((mention) => normalizeText(mention).replace(/^@+/, "")).filter(Boolean))].slice(0, 24);
 }
 
 function normalizeStringList(value) {
