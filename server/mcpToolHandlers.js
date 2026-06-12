@@ -9,7 +9,9 @@ export const MCP_TOOL_NAMES = [
   "update_presence",
   "report_no_eligible_work",
   "update_task_status",
-  "add_comment"
+  "add_comment",
+  "post_talk_message",
+  "list_talk_messages"
 ];
 
 export function buildUpdateTaskStatusPatch(input) {

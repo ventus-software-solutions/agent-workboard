@@ -51,6 +51,68 @@ describe("WorkboardStore", () => {
     expect(savedTask.activity[0].type).toBe("commented");
   });
 
+  it("posts and filters project-scoped Agent Talks messages", async () => {
+    const project = await store.createProject({ name: "Talks Project" });
+    const task = await store.createTask({ projectId: project.id, title: "Needs review", status: "review" });
+
+    const message = await store.addTalkMessage(project.id, {
+      authorAgentId: "implementer-01",
+      kind: "review-request",
+      body: "Ready for reviewer-agent.",
+      relatedTaskId: task.id,
+      mentions: ["reviewer-agent"]
+    });
+    await store.addTalkMessage(project.id, {
+      authorAgentId: "pm-agent",
+      kind: "decision",
+      body: "Reviewer queue takes priority."
+    });
+
+    expect(message).toMatchObject({
+      id: expect.stringMatching(/^talk_/),
+      projectId: project.id,
+      authorAgentId: "implementer-01",
+      kind: "review-request",
+      body: "Ready for reviewer-agent.",
+      relatedTaskId: task.id,
+      mentions: ["reviewer-agent"]
+    });
+    expect(store.listTalkMessages({ projectId: project.id, kind: "review-request" })).toEqual([message]);
+    expect(store.listTalkMessages({ projectId: project.id, agentId: "pm-agent" })).toHaveLength(1);
+    expect(store.listTalkMessages({ projectId: project.id, taskId: task.id })).toEqual([message]);
+  });
+
+  it("rejects Agent Talks messages for missing projects, invalid kinds, and unrelated tasks", async () => {
+    const project = await store.createProject({ name: "Talk Validation Project" });
+    const otherProject = await store.createProject({ name: "Other Talk Project" });
+    const otherTask = await store.createTask({ projectId: otherProject.id, title: "Wrong project" });
+
+    await expect(
+      store.addTalkMessage(project.id, {
+        authorAgentId: "agent-01",
+        kind: "not-a-kind",
+        body: "Bad kind"
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      store.addTalkMessage(project.id, {
+        authorAgentId: "agent-01",
+        kind: "question",
+        body: "Can I link this?",
+        relatedTaskId: otherTask.id
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      store.addTalkMessage("missing-project", {
+        authorAgentId: "agent-01",
+        kind: "question",
+        body: "Anyone here?"
+      })
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
   it("requires a completion record before moving a task to done", async () => {
     const project = await store.createProject({ name: "Done Gate Project" });
     const task = await store.createTask({

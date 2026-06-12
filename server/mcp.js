@@ -224,6 +224,39 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
     async (input) => asText({ comment: await store.addComment(input.taskId, input) })
   );
 
+  server.registerTool(
+    "post_talk_message",
+    {
+      title: "Post Agent Talks message",
+      description: "Post a project-scoped coordination message outside task evidence comments.",
+      inputSchema: {
+        projectId: z.string(),
+        authorAgentId: z.string(),
+        kind: z.enum(["update", "blocker", "review-request", "handoff", "question", "decision", "system"]).optional(),
+        body: z.string(),
+        relatedTaskId: z.string().optional(),
+        mentions: z.array(z.string()).optional()
+      }
+    },
+    async (input) => asText({ message: await store.addTalkMessage(input.projectId, input) })
+  );
+
+  server.registerTool(
+    "list_talk_messages",
+    {
+      title: "List Agent Talks messages",
+      description: "List project-scoped coordination messages, optionally filtered by kind, agent, task, or text.",
+      inputSchema: {
+        projectId: z.string(),
+        kind: z.string().optional(),
+        agentId: z.string().optional(),
+        taskId: z.string().optional(),
+        q: z.string().optional()
+      }
+    },
+    async (input) => asText({ messages: store.listTalkMessages(input) })
+  );
+
   return MCP_TOOL_NAMES;
 }
 

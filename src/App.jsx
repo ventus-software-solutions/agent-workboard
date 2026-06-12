@@ -43,19 +43,35 @@ const priorityClass = {
   urgent: "priorityUrgent"
 };
 
+const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+
+function formatDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
 export function App() {
   const [meta, setMeta] = useState({ roles: [], statuses: [], completionTypes: [] });
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [projectTasks, setProjectTasks] = useState([]);
+  const [talks, setTalks] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
+  const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId);
+  const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
   async function loadAll(projectId = selectedProjectId) {
@@ -63,16 +79,24 @@ export function App() {
     const [metaResult, projectsResult] = await Promise.all([api.meta(), api.projects()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const tasksResult = await api.tasks({
-      projectId: nextProjectId,
-      q: filters.q,
-      role: filters.role,
-      assignee: filters.assignee
-    });
+    const [tasksResult, projectTasksResult, talksResult] = nextProjectId
+      ? await Promise.all([
+          api.tasks({
+            projectId: nextProjectId,
+            q: filters.q,
+            role: filters.role,
+            assignee: filters.assignee
+          }),
+          api.tasks({ projectId: nextProjectId }),
+          api.talks(nextProjectId, talkFilters)
+        ])
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
     setTasks(tasksResult.tasks);
+    setProjectTasks(projectTasksResult.tasks);
+    setTalks(talksResult.messages);
     setLoading(false);
   }
 
@@ -80,8 +104,20 @@ export function App() {
     const nextFilters = { ...filters, ...overrides };
     setFilters(nextFilters);
     if (!selectedProjectId) return;
-    const result = await api.tasks({ projectId: selectedProjectId, ...nextFilters });
+    const [result, projectResult] = await Promise.all([
+      api.tasks({ projectId: selectedProjectId, ...nextFilters }),
+      api.tasks({ projectId: selectedProjectId })
+    ]);
     setTasks(result.tasks);
+    setProjectTasks(projectResult.tasks);
+  }
+
+  async function refreshTalks(overrides = {}, projectId = selectedProjectId) {
+    const nextFilters = { ...talkFilters, ...overrides };
+    setTalkFilters(nextFilters);
+    if (!projectId) return;
+    const result = await api.talks(projectId, nextFilters);
+    setTalks(result.messages);
   }
 
   useEffect(() => {
@@ -93,7 +129,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    refreshTasks().catch((nextError) => setError(nextError.message));
+    Promise.all([refreshTasks(), refreshTalks()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
 
   const boardStats = useMemo(() => {
@@ -106,7 +142,7 @@ export function App() {
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await refreshTasks();
+    await Promise.all([refreshTasks(), refreshTalks()]);
     return result;
   }
 
@@ -211,6 +247,19 @@ export function App() {
           )}
         </div>
 
+        <AgentTalksPanel
+          talks={talks}
+          tasks={projectTasks}
+          filters={talkFilters}
+          onFilterChange={refreshTalks}
+          onSelectTask={setSelectedTaskId}
+          onPost={(draft) =>
+            mutate(async () => {
+              await api.postTalk(selectedProjectId, draft);
+            })
+          }
+        />
+
         {error && (
           <div className="errorBanner">
             <AlertCircle size={18} />
@@ -289,6 +338,114 @@ function Stat({ icon: Icon, label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, onPost }) {
+  const [draft, setDraft] = useState({
+    authorAgentId: "operator-ui",
+    kind: "update",
+    relatedTaskId: "",
+    mentions: "",
+    body: ""
+  });
+
+  async function submitTalk() {
+    await onPost(draft);
+    setDraft({ ...draft, relatedTaskId: "", mentions: "", body: "" });
+  }
+
+  return (
+    <section className="talksPanel">
+      <div className="talksHeader">
+        <div>
+          <div className="eyebrow">Agent Talks</div>
+          <h3>Coordination</h3>
+        </div>
+        <div className="talkFilters">
+          <select value={filters.kind} onChange={(event) => onFilterChange({ kind: event.target.value })}>
+            <option value="">All kinds</option>
+            {talkKinds.map((kind) => (
+              <option key={kind} value={kind}>
+                {kind}
+              </option>
+            ))}
+          </select>
+          <input
+            value={filters.agentId}
+            placeholder="Agent"
+            onChange={(event) => onFilterChange({ agentId: event.target.value })}
+          />
+          <select value={filters.taskId} onChange={(event) => onFilterChange({ taskId: event.target.value })}>
+            <option value="">All tasks</option>
+            {tasks.map((task) => (
+              <option key={task.id} value={task.id}>
+                {task.title}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="talkComposer">
+        <input
+          value={draft.authorAgentId}
+          onChange={(event) => setDraft({ ...draft, authorAgentId: event.target.value })}
+          placeholder="Author"
+        />
+        <select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })}>
+          {talkKinds.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </select>
+        <select value={draft.relatedTaskId} onChange={(event) => setDraft({ ...draft, relatedTaskId: event.target.value })}>
+          <option value="">No task</option>
+          {tasks.map((task) => (
+            <option key={task.id} value={task.id}>
+              {task.title}
+            </option>
+          ))}
+        </select>
+        <input
+          value={draft.mentions}
+          onChange={(event) => setDraft({ ...draft, mentions: event.target.value })}
+          placeholder="Mentions"
+        />
+        <textarea
+          value={draft.body}
+          onChange={(event) => setDraft({ ...draft, body: event.target.value })}
+          placeholder="Message"
+        />
+        <button className="primaryButton" onClick={submitTalk} disabled={!draft.authorAgentId.trim() || !draft.body.trim()}>
+          <Send size={16} />
+          <span>Post</span>
+        </button>
+      </div>
+
+      <div className="talkList">
+        {talks.map((message) => (
+          <article className={`talkMessage talkKind-${message.kind}`} key={message.id}>
+            <div className="talkMessageHeader">
+              <span className="talkKind">{message.kind}</span>
+              <strong>{message.authorAgentId}</strong>
+              <time>{formatDate(message.createdAt)}</time>
+            </div>
+            <p>{message.body}</p>
+            <div className="talkMeta">
+              {message.relatedTask && (
+                <button onClick={() => onSelectTask(message.relatedTask.id)}>{message.relatedTask.title}</button>
+              )}
+              {(message.mentions || []).map((mention) => (
+                <span key={mention}>@{mention}</span>
+              ))}
+            </div>
+          </article>
+        ))}
+        {talks.length === 0 && <div className="talkEmpty">No talks</div>}
+      </div>
+    </section>
   );
 }
 

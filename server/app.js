@@ -126,6 +126,26 @@ export function createApp({ store }) {
     }
   });
 
+  app.get("/api/projects/:projectId/talks", (req, res, next) => {
+    try {
+      const messages = store
+        .listTalkMessages({ ...req.query, projectId: req.params.projectId })
+        .map((message) => decorateTalkMessage(store, message));
+      res.json({ messages });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/projects/:projectId/talks", async (req, res, next) => {
+    try {
+      const message = await store.addTalkMessage(req.params.projectId, req.body);
+      res.status(201).json({ message: decorateTalkMessage(store, message) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/tasks", (req, res, next) => {
     try {
       res.json({ tasks: store.listTasks(req.query) });
@@ -225,4 +245,19 @@ export function createApp({ store }) {
   });
 
   return app;
+}
+
+function decorateTalkMessage(store, message) {
+  const relatedTask = message.relatedTaskId ? store.getTask(message.relatedTaskId) : null;
+  return {
+    ...message,
+    relatedTask: relatedTask
+      ? {
+          id: relatedTask.id,
+          title: relatedTask.title,
+          status: relatedTask.status,
+          assignee: relatedTask.assignee
+        }
+      : null
+  };
 }
