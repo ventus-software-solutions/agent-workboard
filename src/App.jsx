@@ -26,6 +26,7 @@ import {
   X
 } from "lucide-react";
 import { api } from "./lib/api.js";
+import { buildAgentRegistry } from "./lib/agentRegistry.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 
@@ -75,6 +76,7 @@ export function App() {
   const [projectTasks, setProjectTasks] = useState([]);
   const [talks, setTalks] = useState([]);
   const [capabilities, setCapabilities] = useState([]);
+  const [agentSlots, setAgentSlots] = useState({ types: [], slots: [] });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
@@ -101,7 +103,7 @@ export function App() {
 
   async function loadAll(projectId = selectedProjectId) {
     setError("");
-    const [metaResult, projectsResult] = await Promise.all([api.meta(), api.projects()]);
+    const [metaResult, projectsResult, agentSlotsResult] = await Promise.all([api.meta(), api.projects(), api.agentSlots()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
     const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult] = nextProjectId
@@ -126,6 +128,7 @@ export function App() {
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
+    setAgentSlots(agentSlotsResult);
     setLoading(false);
   }
 
@@ -199,6 +202,11 @@ export function App() {
     setCapabilities(result.capabilities);
   }
 
+  async function refreshAgentSlots() {
+    const result = await api.agentSlots();
+    setAgentSlots(result);
+  }
+
   async function openLinkedTask(taskId) {
     try {
       setError("");
@@ -215,6 +223,12 @@ export function App() {
     }
   }
 
+  async function filterBoardByAgent(agentId) {
+    setView("board");
+    setSelectedTaskId("");
+    await refreshTasks({ q: "", role: "", assignee: agentId });
+  }
+
   useEffect(() => {
     loadAll().catch((nextError) => {
       setError(nextError.message);
@@ -224,7 +238,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities()]).catch((nextError) => setError(nextError.message));
+    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -274,10 +288,17 @@ export function App() {
     return { live, attention };
   }, [capabilities]);
 
+  const agentRegistry = useMemo(
+    () => buildAgentRegistry({ agentSlots, tasks: projectTasks, roles: meta.roles }),
+    [agentSlots, projectTasks, meta.roles]
+  );
+
+  const viewTitle = view === "capabilities" ? "Capability Registry" : view === "agents" ? "Agents" : selectedProject?.name || "No project";
+
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities()]);
+    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]);
     return result;
   }
 
@@ -348,6 +369,10 @@ export function App() {
             <FolderKanban size={16} />
             <span>Board</span>
           </button>
+          <button className={view === "agents" ? "selected" : ""} onClick={() => setView("agents")}>
+            <Bot size={16} />
+            <span>Agents</span>
+          </button>
           <button className={view === "capabilities" ? "selected" : ""} onClick={() => setView("capabilities")}>
             <Database size={16} />
             <span>Capabilities</span>
@@ -391,13 +416,19 @@ export function App() {
         <header className="topBar">
           <div>
             <div className="eyebrow">Project</div>
-            <h2>{view === "capabilities" ? "Capability Registry" : selectedProject?.name || "No project"}</h2>
+            <h2>{viewTitle}</h2>
           </div>
           <div className="topStats">
             {view === "capabilities" ? (
               <>
                 <Stat icon={CheckCircle2} label="Live" value={capabilityStats.live} />
                 <Stat icon={AlertCircle} label="Attention" value={capabilityStats.attention} />
+              </>
+            ) : view === "agents" ? (
+              <>
+                <Stat icon={Bot} label="Agents" value={agentRegistry.totalAgents} />
+                <Stat icon={Clock3} label="Busy" value={agentRegistry.busyAgents} />
+                <Stat icon={AlertCircle} label="Blocked" value={agentRegistry.blockedAgents} />
               </>
             ) : (
               <>
@@ -410,11 +441,19 @@ export function App() {
           <BoardRefreshStatus state={refreshState} />
           <button
             className="primaryButton"
-            onClick={() => (view === "capabilities" ? refreshCapabilities() : setIsCreatingTask(true))}
+            onClick={() => {
+              if (view === "capabilities") {
+                refreshCapabilities().catch((nextError) => setError(nextError.message));
+              } else if (view === "agents") {
+                Promise.all([refreshAgentSlots(), refreshTasks()]).catch((nextError) => setError(nextError.message));
+              } else {
+                setIsCreatingTask(true);
+              }
+            }}
             disabled={!selectedProjectId}
           >
-            {view === "capabilities" ? <RefreshCw size={17} /> : <Plus size={17} />}
-            <span>{view === "capabilities" ? "Refresh" : "Task"}</span>
+            {view === "capabilities" || view === "agents" ? <RefreshCw size={17} /> : <Plus size={17} />}
+            <span>{view === "capabilities" || view === "agents" ? "Refresh" : "Task"}</span>
           </button>
         </header>
 
@@ -424,7 +463,7 @@ export function App() {
             statuses={meta.capabilityStatuses}
             onChange={refreshCapabilities}
           />
-        ) : (
+        ) : view === "agents" ? null : (
           <div className="filterBar">
             <label className="searchBox">
               <Search size={17} />
@@ -488,6 +527,12 @@ export function App() {
             capabilities={capabilities}
             tasks={projectTasks}
             onOpenTask={openLinkedTask}
+          />
+        ) : view === "agents" ? (
+          <AgentsRegistry
+            registry={agentRegistry}
+            onOpenTask={openLinkedTask}
+            onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
           />
         ) : (
           <KanbanBoard
@@ -559,6 +604,119 @@ function Stat({ icon: Icon, label, value }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function AgentsRegistry({ registry, onOpenTask, onFilterAgent }) {
+  const groups = registry.groups.filter((group) => group.agents.length > 0);
+
+  if (groups.length === 0) {
+    return <div className="emptyState">No agents found.</div>;
+  }
+
+  return (
+    <section className="agentsRegistry" aria-label="Agents">
+      {groups.map((group) => (
+        <section className="agentGroup" key={group.role}>
+          <div className="agentGroupHeader">
+            <div>
+              <div className="sectionLabel">{group.role}</div>
+              <h3>{group.label}</h3>
+            </div>
+            <div className="agentGroupStats">
+              <span>{group.total} total</span>
+              <span>{group.busy} busy</span>
+              <span>{group.blocked} blocked</span>
+              <span>{group.idle} idle</span>
+            </div>
+          </div>
+
+          <div className="agentGrid">
+            {group.agents.map((agent) => (
+              <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </section>
+  );
+}
+
+function AgentCard({ agent, onOpenTask, onFilterAgent }) {
+  const Icon = roleIcons[agent.role] || Bot;
+  const linkedTasks = agent.assignedTasks.slice(0, 4);
+
+  return (
+    <article className={`agentCard agentStatus-${agent.status}`} data-testid="agent-card">
+      <div className="agentCardHeader">
+        <div className="agentIdentity">
+          <span className="agentIcon">
+            <Icon size={18} />
+          </span>
+          <div>
+            <h4>{agent.id}</h4>
+            <p>{agent.typeLabel}</p>
+          </div>
+        </div>
+        <span className="agentStatusBadge">{agent.statusLabel}</span>
+      </div>
+
+      <div className="agentMeta">
+        <span>{agent.roleLabel}</span>
+        {agent.workMode && <span>{agent.workMode}</span>}
+        {agent.stale && <span>stale</span>}
+        {agent.available && <span>available</span>}
+        <span>{agent.lastActivityAt ? formatDate(agent.lastActivityAt) : "No activity"}</span>
+      </div>
+
+      <div className="agentCounts">
+        <span>{agent.openTaskCount} open</span>
+        <span>{agent.blockedTaskCount} blocked</span>
+        <span>{agent.reviewTaskCount} review</span>
+      </div>
+
+      {agent.specialties.length > 0 && (
+        <div className="tagRow agentSpecialties">
+          {agent.specialties.slice(0, 6).map((specialty) => (
+            <span key={specialty}>{specialty}</span>
+          ))}
+        </div>
+      )}
+
+      <div className="agentCurrentTask">
+        <div className="sectionLabel">Current Task</div>
+        {agent.currentTask ? (
+          <button className="linkButton" onClick={() => onOpenTask(agent.currentTask.id)}>
+            {agent.currentTask.title}
+          </button>
+        ) : (
+          <p>No current task</p>
+        )}
+      </div>
+
+      <div className="agentTaskLinks">
+        <div className="sectionLabel">Assigned Tasks</div>
+        {linkedTasks.length > 0 ? (
+          <div>
+            {linkedTasks.map((task) => (
+              <button key={task.id} className="linkButton" onClick={() => onOpenTask(task.id)}>
+                <span>{task.title}</span>
+                <small>{task.status}</small>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p>No project tasks</p>
+        )}
+      </div>
+
+      <div className="agentCardActions">
+        <button className="ghostButton" onClick={() => onFilterAgent(agent.id)}>
+          <Filter size={15} />
+          <span>Assigned tasks</span>
+        </button>
+      </div>
+    </article>
   );
 }
 
