@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Archive,
@@ -23,6 +23,9 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
+import { getTaskDropMove } from "./lib/kanbanDrag.js";
+
+const DRAG_START_THRESHOLD = 8;
 
 const roleIcons = {
   pm: ClipboardList,
@@ -290,12 +293,90 @@ function Stat({ icon: Icon, label, value }) {
 }
 
 function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+  const [draggedTaskId, setDraggedTaskId] = useState("");
+  const [dropStatusId, setDropStatusId] = useState("");
+  const dragSession = useRef(null);
+  const suppressSelectTaskId = useRef("");
+
+  function clearDragState() {
+    dragSession.current = null;
+    setDraggedTaskId("");
+    setDropStatusId("");
+  }
+
+  function statusFromPoint(x, y) {
+    return document.elementFromPoint(x, y)?.closest("[data-status-id]")?.dataset.statusId || "";
+  }
+
+  function handleMouseDown(event, task) {
+    if (event.button !== 0 || event.target.closest?.("button, a, input, textarea, select")) return;
+
+    dragSession.current = {
+      active: false,
+      startX: event.clientX,
+      startY: event.clientY,
+      taskId: task.id
+    };
+
+    window.addEventListener("mousemove", handleWindowMouseMove);
+    window.addEventListener("mouseup", handleWindowMouseUp);
+  }
+
+  function handleWindowMouseMove(event) {
+    const drag = dragSession.current;
+    if (!drag) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.active && distance < DRAG_START_THRESHOLD) return;
+
+    if (!drag.active) {
+      drag.active = true;
+      suppressSelectTaskId.current = drag.taskId;
+      setDraggedTaskId(drag.taskId);
+    }
+
+    event.preventDefault();
+    const statusId = statusFromPoint(event.clientX, event.clientY);
+    setDropStatusId(getTaskDropMove(tasks, drag.taskId, statusId) ? statusId : "");
+  }
+
+  function handleWindowMouseUp(event) {
+    const drag = dragSession.current;
+    window.removeEventListener("mousemove", handleWindowMouseMove);
+    window.removeEventListener("mouseup", handleWindowMouseUp);
+    if (!drag) return;
+
+    if (!drag.active) {
+      clearDragState();
+      return;
+    }
+
+    event.preventDefault();
+    const statusId = statusFromPoint(event.clientX, event.clientY);
+    const move = getTaskDropMove(tasks, drag.taskId, statusId);
+    clearDragState();
+
+    if (move) {
+      onMoveTask(move.task, move.statusId);
+    }
+
+    setTimeout(() => {
+      if (suppressSelectTaskId.current === drag.taskId) {
+        suppressSelectTaskId.current = "";
+      }
+    }, 0);
+  }
+
   return (
     <div className="kanbanBoard">
       {statuses.map((status) => {
         const columnTasks = tasks.filter((task) => task.status === status.id);
         return (
-          <section className="kanbanColumn" key={status.id}>
+          <section
+            className={`kanbanColumn ${dropStatusId === status.id ? "dropTarget" : ""}`}
+            data-status-id={status.id}
+            key={status.id}
+          >
             <div className="columnHeader">
               <h3>{status.label}</h3>
               <span>{columnTasks.length}</span>
@@ -307,7 +388,15 @@ function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onM
                   task={task}
                   roles={roles}
                   selected={task.id === selectedTaskId}
-                  onSelect={() => onSelectTask(task.id)}
+                  dragging={task.id === draggedTaskId}
+                  onSelect={() => {
+                    if (suppressSelectTaskId.current === task.id) {
+                      suppressSelectTaskId.current = "";
+                      return;
+                    }
+                    onSelectTask(task.id);
+                  }}
+                  onMouseDown={(event) => handleMouseDown(event, task)}
                   onMove={(nextStatus) => onMoveTask(task, nextStatus)}
                   statuses={statuses}
                 />
@@ -321,13 +410,26 @@ function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onM
   );
 }
 
-function TaskCard({ task, roles, statuses, selected, onSelect, onMove }) {
+function TaskCard({
+  task,
+  roles,
+  statuses,
+  selected,
+  dragging,
+  onSelect,
+  onMouseDown,
+  onMove
+}) {
   const role = roles.find((candidate) => candidate.id === task.role);
   const Icon = roleIcons[task.role] || Bot;
   const nextStatus = statuses[Math.min(statuses.findIndex((status) => status.id === task.status) + 1, statuses.length - 1)];
 
   return (
-    <article className={`taskCard ${selected ? "selected" : ""}`} onClick={onSelect}>
+    <article
+      className={`taskCard ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}`}
+      onClick={onSelect}
+      onMouseDown={onMouseDown}
+    >
       <div className="taskCardTop">
         <span className={`priorityPill ${priorityClass[task.priority]}`}>{task.priority}</span>
         {task.status === "done" && task.completion && (
