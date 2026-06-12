@@ -196,6 +196,63 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("bootstraps an explicit agent id and refreshes the same runtime heartbeat", async () => {
+    const first = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        agentId: "reviewer-agent",
+        runtimeId: "api-review-runtime-1",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+
+    expect(first.body).toMatchObject({
+      acquired: true,
+      renewed: false,
+      reclaimed: false,
+      agentId: "reviewer-agent",
+      typeId: "reviewer",
+      role: "reviewer",
+      workMode: "drain-role-queue"
+    });
+    expect(first.body.lease).toMatchObject({
+      acquiredAt: "2026-06-12T15:00:00.000Z",
+      heartbeatAt: "2026-06-12T15:00:00.000Z",
+      expiresAt: "2026-06-12T15:15:00.000Z"
+    });
+
+    const renewed = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        agentId: "reviewer-agent",
+        runtimeId: "api-review-runtime-1",
+        now: "2026-06-12T15:05:00.000Z"
+      })
+      .expect(200);
+
+    expect(renewed.body).toMatchObject({
+      renewed: true,
+      agentId: "reviewer-agent",
+      typeId: "reviewer"
+    });
+    expect(renewed.body.lease).toMatchObject({
+      acquiredAt: "2026-06-12T15:00:00.000Z",
+      heartbeatAt: "2026-06-12T15:05:00.000Z",
+      expiresAt: "2026-06-12T15:20:00.000Z"
+    });
+
+    const conflict = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        agentId: "reviewer-agent",
+        runtimeId: "api-review-runtime-2",
+        now: "2026-06-12T15:06:00.000Z"
+      })
+      .expect(409);
+
+    expect(conflict.body.error.message).toContain("reviewer-agent is already active");
+  });
+
   it("exposes continuous-work helper endpoints for next-task and presence", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Continuous API Project" })).body.project;
     const task = (
@@ -264,6 +321,50 @@ describe("Agent Workboard API", () => {
         })
       ])
     );
+  });
+
+  it("returns reviewer review-queue metadata without claim preconditions", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Reviewer Pass API Project" })).body.project;
+    const reviewTask = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Implementation awaiting review",
+        status: "review",
+        role: "implementer",
+        assignee: "implementer-backend-1"
+      })
+    ).body.task;
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Assigned reviewer wrapper",
+        status: "ready",
+        role: "reviewer",
+        priority: "urgent",
+        assignee: "reviewer-agent"
+      })
+      .expect(201);
+
+    const next = await request(app)
+      .get("/api/agents/reviewer-agent/next-task")
+      .query({ projectId: project.id, now: "2026-06-12T15:00:00.000Z" })
+      .expect(200);
+
+    expect(next.body.task).toMatchObject({
+      id: reviewTask.id,
+      status: "review",
+      assignee: "implementer-backend-1"
+    });
+    expect(next.body.selection).toMatchObject({
+      reason: "review_queue",
+      review: {
+        taskId: reviewTask.id,
+        originalAssignee: "implementer-backend-1",
+        reviewer: "reviewer-agent"
+      }
+    });
+    expect(next.body.selection.claim).toBeUndefined();
   });
 
   it("rejects bootstrap when active slots are full", async () => {

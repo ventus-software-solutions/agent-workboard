@@ -383,6 +383,79 @@ describe("WorkboardStore", () => {
     ]);
   });
 
+  it("prefers idle slots with assigned ready work without mutating task assignees", async () => {
+    const project = await store.createProject({ name: "Assigned Slot Project" });
+    const assignedTask = await store.createTask({
+      projectId: project.id,
+      title: "Ready work for backend slot 3",
+      status: "ready",
+      role: "implementer",
+      assignee: "implementer-backend-3",
+      labels: ["backend"]
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Backlog work for backend slot 1",
+      status: "backlog",
+      role: "implementer",
+      assignee: "implementer-backend-1",
+      labels: ["backend"]
+    });
+
+    const acquired = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "runtime-assigned-ready",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(acquired).toMatchObject({
+      agentId: "implementer-backend-3",
+      slotNumber: 3
+    });
+    expect(store.getTask(assignedTask.id)).toMatchObject({
+      status: "ready",
+      assignee: "implementer-backend-3"
+    });
+  });
+
+  it("does not duplicate slot assignment under parallel acquisition pressure", async () => {
+    const stores = await Promise.all(
+      Array.from({ length: 6 }, async () => {
+        const nextStore = new WorkboardStore({ dataDir: tempDir });
+        await nextStore.init();
+        return nextStore;
+      })
+    );
+
+    const results = await Promise.allSettled(
+      stores.map((nextStore, index) =>
+        nextStore.acquireAgentSlot({
+          preferredType: "implementer-backend",
+          runtimeId: `runtime-parallel-${index + 1}`,
+          now: "2026-06-12T15:00:00.000Z"
+        })
+      )
+    );
+
+    const fulfilled = results.filter((result) => result.status === "fulfilled").map((result) => result.value);
+    const rejected = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    expect(fulfilled).toHaveLength(4);
+    expect(new Set(fulfilled.map((result) => result.agentId))).toEqual(
+      new Set(["implementer-backend-1", "implementer-backend-2", "implementer-backend-3", "implementer-backend-4"])
+    );
+    expect(rejected).toHaveLength(2);
+    expect(rejected.every((error) => error.status === 409)).toBe(true);
+
+    const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    const leasedBackendSlots = saved.agentSlots.filter((slot) => slot.typeId === "implementer-backend" && slot.lease);
+    expect(leasedBackendSlots.map((slot) => slot.id).sort()).toEqual([
+      "implementer-backend-1",
+      "implementer-backend-2",
+      "implementer-backend-3",
+      "implementer-backend-4"
+    ]);
+  });
+
   it("rejects agent slot acquisition when active capacity is full", async () => {
     for (const slotNumber of [1, 2, 3, 4]) {
       await store.acquireAgentSlot({
