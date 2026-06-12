@@ -512,6 +512,149 @@ describe("WorkboardStore", () => {
     expect(next.candidates.map((candidate) => candidate.id)).toContain(unassigned.id);
   });
 
+  it("falls back to role queue work and respects priority order", async () => {
+    const project = await store.createProject({ name: "Role Queue Project" });
+    const lowPriority = await store.createTask({
+      projectId: project.id,
+      title: "Low priority implementer work",
+      status: "ready",
+      priority: "low",
+      role: "implementer"
+    });
+    const urgent = await store.createTask({
+      projectId: project.id,
+      title: "Urgent implementer work",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer"
+    });
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toMatchObject({ id: urgent.id, title: "Urgent implementer work" });
+    expect(next.selection).toMatchObject({
+      reason: "role_queue",
+      claim: {
+        taskId: urgent.id,
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      }
+    });
+    expect(next.candidates.map((candidate) => candidate.id)).toEqual([urgent.id, lowPriority.id]);
+  });
+
+  it("falls back to specialty matches after assigned and role queues", async () => {
+    const project = await store.createProject({ name: "Specialty Queue Project" });
+    const specialtyTask = await store.createTask({
+      projectId: project.id,
+      title: "Research MCP behavior",
+      status: "ready",
+      priority: "high",
+      role: "researcher",
+      labels: ["mcp"]
+    });
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toMatchObject({ id: specialtyTask.id, title: "Research MCP behavior" });
+    expect(next.selection).toMatchObject({
+      reason: "specialty_match",
+      claim: {
+        taskId: specialtyTask.id,
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      }
+    });
+  });
+
+  it("uses stale-safe claim metadata so parallel helper claims do not duplicate work", async () => {
+    const project = await store.createProject({ name: "Parallel Helper Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Single unassigned implementer task",
+      status: "ready",
+      priority: "normal",
+      role: "implementer"
+    });
+
+    const firstStore = new WorkboardStore({ dataDir: tempDir });
+    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    await firstStore.init();
+    await secondStore.init();
+
+    const firstNext = firstStore.getNextTaskForAgent("implementer-backend-1", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const secondNext = secondStore.getNextTaskForAgent("implementer-backend-2", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(firstNext.selection.claim).toMatchObject({
+      taskId: task.id,
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+    expect(secondNext.selection.claim).toMatchObject({
+      taskId: task.id,
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+
+    const results = await Promise.allSettled([
+      firstStore.claimTask(task.id, firstNext.selection.claim),
+      secondStore.claimTask(task.id, secondNext.selection.claim)
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected").reason).toMatchObject({ status: 409 });
+
+    const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    const savedTask = saved.tasks.find((item) => item.id === task.id);
+    expect(savedTask.status).toBe("in_progress");
+    expect(["implementer-backend-1", "implementer-backend-2"]).toContain(savedTask.assignee);
+  });
+
+  it("makes no eligible work explicit when no bucket can produce a task", async () => {
+    const project = await store.createProject({ name: "Empty Queue Project" });
+    await store.createTask({
+      projectId: project.id,
+      title: "Blocked work is not eligible",
+      status: "blocked",
+      role: "implementer",
+      labels: ["mcp"]
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Done work is not eligible",
+      status: "done",
+      role: "implementer",
+      completion: {
+        completionType: "no-code",
+        notes: "Already handled."
+      }
+    });
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toBeNull();
+    expect(next.candidates).toEqual([]);
+    expect(next.selection).toEqual({ reason: "no_eligible_work" });
+  });
+
   it("prioritizes review-column work over assigned ready reviewer wrappers", async () => {
     const project = await store.createProject({ name: "Reviewer Queue Project" });
     const reviewTask = await store.createTask({
