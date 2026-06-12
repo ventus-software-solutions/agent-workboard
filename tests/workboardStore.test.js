@@ -1063,6 +1063,197 @@ describe("WorkboardStore", () => {
       suggestedActions: ["comment", "requeue", "block", "acknowledge"]
     });
     expect(stale.tasks[1].lastProgressAt).toBe(expiredHeartbeatTask.updatedAt);
+    expect(stale.tasks[1].freshness).toMatchObject({
+      leaseFresh: false,
+      presenceFreshActive: false,
+      ownerProgressFresh: false,
+      summary: "No fresh heartbeat or owner progress"
+    });
+  });
+
+  it("uses only recent owner-authored task progress to suppress expired heartbeat stale work", async () => {
+    const project = await store.createProject({ name: "Owner Progress Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      runtimeId: "owner-progress-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-2",
+      runtimeId: "pm-progress-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-3",
+      runtimeId: "old-progress-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    const ownerProgressTask = await store.createTask({
+      projectId: project.id,
+      title: "Owner recently posted",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    const pmProgressTask = await store.createTask({
+      projectId: project.id,
+      title: "Only PM recently posted",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-2"
+    });
+    const oldOwnerProgressTask = await store.createTask({
+      projectId: project.id,
+      title: "Owner posted too long ago",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-3"
+    });
+
+    const ownerComment = await store.addComment(ownerProgressTask.id, {
+      author: "implementer-backend-1",
+      body: "Still working this implementation."
+    });
+    ownerComment.createdAt = "2026-06-12T15:12:00.000Z";
+    const pmComment = await store.addComment(pmProgressTask.id, {
+      author: "pm",
+      body: "PM is checking on this."
+    });
+    pmComment.createdAt = "2026-06-12T15:14:00.000Z";
+    const oldOwnerComment = await store.addComment(oldOwnerProgressTask.id, {
+      author: "implementer-backend-3",
+      body: "Older implementation update."
+    });
+    oldOwnerComment.createdAt = "2026-06-12T15:04:00.000Z";
+
+    const stale = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+
+    expect(stale.tasks.map((item) => item.task.id)).toEqual([oldOwnerProgressTask.id, pmProgressTask.id]);
+    expect(stale.tasks.find((item) => item.task.id === pmProgressTask.id)).toMatchObject({
+      reason: "expired_heartbeat",
+      freshness: {
+        ownerProgressFresh: false,
+        summary: "No fresh heartbeat or owner progress"
+      }
+    });
+    expect(stale.tasks.find((item) => item.task.id === oldOwnerProgressTask.id)).toMatchObject({
+      reason: "expired_heartbeat",
+      freshness: {
+        ownerProgressFresh: false,
+        lastOwnerProgressAt: "2026-06-12T15:04:00.000Z",
+        lastOwnerProgressSource: "task_comment"
+      }
+    });
+  });
+
+  it("uses recent related Agent Talks by the assignee as owner progress", async () => {
+    const project = await store.createProject({ name: "Owner Talk Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      runtimeId: "owner-talk-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Owner posted in talks",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    const talk = await store.addTalkMessage(project.id, {
+      authorAgentId: "implementer-backend-1",
+      kind: "update",
+      relatedTaskId: task.id,
+      body: "Still alive via Agent Talks."
+    });
+    talk.createdAt = "2026-06-12T15:18:00.000Z";
+
+    const stale = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+
+    expect(stale.tasks.map((item) => item.task.id)).not.toContain(task.id);
+  });
+
+  it("keeps missing-slot work stale even when the assignee posts recent progress", async () => {
+    const project = await store.createProject({ name: "Missing Slot Progress Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Missing slot with progress",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-99"
+    });
+    const comment = await store.addComment(task.id, {
+      author: "implementer-backend-99",
+      body: "I exist, but my slot does not."
+    });
+    comment.createdAt = "2026-06-12T15:18:00.000Z";
+
+    const stale = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+
+    expect(stale.tasks).toEqual([
+      expect.objectContaining({
+        task: expect.objectContaining({ id: task.id }),
+        reason: "missing_slot",
+        freshness: expect.objectContaining({
+          ownerProgressFresh: true,
+          summary: "Assignee has no configured slot"
+        })
+      })
+    ]);
+  });
+
+  it("treats acknowledgement as same-task temporary presence freshness", async () => {
+    const project = await store.createProject({ name: "Acknowledge Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      runtimeId: "ack-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Acknowledged stale work",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    await store.updateAgentPresence("implementer-backend-1", {
+      state: "active",
+      currentTaskId: task.id,
+      message: "Operator acknowledged active ownership.",
+      now: "2026-06-12T15:18:00.000Z"
+    });
+
+    const stale = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+
+    expect(stale.tasks.map((item) => item.task.id)).not.toContain(task.id);
+
+    const staleAfterAcknowledgeExpires = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:34:00.000Z"
+    });
+
+    expect(staleAfterAcknowledgeExpires.tasks).toEqual([
+      expect.objectContaining({
+        task: expect.objectContaining({ id: task.id }),
+        reason: "expired_heartbeat",
+        freshness: expect.objectContaining({
+          presenceFreshActive: false
+        })
+      })
+    ]);
   });
 
   it("stores attachments with sanitized filenames and sha256 evidence", async () => {

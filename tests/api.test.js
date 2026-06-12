@@ -627,6 +627,12 @@ describe("Agent Workboard API", () => {
           reason: "expired_heartbeat",
           task: expect.objectContaining({ id: staleTask.id }),
           assignee: "implementer-backend-1",
+          freshness: expect.objectContaining({
+            leaseFresh: false,
+            presenceFreshActive: false,
+            ownerProgressFresh: false,
+            summary: "No fresh heartbeat or owner progress"
+          }),
           suggestedActions: expect.arrayContaining(["comment", "requeue", "block", "acknowledge"])
         }),
         expect.objectContaining({

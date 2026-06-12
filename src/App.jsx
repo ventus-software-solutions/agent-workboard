@@ -691,6 +691,10 @@ function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask })
                 <span>{item.reasonLabel}</span>
                 <span>{item.assignee || "Unassigned"}</span>
                 <span>{formatShortDateTime(item.lastProgressAt)}</span>
+                {item.freshness?.summary && <span>{item.freshness.summary}</span>}
+                {item.freshness?.lastOwnerProgressAt && (
+                  <span>Owner {formatShortDateTime(item.freshness.lastOwnerProgressAt)}</span>
+                )}
               </div>
             </div>
             <textarea
