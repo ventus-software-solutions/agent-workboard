@@ -29,7 +29,11 @@ describe("Agent Workboard API", () => {
     expect(overview.body.suggestedAgents).not.toContain("implementer-frontend-1");
     expect(overview.body.suggestedAgents).not.toContain("implementer-backend-1");
     expect(overview.body.usage.promptTemplate).toContain("/api/agent-docs/{agentType}");
+    expect(overview.body.identityModel.suggestedAgentsAre).toContain("role types");
+    expect(overview.body.identityModel.currentRule).toContain("concrete assignee id");
+    expect(overview.body.slotBootstrap.status).toBe("planned");
     expect(overview.body.slotBootstrap.plannedMcpTool).toBe("acquire_agent_slot");
+    expect(overview.body.slotBootstrap.currentFallback).toContain("implementer-a");
 
     const pmDoc = await request(app).get("/api/agent-docs/pm-agent").expect(200);
     expect(pmDoc.body.agent).toMatchObject({
@@ -52,6 +56,8 @@ describe("Agent Workboard API", () => {
     const markdown = await request(app).get("/api/agent-docs/test-agent?format=md").expect(200);
     expect(markdown.headers["content-type"]).toContain("text/markdown");
     expect(markdown.text).toContain("You are **test-agent**");
+    expect(markdown.text).toContain("Identity And Slots");
+    expect(markdown.text).toContain("Automatic slot assignment is not implemented yet");
     expect(markdown.text).toContain("Claim exactly one task");
     expect(markdown.text).toContain("Branch And Worktree Discipline");
     expect(markdown.text).toContain("wt-agent-workboard-test-agent");

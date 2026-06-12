@@ -66,11 +66,13 @@ export function listAgentDocs({ roles, statuses }) {
       "release",
       "observability"
     ],
+    identityModel: identityModel(),
     slotBootstrap: {
       status: "planned",
       goal: "A worker should be able to say 'I am implementer' and receive the next empty slot such as implementer-04.",
       plannedEndpoint: "/api/bootstrap",
-      plannedMcpTool: "acquire_agent_slot"
+      plannedMcpTool: "acquire_agent_slot",
+      currentFallback: "Until this exists, a PM/operator must assign each live worker a concrete temporary id such as implementer-a."
     },
     roles,
     statuses,
@@ -92,9 +94,11 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     role: role?.id || profile.role,
     roleLabel: role?.label || profile.role,
     specialties: profile.specialties,
+    identity: identityModel(agentId),
     mission: rule.mission,
     taskSelection: [
       "First, list active projects.",
+      "If you were spawned from a role type only, use the concrete assignee/task the PM or operator gave you.",
       "Prefer the DOGFOOD project when it exists unless the operator named another project.",
       "Find tasks assigned to your exact agent id.",
       ...(isReviewer ? ["Then scan tasks in status=review; review-column work takes priority over ordinary reviewer-role tasks."] : []),
@@ -143,6 +147,10 @@ export function renderAgentDocMarkdown(doc) {
     "## Mission",
     doc.mission,
     "",
+    "## Identity And Slots",
+    doc.identity.summary,
+    doc.identity.currentRule,
+    "",
     "## Where To Start",
     `1. Read this document: ${doc.api.agentDoc}`,
     `2. List projects: ${doc.api.listProjects}`,
@@ -178,6 +186,16 @@ export function renderAgentDocMarkdown(doc) {
     `Use \`${doc.mcp.firstTool}\` first, then ${doc.mcp.then.map((tool) => `\`${tool}\``).join(", ")}.`,
     ""
   ].join("\n");
+}
+
+function identityModel(agentId = "{agentType}") {
+  return {
+    status: "manual-slots",
+    suggestedAgentsAre: "role types, not unique live worker identities",
+    summary: "Suggested agent names such as `implementer` and `reviewer` are role types.",
+    currentRule: `Automatic slot assignment is not implemented yet. Until /api/bootstrap exists, the PM/operator must give each live worker a concrete assignee id such as implementer-a, reviewer-a, or ${agentId}.`,
+    futureRule: "After slot bootstrap lands, agents will be able to start from a role type and acquire an empty slot automatically."
+  };
 }
 
 function resolveAgentProfile(agentId) {
