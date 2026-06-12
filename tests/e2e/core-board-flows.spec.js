@@ -606,6 +606,59 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   expect(hasHorizontalOverflow).toBe(false);
 });
 
+test("lets the operator resolve a pending approval from the board", async ({ page }) => {
+  const projectName = uniqueName("E2E Approval Project");
+  const projectKey = uniqueKey("APR");
+  const taskTitle = uniqueName("Approve implementation handoff");
+
+  const project = (
+    await postJson(page, "/api/projects", {
+      name: projectName,
+      key: projectKey,
+      description: "Project with a seeded operator approval."
+    })
+  ).project;
+  const task = (
+    await postJson(page, "/api/tasks", {
+      projectId: project.id,
+      title: taskTitle,
+      description: "Seeded through API so the browser test can focus on approval UI.",
+      status: "in_progress",
+      role: "implementer",
+      priority: "high",
+      assignee: "implementer-e2e",
+      labels: ["approval", "e2e"]
+    })
+  ).task;
+  await postJson(page, `/api/tasks/${task.id}/comments`, {
+    author: "implementer-e2e",
+    body: "Diff summary and browser evidence are ready."
+  });
+  await postJson(page, `/api/tasks/${task.id}/operator-approval`, {
+    requestedBy: "implementer-e2e",
+    reason: "Ready to hand this work to review.",
+    requestedAction: "Approve review handoff.",
+    nextStatus: "review"
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.locator(".approvalQueueItem", { hasText: taskTitle })).toBeVisible();
+  await expect(page.locator(".topStats")).toContainText("Approvals");
+
+  await page.locator(".approvalQueueItem", { hasText: taskTitle }).click();
+  const panel = page.locator(".approvalPanel");
+  await expect(panel).toContainText("Approve review handoff.");
+  await expect(panel).toContainText("Diff summary and browser evidence are ready.");
+
+  await panel.getByLabel("Decision note").fill("Approved in browser e2e.");
+  await panel.getByRole("button", { name: "Approve" }).click();
+
+  await expect(page.locator(".approvalQueueItem", { hasText: taskTitle })).toHaveCount(0);
+  await expect(panel).toHaveCount(0);
+  await expect(page.locator(".kanbanColumn", { hasText: "Review" }).locator(".taskCard", { hasText: taskTitle })).toBeVisible();
+});
+
 async function createTask(page, { title, role, priority, assignee, labels, description }) {
   await closeDrawerIfOpen(page);
   await page.getByRole("button", { name: "Task", exact: true }).click();
@@ -619,6 +672,14 @@ async function createTask(page, { title, role, priority, assignee, labels, descr
   await page.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toHaveCount(0);
   await closeDrawerIfOpen(page);
+}
+
+async function postJson(page, pathname, body) {
+  const response = await page.request.post(`${baseURL}${pathname}`, {
+    data: body
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
 }
 
 function taskCard(page, title) {

@@ -411,6 +411,142 @@ describe("WorkboardStore", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
+  it("creates structured operator approval blockers and lists pending approvals", async () => {
+    const project = await store.createProject({ name: "Approval Queue Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Commit finished implementation",
+      role: "implementer",
+      status: "in_progress",
+      assignee: "implementer-01"
+    });
+    await store.addComment(task.id, { author: "implementer-01", body: "Tests and browser smoke are green." });
+
+    const blocked = await store.requestOperatorApproval(task.id, {
+      requestedBy: "implementer-01",
+      reason: "Need operator approval before committing the verified diff.",
+      requestedAction: "Approve commit `feat: ship implementation`.",
+      nextStatus: "review"
+    });
+
+    expect(store.blockerTypes()).toEqual(
+      expect.arrayContaining(["operator_approval", "dependency", "external_issue", "waiting_for_agent", "unclear_scope", "other"])
+    );
+    expect(blocked).toMatchObject({
+      status: "blocked",
+      blocker: {
+        type: "operator_approval",
+        status: "pending",
+        reason: "Need operator approval before committing the verified diff.",
+        requestedAction: "Approve commit `feat: ship implementation`.",
+        nextStatus: "review",
+        requestedBy: "implementer-01"
+      }
+    });
+    expect(blocked.approvalHistory[0]).toMatchObject({
+      decision: "requested",
+      blockerType: "operator_approval",
+      requestedBy: "implementer-01"
+    });
+
+    const pending = store.listOperatorApprovals({ projectId: project.id });
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({
+      task: {
+        id: task.id,
+        title: "Commit finished implementation"
+      },
+      blocker: {
+        requestedAction: "Approve commit `feat: ship implementation`."
+      },
+      latestComment: {
+        author: "implementer-01",
+        body: "Tests and browser smoke are green."
+      }
+    });
+  });
+
+  it("approves operator approval blockers and preserves audit history", async () => {
+    const project = await store.createProject({ name: "Approval Decision Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Hand approved work to review",
+      status: "in_progress",
+      assignee: "implementer-01"
+    });
+    await store.requestOperatorApproval(task.id, {
+      requestedBy: "implementer-01",
+      reason: "Verified and waiting to commit.",
+      requestedAction: "Commit and move to review.",
+      nextStatus: "review"
+    });
+
+    const approved = await store.decideOperatorApproval(task.id, {
+      decision: "approved",
+      decidedBy: "operator",
+      note: "Commit approved.",
+      nextStatus: "review"
+    });
+
+    expect(approved).toMatchObject({
+      status: "review",
+      blocker: null
+    });
+    expect(approved.approvalHistory[0]).toMatchObject({
+      decision: "approved",
+      decidedBy: "operator",
+      note: "Commit approved.",
+      nextStatus: "review"
+    });
+    expect(approved.comments[0]).toMatchObject({
+      author: "operator",
+      body: expect.stringContaining("approved")
+    });
+    expect(store.listOperatorApprovals({ projectId: project.id })).toEqual([]);
+  });
+
+  it("requires rejection notes and keeps rejected approvals auditable", async () => {
+    const project = await store.createProject({ name: "Rejected Approval Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Needs more evidence",
+      status: "in_progress",
+      assignee: "implementer-01"
+    });
+    await store.requestOperatorApproval(task.id, {
+      requestedBy: "implementer-01",
+      reason: "Need approval.",
+      requestedAction: "Commit now."
+    });
+
+    await expect(
+      store.decideOperatorApproval(task.id, {
+        decision: "rejected",
+        decidedBy: "operator"
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    const rejected = await store.decideOperatorApproval(task.id, {
+      decision: "rejected",
+      decidedBy: "operator",
+      note: "Please add browser evidence first."
+    });
+
+    expect(rejected).toMatchObject({
+      status: "blocked",
+      blocker: {
+        type: "operator_approval",
+        status: "rejected"
+      }
+    });
+    expect(rejected.approvalHistory[0]).toMatchObject({
+      decision: "rejected",
+      decidedBy: "operator",
+      note: "Please add browser evidence first."
+    });
+    expect(store.listOperatorApprovals({ projectId: project.id })).toEqual([]);
+  });
+
   it("requires a completion record before moving a task to done", async () => {
     const project = await store.createProject({ name: "Done Gate Project" });
     const task = await store.createTask({

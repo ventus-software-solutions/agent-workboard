@@ -11,6 +11,9 @@ export const MCP_TOOL_NAMES = [
   "update_presence",
   "report_no_eligible_work",
   "update_task_status",
+  "request_operator_approval",
+  "list_operator_approvals",
+  "decide_operator_approval",
   "add_comment",
   "post_talk_message",
   "list_talk_messages"

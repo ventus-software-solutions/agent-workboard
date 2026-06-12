@@ -79,7 +79,9 @@ export function App() {
     statuses: [],
     completionTypes: [],
     capabilityStatuses: [],
-    integrationStatus: null
+    integrationStatus: null,
+    blockerTypes: [],
+    operatorApprovalDecisions: []
   });
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -377,8 +379,10 @@ export function App() {
     const open = tasks.filter((task) => task.status !== "done").length;
     const blocked = tasks.filter((task) => task.status === "blocked").length;
     const review = tasks.filter((task) => task.status === "review").length;
-    return { open, blocked, review };
-  }, [tasks]);
+    const approvals = projectTasks.filter(isPendingOperatorApproval).length;
+    return { open, blocked, review, approvals };
+  }, [projectTasks, tasks]);
+  const pendingApprovals = useMemo(() => projectTasks.filter(isPendingOperatorApproval), [projectTasks]);
 
   const capabilityStats = useMemo(() => {
     const live = capabilities.filter((capability) => capability.status === "live").length;
@@ -613,6 +617,7 @@ export function App() {
                 <Stat icon={Clock3} label="Open" value={boardStats.open} />
                 <Stat icon={AlertCircle} label="Blocked" value={boardStats.blocked} />
                 <Stat icon={ShieldCheck} label="Review" value={boardStats.review} />
+                <Stat icon={UserRoundCheck} label="Approvals" value={boardStats.approvals} />
               </>
             )}
           </div>
@@ -659,6 +664,8 @@ export function App() {
             <span>{error}</span>
           </div>
         )}
+
+        {pendingApprovals.length > 0 && <OperatorApprovalQueue tasks={pendingApprovals} onSelectTask={setSelectedTaskId} />}
 
         {loading ? (
           <div className="emptyState">Loading workboard...</div>
@@ -1218,6 +1225,46 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
   );
 }
 
+function isPendingOperatorApproval(task) {
+  return task.blocker?.type === "operator_approval" && task.blocker.status === "pending";
+}
+
+function latestTaskComment(task) {
+  return task.comments?.[0] || null;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function OperatorApprovalQueue({ tasks, onSelectTask }) {
+  return (
+    <section className="approvalQueue" aria-label="Operator approvals">
+      <div className="approvalQueueHeader">
+        <div className="sectionTitle">
+          <UserRoundCheck size={17} />
+          <span>Operator Approvals</span>
+        </div>
+        <span>{tasks.length}</span>
+      </div>
+      <div className="approvalQueueList">
+        {tasks.map((task) => {
+          const comment = latestTaskComment(task);
+          return (
+            <button key={task.id} className="approvalQueueItem" onClick={() => onSelectTask(task.id)}>
+              <strong>{task.title}</strong>
+              <span>{task.blocker.requestedBy || task.assignee || "agent"} - {task.blocker.requestedAction}</span>
+              {comment && <p>{comment.body}</p>}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask }) {
   return (
     <section className="staleWorkPanel" aria-label="Stale in-progress work">
@@ -1570,6 +1617,12 @@ function TaskCard({
             {task.completion.completionType}
           </span>
         )}
+        {isPendingOperatorApproval(task) && (
+          <span className="approvalPill">
+            <UserRoundCheck size={13} />
+            approval
+          </span>
+        )}
         {task.attachments.length > 0 && (
           <span className="attachmentPill">
             <Paperclip size={13} />
@@ -1738,6 +1791,12 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
         </div>
       )}
 
+      <OperatorApprovalPanel
+        task={task}
+        statuses={statuses}
+        onDecide={(payload) => runDrawerMutation(() => api.decideOperatorApproval(task.id, payload))}
+      />
+
       <CompletionPanel
         task={task}
         completionTypes={completionTypes}
@@ -1893,6 +1952,88 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
         </div>
       </div>
     </aside>
+  );
+}
+
+function OperatorApprovalPanel({ task, statuses, onDecide }) {
+  const blocker = task.blocker;
+  const comment = latestTaskComment(task);
+  const statusOptions = statuses.filter((status) => !["blocked", "done"].includes(status.id));
+  const defaultNextStatus = statusOptions.some((status) => status.id === blocker?.nextStatus) ? blocker.nextStatus : "review";
+  const [nextStatus, setNextStatus] = useState(defaultNextStatus);
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    setNextStatus(defaultNextStatus);
+    setNote("");
+  }, [task.id, blocker?.requestedAt, defaultNextStatus]);
+
+  if (!isPendingOperatorApproval(task)) {
+    return null;
+  }
+
+  return (
+    <div className="drawerSection approvalPanel">
+      <div className="sectionTitle">
+        <UserRoundCheck size={17} />
+        <span>Operator Approval</span>
+      </div>
+      <div className="approvalFacts">
+        <span>{blocker.requestedBy || task.assignee || "agent"}</span>
+        <span>{formatDateTime(blocker.requestedAt)}</span>
+      </div>
+      <div className="approvalRequest">
+        <strong>{blocker.requestedAction}</strong>
+        {blocker.reason && <p>{blocker.reason}</p>}
+        {comment && (
+          <blockquote>
+            <span>{comment.author}</span>
+            <p>{comment.body}</p>
+          </blockquote>
+        )}
+      </div>
+      <div className="formGrid approvalDecisionForm">
+        <label>
+          Approved status
+          <select value={nextStatus} onChange={(event) => setNextStatus(event.target.value)}>
+            {statusOptions.map((status) => (
+              <option key={status.id} value={status.id}>
+                {status.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="wide">
+          Decision note
+          <textarea value={note} onChange={(event) => setNote(event.target.value)} />
+        </label>
+      </div>
+      <div className="approvalActions">
+        <button
+          className="primaryButton"
+          onClick={() => onDecide({ decision: "approved", decidedBy: "operator-ui", note, nextStatus })}
+        >
+          <CheckCircle2 size={16} />
+          <span>Approve</span>
+        </button>
+        <button
+          className="ghostButton"
+          onClick={() => onDecide({ decision: "changes_requested", decidedBy: "operator-ui", note, nextStatus: "ready" })}
+          disabled={!note.trim()}
+        >
+          <AlertCircle size={16} />
+          <span>Changes</span>
+        </button>
+        <button
+          className="ghostButton dangerButton"
+          onClick={() => onDecide({ decision: "rejected", decidedBy: "operator-ui", note })}
+          disabled={!note.trim()}
+        >
+          <X size={16} />
+          <span>Reject</span>
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -33,7 +33,9 @@ export function createApp({ store, integrationStatusProvider = getIntegrationSta
       statuses: store.statuses(),
       completionTypes: store.completionTypes(),
       capabilityStatuses: store.capabilityStatuses(),
-      integrationStatus: integrationStatus()
+      integrationStatus: integrationStatus(),
+      blockerTypes: store.blockerTypes(),
+      operatorApprovalDecisions: store.operatorApprovalDecisions()
     });
   });
 
@@ -230,6 +232,14 @@ export function createApp({ store, integrationStatusProvider = getIntegrationSta
     }
   });
 
+  app.get("/api/operator-approvals", (req, res, next) => {
+    try {
+      res.json({ approvals: store.listOperatorApprovals(req.query) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/tasks/:taskId", (req, res, next) => {
     try {
       res.json({ task: store.getTask(req.params.taskId) });
@@ -250,6 +260,24 @@ export function createApp({ store, integrationStatusProvider = getIntegrationSta
   app.post("/api/tasks/:taskId/claim", async (req, res, next) => {
     try {
       const task = await store.claimTask(req.params.taskId, req.body);
+      res.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/tasks/:taskId/operator-approval", async (req, res, next) => {
+    try {
+      const task = await store.requestOperatorApproval(req.params.taskId, req.body);
+      res.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/tasks/:taskId/operator-approval/decision", async (req, res, next) => {
+    try {
+      const task = await store.decideOperatorApproval(req.params.taskId, req.body);
       res.json({ task });
     } catch (error) {
       next(error);
