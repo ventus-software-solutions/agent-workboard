@@ -1482,9 +1482,29 @@ export class WorkboardStore {
       ? this.describeAgentPresence(this.data.agentPresence[assignee], currentTime)
       : null;
     const leaseFresh = Boolean(slot && this.isLeaseFresh(slot.lease, currentTime));
+    const ownerProgress = assignee ? this.latestOwnerProgressForTask(task, assignee, currentTime) : null;
     const presenceFreshActive = Boolean(
-      presence && !presence.stale && !presence.paused && presence.state === "active" && presence.status === "online"
+      presence &&
+        !presence.stale &&
+        !presence.paused &&
+        presence.state === "active" &&
+        presence.status === "online" &&
+        presence.currentTaskId === task.id
     );
+    const ownerProgressFresh = Boolean(ownerProgress?.fresh);
+    const freshness = {
+      windowMs: SLOT_LEASE_MS,
+      leaseFresh,
+      leaseHeartbeatAt: slot?.lease?.heartbeatAt || "",
+      leaseExpiresAt: slot?.lease?.expiresAt || "",
+      presenceFreshActive,
+      presenceHeartbeatAt: presence?.lastHeartbeat || presence?.updatedAt || "",
+      presenceCurrentTaskId: presence?.currentTaskId || "",
+      ownerProgressFresh,
+      lastOwnerProgressAt: ownerProgress?.createdAt || "",
+      lastOwnerProgressAuthor: ownerProgress?.author || "",
+      lastOwnerProgressSource: ownerProgress?.source || ""
+    };
 
     let reason = "";
     if (!assignee) {
@@ -1495,11 +1515,12 @@ export class WorkboardStore {
       reason = "paused_slot";
     } else if (!slot.lease && !presence) {
       reason = "missing_heartbeat";
-    } else if (!leaseFresh && !presenceFreshActive) {
+    } else if (!leaseFresh && !presenceFreshActive && !ownerProgressFresh) {
       reason = "expired_heartbeat";
     }
 
     if (!reason) return null;
+    freshness.summary = staleWorkFreshnessSummary(reason);
 
     const suggestedActions = ["comment", "requeue", "block"];
     const canAcknowledge = Boolean(slot && !slot.paused);
@@ -1511,7 +1532,8 @@ export class WorkboardStore {
       assignee,
       reason,
       reasonLabel: staleWorkReasonLabel(reason),
-      lastProgressAt: latestTaskProgressAt(task),
+      lastProgressAt: freshness.lastOwnerProgressAt || latestTaskProgressAt(task),
+      freshness,
       canAcknowledge,
       suggestedActions,
       slot: slot
@@ -1541,6 +1563,43 @@ export class WorkboardStore {
       updatedAt: task.updatedAt,
       createdAt: task.createdAt
     };
+  }
+
+  latestOwnerProgressForTask(task, assignee, currentTime) {
+    const owner = normalizeText(assignee);
+    const signals = [];
+
+    for (const comment of task.comments || []) {
+      if (normalizeText(comment.author) === owner) {
+        signals.push({
+          source: "task_comment",
+          author: comment.author,
+          createdAt: comment.createdAt
+        });
+      }
+    }
+
+    for (const event of task.activity || []) {
+      if (normalizeText(event.actor) === owner) {
+        signals.push({
+          source: "task_activity",
+          author: event.actor,
+          createdAt: event.createdAt
+        });
+      }
+    }
+
+    for (const message of this.data.talkMessages || []) {
+      if (message.projectId === task.projectId && message.relatedTaskId === task.id && normalizeText(message.authorAgentId) === owner) {
+        signals.push({
+          source: "talk_message",
+          author: message.authorAgentId,
+          createdAt: message.createdAt
+        });
+      }
+    }
+
+    return latestProgressSignal(signals, currentTime);
   }
 
   agentSlotTaskStats() {
@@ -2042,6 +2101,20 @@ function latestTaskProgressAt(task) {
     .sort((a, b) => Date.parse(b) - Date.parse(a))[0] || task.updatedAt || task.createdAt || now();
 }
 
+function latestProgressSignal(signals, currentTime) {
+  return signals
+    .map((signal) => {
+      const timestamp = Date.parse(signal.createdAt || "");
+      if (!Number.isFinite(timestamp) || timestamp > currentTime.getTime()) return null;
+      return {
+        ...signal,
+        fresh: currentTime.getTime() - timestamp <= SLOT_LEASE_MS
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] || null;
+}
+
 function staleWorkReasonLabel(reason) {
   return (
     {
@@ -2050,6 +2123,18 @@ function staleWorkReasonLabel(reason) {
       paused_slot: "Paused slot",
       missing_heartbeat: "Missing heartbeat",
       expired_heartbeat: "Expired heartbeat"
+    }[reason] || "Needs attention"
+  );
+}
+
+function staleWorkFreshnessSummary(reason) {
+  return (
+    {
+      missing_assignee: "Task has no assignee",
+      missing_slot: "Assignee has no configured slot",
+      paused_slot: "Agent slot is paused",
+      missing_heartbeat: "No heartbeat recorded",
+      expired_heartbeat: "No fresh heartbeat or owner progress"
     }[reason] || "Needs attention"
   );
 }

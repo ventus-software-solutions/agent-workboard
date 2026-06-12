@@ -178,6 +178,7 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   await expect(staleCard).toBeVisible();
   await expect(staleCard).toContainText("implementer-backend-99");
   await expect(staleCard).toContainText("Missing slot");
+  await expect(staleCard).toContainText("Assignee has no configured slot");
 
   await staleCard.getByPlaceholder("Recovery note").fill("Requeueing stale work from browser coverage.");
   await staleCard.getByRole("button", { name: "Requeue" }).click();
