@@ -215,7 +215,7 @@ button {
 
 .topBar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
   align-items: center;
   gap: 16px;
   margin-bottom: 16px;
@@ -247,6 +247,39 @@ button {
 
 .stat strong {
   color: #f3f6fa;
+}
+
+.refreshStatus {
+  display: inline-grid;
+  grid-template-columns: 15px auto;
+  align-items: center;
+  gap: 4px 7px;
+  min-height: 38px;
+  min-width: 152px;
+  padding: 5px 10px;
+  border: 1px solid #33424b;
+  border-radius: 8px;
+  background: #172127;
+  color: #bce7f2;
+}
+
+.refreshStatus time {
+  grid-column: 2;
+  color: #8494a3;
+  font-size: 11px;
+}
+
+.refreshStatus.updated,
+.refreshStatus.updating {
+  border-color: #3e8c80;
+  background: #162823;
+  color: #bdf2d1;
+}
+
+.refreshStatus.disconnected {
+  border-color: #6f3944;
+  background: #2b1c21;
+  color: #ffbfca;
 }
 
 .filterBar {
@@ -997,6 +1030,28 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.liveUpdateNotice {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #775337;
+  border-radius: 8px;
+  background: #2d221a;
+  color: #ffd3af;
+}
+
+.liveUpdateNotice strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fff1cc;
+}
+
+.liveUpdateNotice p {
+  margin: 0;
+  color: #eac78c;
+  line-height: 1.4;
 }
 
 .drawer {
