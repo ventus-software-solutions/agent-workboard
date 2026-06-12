@@ -66,6 +66,7 @@ export function listAgentDocs({ roles, statuses }) {
     ],
     roles,
     statuses,
+    worktree: worktreeDiscipline(),
     workflow: sharedWorkflow()
   };
 }
@@ -92,6 +93,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
       "Sort by urgent, high, normal, low. Prefer ready over backlog.",
       "Claim exactly one task before doing substantive work."
     ],
+    worktree: worktreeDiscipline(agentId),
     workflow: sharedWorkflow(),
     accepts: rule.accepts,
     outputs: rule.outputs,
@@ -108,6 +110,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     statuses: statuses.map((status) => status.id),
     cautions: [
       "Do not work unclaimed tasks.",
+      "Do not edit the main checkout directly for implementation work. Use a task branch/worktree first.",
       "Do not claim more than one task at a time unless the operator explicitly asks.",
       "Post a short progress comment before long work.",
       "Move blocked tasks to blocked with the exact decision or dependency needed.",
@@ -136,6 +139,9 @@ export function renderAgentDocMarkdown(doc) {
     "",
     "## Task Selection",
     ...doc.taskSelection.map((line, index) => `${index + 1}. ${line}`),
+    "",
+    "## Branch And Worktree Discipline",
+    ...doc.worktree.map((line, index) => `${index + 1}. ${line}`),
     "",
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
@@ -191,10 +197,23 @@ function sharedWorkflow() {
     "List projects and choose the operator-named project, or DOGFOOD when no project is named.",
     "List candidate tasks using your exact agent id, role, and specialty labels.",
     "Claim one task by setting yourself as assignee and moving it to in_progress.",
+    "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",
-    "Do the work outside the board when needed.",
+    "Do implementation work in the task worktree, not in the shared main checkout.",
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",
     "Move the task to review, testing, done, or blocked according to the result.",
     "Only then look for another task."
+  ];
+}
+
+function worktreeDiscipline(agentId = "<agent-id>") {
+  const safeAgentId = String(agentId || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+  return [
+    "Before editing code, check `git status --short --branch` and confirm you are not doing implementation work directly on `main`.",
+    `Use a task branch named like \`${safeAgentId}/<short-task-slug>\` or another operator-approved branch name.`,
+    `Prefer a separate worktree for implementation, for example \`git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> -b ${safeAgentId}/<slug> origin/main\`.`,
+    "Keep the main checkout for running/observing the local service and for operator state. Do not pile unrelated agent edits into it.",
+    "Commit only your task files, run the task-specific checks, push your branch when possible, then comment the branch/commit/test evidence on the task.",
+    "If you find dirty files you did not create, do not overwrite them. Report the conflict on the task or in Agent Talks."
   ];
 }

@@ -66,6 +66,16 @@ Useful endpoints:
 
 The same contract is available over MCP through `get_agent_instructions`.
 
+Agent instructions include branch/worktree discipline. Implementation agents should claim a task, then create or switch to a task branch/worktree before editing files. The shared `main` checkout should stay available for the running local service and operator state.
+
+Example:
+
+```bash
+git fetch origin main
+git worktree add C:/git/wt-agent-workboard-implementer-01-claim-api -b implementer-01/claim-api origin/main
+cd C:/git/wt-agent-workboard-implementer-01-claim-api
+```
+
 Example local MCP command:
 
 ```json

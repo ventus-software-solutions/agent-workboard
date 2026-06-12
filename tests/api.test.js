@@ -33,6 +33,8 @@ describe("Agent Workboard API", () => {
       role: "pm"
     });
     expect(pmDoc.body.agent.workflow).toContain("Only then look for another task.");
+    expect(pmDoc.body.agent.worktree.join("\n")).toContain("git worktree add");
+    expect(pmDoc.body.agent.cautions.join("\n")).toContain("Do not edit the main checkout directly");
 
     const mcpDoc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
     expect(mcpDoc.body.agent.role).toBe("implementer");
@@ -42,6 +44,8 @@ describe("Agent Workboard API", () => {
     expect(markdown.headers["content-type"]).toContain("text/markdown");
     expect(markdown.text).toContain("You are **test-agent**");
     expect(markdown.text).toContain("Claim exactly one task");
+    expect(markdown.text).toContain("Branch And Worktree Discipline");
+    expect(markdown.text).toContain("wt-agent-workboard-test-agent");
   });
 
   it("creates a project and a task, then moves the task", async () => {
