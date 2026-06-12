@@ -154,6 +154,14 @@ export function createApp({ store }) {
     }
   });
 
+  app.get("/api/tasks/stale-in-progress", (req, res, next) => {
+    try {
+      res.json(store.listStaleInProgressTasks(req.query));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/tasks", async (req, res, next) => {
     try {
       const task = await store.createTask(req.body);

@@ -588,6 +588,27 @@ export class WorkboardStore {
       .sort((a, b) => a.agentId.localeCompare(b.agentId));
   }
 
+  listStaleInProgressTasks({ projectId, now: nowInput } = {}) {
+    this.ensureAgentSlotSchema();
+    this.ensureAgentPresenceSchema();
+    const currentTime = parseTimestamp(nowInput);
+    const scopedProjectId = normalizeText(projectId);
+    const slotsById = new Map(this.data.agentSlots.map((slot) => [slot.id, slot]));
+
+    const tasks = this.data.tasks
+      .filter((task) => task.status === "in_progress")
+      .filter((task) => !scopedProjectId || task.projectId === scopedProjectId)
+      .map((task) => this.describeStaleInProgressTask(task, slotsById, currentTime))
+      .filter(Boolean)
+      .sort((a, b) => Date.parse(a.lastProgressAt) - Date.parse(b.lastProgressAt) || a.task.title.localeCompare(b.task.title));
+
+    return {
+      generatedAt: currentTime.toISOString(),
+      leaseMs: SLOT_LEASE_MS,
+      tasks
+    };
+  }
+
   async updateAgentPresence(agentIdInput, input = {}) {
     const agentId = normalizeText(agentIdInput || input.agentId);
     if (!agentId) {
@@ -1271,6 +1292,74 @@ export class WorkboardStore {
     };
   }
 
+  describeStaleInProgressTask(task, slotsById, currentTime) {
+    const assignee = normalizeText(task.assignee);
+    const slot = assignee ? slotsById.get(assignee) : null;
+    const presence = assignee && this.data.agentPresence[assignee]
+      ? this.describeAgentPresence(this.data.agentPresence[assignee], currentTime)
+      : null;
+    const leaseFresh = Boolean(slot && this.isLeaseFresh(slot.lease, currentTime));
+    const presenceFreshActive = Boolean(
+      presence && !presence.stale && !presence.paused && presence.state === "active" && presence.status === "online"
+    );
+
+    let reason = "";
+    if (!assignee) {
+      reason = "missing_assignee";
+    } else if (!slot) {
+      reason = "missing_slot";
+    } else if (slot.paused) {
+      reason = "paused_slot";
+    } else if (!slot.lease && !presence) {
+      reason = "missing_heartbeat";
+    } else if (!leaseFresh && !presenceFreshActive) {
+      reason = "expired_heartbeat";
+    }
+
+    if (!reason) return null;
+
+    const suggestedActions = ["comment", "requeue", "block"];
+    const canAcknowledge = Boolean(slot && !slot.paused);
+    if (canAcknowledge) suggestedActions.push("acknowledge");
+
+    return {
+      task: this.describeTaskSummary(task),
+      projectId: task.projectId,
+      assignee,
+      reason,
+      reasonLabel: staleWorkReasonLabel(reason),
+      lastProgressAt: latestTaskProgressAt(task),
+      canAcknowledge,
+      suggestedActions,
+      slot: slot
+        ? {
+            id: slot.id,
+            typeId: slot.typeId,
+            leaseFresh,
+            lease: slot.lease ? { ...slot.lease } : null,
+            paused: Boolean(slot.paused)
+          }
+        : null,
+      presence
+    };
+  }
+
+  describeTaskSummary(task) {
+    return {
+      id: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      priority: task.priority,
+      role: task.role,
+      assignee: task.assignee,
+      labels: [...task.labels],
+      updatedAt: task.updatedAt,
+      createdAt: task.createdAt
+    };
+  }
+
   agentSlotTaskStats() {
     const stats = new Map();
     for (const task of this.data.tasks) {
@@ -1613,6 +1702,32 @@ function normalizeCompletionRecord(value, { actor } = {}) {
   }
 
   return record;
+}
+
+function latestTaskProgressAt(task) {
+  const timestamps = [task.updatedAt, task.createdAt];
+  for (const comment of task.comments || []) {
+    timestamps.push(comment.createdAt);
+  }
+  for (const event of task.activity || []) {
+    timestamps.push(event.createdAt);
+  }
+
+  return timestamps
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] || task.updatedAt || task.createdAt || now();
+}
+
+function staleWorkReasonLabel(reason) {
+  return (
+    {
+      missing_assignee: "Missing assignee",
+      missing_slot: "Missing slot",
+      paused_slot: "Paused slot",
+      missing_heartbeat: "Missing heartbeat",
+      expired_heartbeat: "Expired heartbeat"
+    }[reason] || "Needs attention"
+  );
 }
 
 function statusRank(status) {

@@ -66,6 +66,8 @@ export function App() {
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
+  const [staleWork, setStaleWork] = useState([]);
+  const [staleWorkNotes, setStaleWorkNotes] = useState({});
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [error, setError] = useState("");
@@ -79,7 +81,7 @@ export function App() {
     const [metaResult, projectsResult] = await Promise.all([api.meta(), api.projects()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -88,15 +90,17 @@ export function App() {
             assignee: filters.assignee
           }),
           api.tasks({ projectId: nextProjectId }),
-          api.talks(nextProjectId, talkFilters)
+          api.talks(nextProjectId, talkFilters),
+          api.staleInProgressTasks({ projectId: nextProjectId })
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
     setTasks(tasksResult.tasks);
     setProjectTasks(projectTasksResult.tasks);
     setTalks(talksResult.messages);
+    setStaleWork(staleResult.tasks);
     setLoading(false);
   }
 
@@ -104,12 +108,14 @@ export function App() {
     const nextFilters = { ...filters, ...overrides };
     setFilters(nextFilters);
     if (!selectedProjectId) return;
-    const [result, projectResult] = await Promise.all([
+    const [result, projectResult, staleResult] = await Promise.all([
       api.tasks({ projectId: selectedProjectId, ...nextFilters }),
-      api.tasks({ projectId: selectedProjectId })
+      api.tasks({ projectId: selectedProjectId }),
+      api.staleInProgressTasks({ projectId: selectedProjectId })
     ]);
     setTasks(result.tasks);
     setProjectTasks(projectResult.tasks);
+    setStaleWork(staleResult.tasks);
   }
 
   async function refreshTalks(overrides = {}, projectId = selectedProjectId) {
@@ -149,6 +155,42 @@ export function App() {
   async function mutate(action) {
     try {
       await runMutation(action);
+    } catch (nextError) {
+      setError(nextError.message);
+    }
+  }
+
+  async function recoverStaleWork(item, action) {
+    const note = (staleWorkNotes[item.task.id] || "").trim();
+    const defaultNotes = {
+      requeue: `Recovered stale in-progress work: requeued from ${item.assignee || "unassigned owner"}.`,
+      block: `Recovered stale in-progress work: moved to blocked from ${item.assignee || "unassigned owner"}.`,
+      acknowledge: `Acknowledged active ownership for ${item.assignee}.`
+    };
+
+    try {
+      await runMutation(async () => {
+        const body = note || defaultNotes[action];
+        if (body) {
+          await api.addComment(item.task.id, { author: "operator-ui", body });
+        }
+        if (action === "requeue") {
+          await api.updateTask(item.task.id, { status: "ready", assignee: "", actor: "operator-ui" });
+        } else if (action === "block") {
+          await api.updateTask(item.task.id, { status: "blocked", actor: "operator-ui" });
+        } else if (action === "acknowledge") {
+          await api.updatePresence(item.assignee, {
+            state: "active",
+            currentTaskId: item.task.id,
+            message: body || "Ownership acknowledged from operator UI."
+          });
+        }
+      });
+      setStaleWorkNotes((current) => {
+        const next = { ...current };
+        delete next[item.task.id];
+        return next;
+      });
     } catch (nextError) {
       setError(nextError.message);
     }
@@ -265,6 +307,16 @@ export function App() {
             <AlertCircle size={18} />
             <span>{error}</span>
           </div>
+        )}
+
+        {staleWork.length > 0 && (
+          <StaleWorkPanel
+            items={staleWork}
+            notes={staleWorkNotes}
+            onNoteChange={(taskId, note) => setStaleWorkNotes((current) => ({ ...current, [taskId]: note }))}
+            onRecover={recoverStaleWork}
+            onSelectTask={setSelectedTaskId}
+          />
         )}
 
         {loading ? (
@@ -444,6 +496,59 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
           </article>
         ))}
         {talks.length === 0 && <div className="talkEmpty">No talks</div>}
+      </div>
+    </section>
+  );
+}
+
+function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask }) {
+  return (
+    <section className="staleWorkPanel" aria-label="Stale in-progress work">
+      <div className="staleWorkHeader">
+        <div>
+          <div className="sectionLabel">Needs Attention</div>
+          <h3>Stale In-Progress Work</h3>
+        </div>
+        <span>{items.length}</span>
+      </div>
+      <div className="staleWorkList">
+        {items.map((item) => (
+          <article className="staleWorkCard" data-testid="stale-work-card" key={item.task.id}>
+            <div className="staleWorkBody">
+              <button className="linkButton staleTaskLink" onClick={() => onSelectTask(item.task.id)}>
+                {item.task.title}
+              </button>
+              <div className="staleWorkMeta">
+                <span>{item.reasonLabel}</span>
+                <span>{item.assignee || "Unassigned"}</span>
+                <span>{formatShortDateTime(item.lastProgressAt)}</span>
+              </div>
+            </div>
+            <textarea
+              placeholder="Recovery note"
+              value={notes[item.task.id] || ""}
+              onChange={(event) => onNoteChange(item.task.id, event.target.value)}
+            />
+            <div className="staleWorkActions">
+              <button disabled={!(notes[item.task.id] || "").trim()} onClick={() => onRecover(item, "comment")}>
+                <MessageSquarePlus size={15} />
+                <span>Comment</span>
+              </button>
+              <button onClick={() => onRecover(item, "requeue")}>
+                <ChevronRight size={15} />
+                <span>Requeue</span>
+              </button>
+              <button onClick={() => onRecover(item, "block")}>
+                <AlertCircle size={15} />
+                <span>Block</span>
+              </button>
+              <button disabled={!item.canAcknowledge} onClick={() => onRecover(item, "acknowledge")}>
+                <CheckCircle2 size={15} />
+                <span>Acknowledge</span>
+              </button>
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );
@@ -1130,6 +1235,16 @@ function CreateProjectDialog({ onClose, onCreate }) {
       </div>
     </Dialog>
   );
+}
+
+function formatShortDateTime(value) {
+  if (!value) return "No progress";
+  return new Date(value).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
 }
 
 function Dialog({ title, children, onClose }) {

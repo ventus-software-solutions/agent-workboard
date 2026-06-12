@@ -9,6 +9,7 @@ import { WorkboardStore } from "../../server/storage/workboardStore.js";
 const projectRoot = path.resolve(".");
 
 let apiServer;
+let apiBaseURL;
 let baseURL;
 let dataDir;
 let uploadFixturePath;
@@ -22,6 +23,7 @@ test.beforeAll(async () => {
   const apiApp = createApp({ store });
   apiServer = await listen(apiApp);
   const apiBase = `http://127.0.0.1:${apiServer.address().port}`;
+  apiBaseURL = apiBase;
 
   viteServer = await createViteServer({
     root: projectRoot,
@@ -142,6 +144,55 @@ test("keeps wrapped task-card content inside the card at responsive widths", asy
     await expect(taskCard(page, longTitle)).toBeVisible();
     await expectCardContentInsideCard(page, longTitle);
   }
+});
+
+test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {
+  const projectName = uniqueName("E2E Stale Work Project");
+  const projectKey = uniqueKey("STL");
+  const staleTitle = uniqueName("Recover stale implementation");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: staleTitle,
+      role: "implementer",
+      priority: "high",
+      status: "in_progress",
+      assignee: "implementer-backend-99",
+      description: "This task should be surfaced as stale because the assignee is not a configured slot."
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const { task } = await taskResponse.json();
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  const staleCard = page.getByTestId("stale-work-card").filter({ hasText: staleTitle });
+  await expect(staleCard).toBeVisible();
+  await expect(staleCard).toContainText("implementer-backend-99");
+  await expect(staleCard).toContainText("Missing slot");
+
+  await staleCard.getByPlaceholder("Recovery note").fill("Requeueing stale work from browser coverage.");
+  await staleCard.getByRole("button", { name: "Requeue" }).click();
+
+  await expect(staleCard).toHaveCount(0);
+  await expect(page.locator(".kanbanColumn", { hasText: "Ready" }).locator(".taskCard", { hasText: staleTitle })).toBeVisible();
+
+  const updatedTaskResponse = await page.request.get(`${apiBaseURL}/api/tasks/${task.id}`);
+  expect(updatedTaskResponse.ok()).toBe(true);
+  const updatedTask = (await updatedTaskResponse.json()).task;
+  expect(updatedTask).toMatchObject({ status: "ready", assignee: "" });
+  expect(updatedTask.comments[0]).toMatchObject({
+    author: "operator-ui",
+    body: "Requeueing stale work from browser coverage."
+  });
 });
 
 async function createTask(page, { title, role, priority, assignee, labels, description }) {

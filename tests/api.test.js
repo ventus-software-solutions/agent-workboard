@@ -394,6 +394,92 @@ describe("Agent Workboard API", () => {
     );
   });
 
+  it("lists stale in-progress tasks with slot and heartbeat evidence", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Stale Work API Project" })).body.project;
+    await request(app)
+      .post("/api/agent-slots/acquire")
+      .send({
+        agentId: "implementer-backend-1",
+        runtimeId: "stale-api-runtime",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+    await request(app)
+      .post("/api/agent-slots/acquire")
+      .send({
+        agentId: "implementer-backend-2",
+        runtimeId: "fresh-api-runtime",
+        now: "2026-06-12T15:10:00.000Z"
+      })
+      .expect(200);
+    const staleTask = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API stale worker task",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-backend-1"
+        })
+        .expect(201)
+    ).body.task;
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "API missing slot task",
+        status: "in_progress",
+        role: "implementer",
+        assignee: "implementer-backend-99"
+      })
+      .expect(201);
+    const freshTask = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API fresh worker task",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-backend-2"
+        })
+        .expect(201)
+    ).body.task;
+
+    await request(app)
+      .post("/api/agents/implementer-backend-2/presence")
+      .send({
+        state: "active",
+        currentTaskId: freshTask.id,
+        now: "2026-06-12T15:10:30.000Z"
+      })
+      .expect(200);
+
+    const response = await request(app)
+      .get("/api/tasks/stale-in-progress")
+      .query({ projectId: project.id, now: "2026-06-12T15:20:01.000Z" })
+      .expect(200);
+
+    expect(response.body.leaseMs).toBeGreaterThan(0);
+    expect(response.body.tasks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: "expired_heartbeat",
+          task: expect.objectContaining({ id: staleTask.id }),
+          assignee: "implementer-backend-1",
+          suggestedActions: expect.arrayContaining(["comment", "requeue", "block", "acknowledge"])
+        }),
+        expect.objectContaining({
+          reason: "missing_slot",
+          assignee: "implementer-backend-99",
+          canAcknowledge: false
+        })
+      ])
+    );
+    expect(response.body.tasks.map((item) => item.task.id)).not.toContain(freshTask.id);
+  });
+
   it("returns reviewer review-queue metadata without claim preconditions", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Reviewer Pass API Project" })).body.project;
     const reviewTask = (
