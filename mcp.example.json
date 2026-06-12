@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-workboard": {
+      "command": "node",
+      "args": ["C:/git/agent-workboard/server/mcp.js"],
+      "env": {
+        "WORKBOARD_DATA_DIR": "C:/git/agent-workboard/.workboard-data"
+      }
+    }
+  }
+}

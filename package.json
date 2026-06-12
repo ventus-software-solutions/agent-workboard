@@ -1,0 +1,33 @@
+{
+  "name": "agent-workboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first workboard for assigning projects and tasks to AI agents.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "set WORKBOARD_DATA_DIR=.workboard-data&& node --watch server/index.js",
+    "dev:web": "vite --host 0.0.0.0 --port 5174",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "mcp": "node server/mcp.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "lucide-react": "^1.18.0",
+    "multer": "^2.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^10.0.3",
+    "supertest": "^7.2.2",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  }
+}

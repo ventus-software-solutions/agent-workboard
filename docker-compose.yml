@@ -1,0 +1,16 @@
+services:
+  agent-workboard:
+    build: .
+    container_name: agent-workboard
+    ports:
+      - "8088:8080"
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      WORKBOARD_DATA_DIR: /data
+    volumes:
+      - agent-workboard-data:/data
+    restart: unless-stopped
+
+volumes:
+  agent-workboard-data:
