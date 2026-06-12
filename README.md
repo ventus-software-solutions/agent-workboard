@@ -68,6 +68,8 @@ The same contract is available over MCP through `get_agent_instructions`.
 
 Agent instructions include branch/worktree discipline. Implementation agents should claim a task, then create or switch to a task branch/worktree before editing files. The shared `main` checkout should stay available for the running local service and operator state.
 
+Reviewer agents are the default merge owners. They should scan `status=review`, verify the branch or worktree evidence, merge approved work, comment the merge SHA and verification, and move the original task to `done`. Requested changes go back to `ready` or `blocked` with findings.
+
 Example:
 
 ```bash

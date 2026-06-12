@@ -12,6 +12,14 @@ Default dogfood project: `DOGFOOD`.
 
 Core rule: claim exactly one task, post visible progress, attach or comment evidence, then move the task to the correct next status before taking another task.
 
+## Reviewer Merge Responsibility
+
+Reviewer agents own the final transition for implementation work.
+
+Reviewers must scan `status=review` tasks before ordinary reviewer-role backlog work. If a reviewer approves a task, the reviewer is responsible for merging it, commenting the merge commit and verification evidence, and moving the original task to `done`. If the task is not ready, the reviewer comments specific findings and moves it back to `ready` or `blocked`.
+
+A review is incomplete until the work is either merged and marked `done`, returned with requested changes, or explicitly handed to another reviewer/operator with the blocker stated.
+
 ## Branch And Worktree Discipline
 
 Implementation agents must not edit the shared `main` checkout directly.

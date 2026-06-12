@@ -13,9 +13,9 @@ const ROLE_RULES = {
   },
   reviewer: {
     mission: "Review task outcomes for correctness, risk, missing tests, and readiness to merge or release.",
-    accepts: ["ready or review tasks assigned to your exact agent id", "review tasks with role=reviewer"],
-    outputs: ["findings", "risk notes", "approval comments", "follow-up tasks"],
-    doneMeans: "The task has a clear approve/request-changes outcome with evidence."
+    accepts: ["tasks in status=review", "ready review tasks assigned to your exact agent id", "ready tasks with role=reviewer"],
+    outputs: ["findings", "risk notes", "approval comments", "merge commits", "follow-up tasks"],
+    doneMeans: "Approved work is merged and marked done, or requested changes are returned with evidence."
   },
   tester: {
     mission: "Verify behavior through reproducible tests, browser checks, fixtures, or explicit manual evidence.",
@@ -76,6 +76,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
   const role = roles.find((candidate) => candidate.id === profile.role) || roles.find((candidate) => candidate.id === "implementer");
   const rule = ROLE_RULES[profile.role] || ROLE_RULES.implementer;
   const filters = taskFilters(profile);
+  const isReviewer = profile.role === "reviewer";
 
   return {
     agentId,
@@ -88,6 +89,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
       "First, list active projects.",
       "Prefer the DOGFOOD project when it exists unless the operator named another project.",
       "Find tasks assigned to your exact agent id.",
+      ...(isReviewer ? ["Then scan tasks in status=review; review-column work takes priority over ordinary reviewer-role tasks."] : []),
       `Then find ready tasks where role=${profile.role}.`,
       "Then find ready/backlog tasks matching your specialty labels.",
       "Sort by urgent, high, normal, low. Prefer ready over backlog.",
@@ -101,8 +103,10 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     api: {
       listProjects: `${baseUrl}/api/projects`,
       listTasks: `${baseUrl}/api/tasks?${new URLSearchParams(filters).toString()}`,
+      ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
     },
+    reviewerMerge: isReviewer ? reviewerMergeRules() : [],
     mcp: {
       firstTool: "get_agent_instructions",
       then: ["list_projects", "list_tasks", "claim_task", "add_comment", "update_task_status"]
@@ -135,7 +139,7 @@ export function renderAgentDocMarkdown(doc) {
     `1. Read this document: ${doc.api.agentDoc}`,
     `2. List projects: ${doc.api.listProjects}`,
     `3. Find your tasks: ${doc.api.listTasks}`,
-    "4. Claim exactly one task before doing substantive work.",
+    ...(doc.api.reviewQueue ? [`4. Check the review queue: ${doc.api.reviewQueue}`, "5. Claim exactly one task before doing substantive work."] : ["4. Claim exactly one task before doing substantive work."]),
     "",
     "## Task Selection",
     ...doc.taskSelection.map((line, index) => `${index + 1}. ${line}`),
@@ -146,6 +150,13 @@ export function renderAgentDocMarkdown(doc) {
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
     "",
+    ...(doc.reviewerMerge.length
+      ? [
+          "## Reviewer Merge Responsibility",
+          ...doc.reviewerMerge.map((line, index) => `${index + 1}. ${line}`),
+          ""
+        ]
+      : []),
     "## Good Outputs",
     ...doc.outputs.map((line) => `- ${line}`),
     "",
@@ -203,6 +214,18 @@ function sharedWorkflow() {
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",
     "Move the task to review, testing, done, or blocked according to the result.",
     "Only then look for another task."
+  ];
+}
+
+function reviewerMergeRules() {
+  return [
+    "A review is not complete just because you wrote findings. It is complete when the task is merged and marked done, or returned with requested changes.",
+    "Review tasks in `status=review` before taking ordinary reviewer-role backlog work.",
+    "Inspect the implementer's task comments, branch/worktree path, commit evidence, and stated test output.",
+    "Run the relevant verification yourself when practical, at minimum `npm test` and `npm run build` for code changes before merge.",
+    "If approved, merge the branch or commit according to the current repo workflow, then comment the merge commit SHA and verification evidence on the original task.",
+    "If changes are needed, comment specific findings and move the original task back to `ready` or `blocked` with the reason.",
+    "If you cannot merge because of permissions, conflicts, or unclear ownership, explicitly assign merge to another reviewer/operator and leave the task in `review` with the blocker."
   ];
 }
 

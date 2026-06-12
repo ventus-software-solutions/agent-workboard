@@ -40,12 +40,21 @@ describe("Agent Workboard API", () => {
     expect(mcpDoc.body.agent.role).toBe("implementer");
     expect(mcpDoc.body.agent.specialties).toContain("mcp");
 
+    const reviewerDoc = await request(app).get("/api/agent-docs/reviewer-agent").expect(200);
+    expect(reviewerDoc.body.agent.api.reviewQueue).toContain("status=review");
+    expect(reviewerDoc.body.agent.taskSelection.join("\n")).toContain("review-column work takes priority");
+    expect(reviewerDoc.body.agent.reviewerMerge.join("\n")).toContain("merge commit SHA");
+
     const markdown = await request(app).get("/api/agent-docs/test-agent?format=md").expect(200);
     expect(markdown.headers["content-type"]).toContain("text/markdown");
     expect(markdown.text).toContain("You are **test-agent**");
     expect(markdown.text).toContain("Claim exactly one task");
     expect(markdown.text).toContain("Branch And Worktree Discipline");
     expect(markdown.text).toContain("wt-agent-workboard-test-agent");
+
+    const reviewerMarkdown = await request(app).get("/api/agent-docs/reviewer-agent?format=md").expect(200);
+    expect(reviewerMarkdown.text).toContain("Reviewer Merge Responsibility");
+    expect(reviewerMarkdown.text).toContain("Check the review queue");
   });
 
   it("creates a project and a task, then moves the task", async () => {
