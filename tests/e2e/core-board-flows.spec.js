@@ -53,6 +53,19 @@ test.afterAll(async () => {
   }
 });
 
+test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page }) => {
+  await page.goto(baseURL);
+  await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
+
+  const readyColumn = page.locator('.kanbanColumn[data-status-id="ready"]');
+  await expect(readyColumn.locator(".taskCard", { hasText: "Shape the first release plan" })).toBeVisible();
+
+  const workflowCard = readyColumn.locator(".taskCard", { hasText: "Implement the first useful workflow" });
+  await expect(workflowCard).toBeVisible();
+  await expect(workflowCard).toContainText("high");
+  await expect(workflowCard).toContainText("Unassigned");
+});
+
 test("covers core board flows in the browser", async ({ page }) => {
   const projectName = uniqueName("E2E Core Flow Project");
   const projectKey = uniqueKey("E2E");

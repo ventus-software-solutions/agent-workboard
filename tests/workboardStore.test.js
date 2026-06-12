@@ -18,6 +18,30 @@ afterEach(async () => {
 });
 
 describe("WorkboardStore", () => {
+  it("seeds the DEMO project with a ready first workflow implementation task", () => {
+    const demoTasks = store.listTasks({ projectId: "project_demo" });
+    const releasePlan = demoTasks.find((task) => task.id === "task_demo_pm");
+    const workflowTask = demoTasks.find((task) => task.id === "task_demo_impl");
+
+    expect(releasePlan).toMatchObject({
+      title: "Shape the first release plan",
+      status: "ready",
+      priority: "high",
+      role: "pm",
+      assignee: "pm-agent"
+    });
+    expect(workflowTask).toMatchObject({
+      title: "Implement the first useful workflow",
+      status: "ready",
+      priority: "high",
+      role: "implementer",
+      assignee: "",
+      labels: ["mvp", "workflow", "demo"]
+    });
+    expect(workflowTask.description).toContain("ready task can be claimed");
+    expect(workflowTask.description).toContain("done requires a structured completion record");
+  });
+
   it("creates projects and filters tasks by project and role", async () => {
     const project = await store.createProject({ name: "Customer Build", key: "CB" });
     const task = await store.createTask({
