@@ -95,20 +95,18 @@ server.registerTool(
   "claim_task",
   {
     title: "Claim task",
-    description: "Assign a task to an agent and move it into progress.",
+    description: "Stale-safely assign a task to an agent and move it into progress.",
     inputSchema: {
       taskId: z.string(),
       assignee: z.string(),
-      actor: z.string().optional()
+      actor: z.string().optional(),
+      expectedStatus: z.string().optional(),
+      expectedAssignee: z.string().optional()
     }
   },
   async (input) =>
     asText({
-      task: await store.updateTask(
-        input.taskId,
-        { assignee: input.assignee, status: "in_progress" },
-        input.actor || input.assignee
-      )
+      task: await store.claimTask(input.taskId, input)
     })
 );
 

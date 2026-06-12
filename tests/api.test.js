@@ -94,6 +94,48 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("claims a task through a stale-safe first-class endpoint", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Claim API Project" })).body.project;
+    const task = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Claim through API",
+        status: "ready",
+        assignee: ""
+      })
+    ).body.task;
+
+    const firstClaim = await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "implementer-01",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+      .expect(200);
+
+    expect(firstClaim.body.task).toMatchObject({
+      id: task.id,
+      status: "in_progress",
+      assignee: "implementer-01"
+    });
+    expect(firstClaim.body.task.activity[0]).toMatchObject({
+      actor: "implementer-01",
+      type: "claimed"
+    });
+
+    const staleClaim = await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "implementer-02",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+      .expect(409);
+
+    expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
+  });
+
   it("filters tasks and accepts file attachments", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Upload Project" })).body.project;
     const task = (

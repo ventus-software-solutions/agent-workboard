@@ -115,6 +115,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     api: {
       listProjects: `${baseUrl}/api/projects`,
       listTasks: `${baseUrl}/api/tasks?${new URLSearchParams(filters).toString()}`,
+      claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
       ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
     },
@@ -126,6 +127,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     statuses: statuses.map((status) => status.id),
     cautions: [
       "Do not work unclaimed tasks.",
+      "Do not claim tasks by PATCHing assignee/status directly; use the claim endpoint or MCP `claim_task`.",
       "Do not edit the main checkout directly for implementation work. Use a task branch/worktree first.",
       "Do not claim more than one task at a time unless the operator explicitly asks.",
       "Post a short progress comment before long work.",
@@ -233,7 +235,7 @@ function sharedWorkflow() {
   return [
     "List projects and choose the operator-named project, or DOGFOOD when no project is named.",
     "List candidate tasks using your exact agent id, role, and specialty labels.",
-    "Claim one task by setting yourself as assignee and moving it to in_progress.",
+    "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",
     "Do implementation work in the task worktree, not in the shared main checkout.",

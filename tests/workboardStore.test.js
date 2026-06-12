@@ -51,6 +51,87 @@ describe("WorkboardStore", () => {
     expect(savedTask.activity[0].type).toBe("commented");
   });
 
+  it("claims a ready task with expected status and assignee preconditions", async () => {
+    const project = await store.createProject({ name: "Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Claim exactly once",
+      status: "ready",
+      assignee: "implementer-01"
+    });
+
+    const claimed = await store.claimTask(task.id, {
+      assignee: "implementer-02",
+      actor: "implementer-02",
+      expectedStatus: "ready",
+      expectedAssignee: "implementer-01"
+    });
+
+    expect(claimed).toMatchObject({
+      id: task.id,
+      status: "in_progress",
+      assignee: "implementer-02"
+    });
+    expect(claimed.activity[0]).toMatchObject({
+      actor: "implementer-02",
+      type: "claimed"
+    });
+  });
+
+  it("rejects stale task claims with 409", async () => {
+    const project = await store.createProject({ name: "Stale Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Reject stale claim",
+      status: "ready",
+      assignee: ""
+    });
+
+    await store.claimTask(task.id, {
+      assignee: "implementer-01",
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+
+    await expect(
+      store.claimTask(task.id, {
+        assignee: "implementer-02",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("lets only one store instance claim a task from a shared data directory", async () => {
+    const project = await store.createProject({ name: "Shared Store Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Race on disk",
+      status: "ready",
+      assignee: ""
+    });
+
+    const firstStore = new WorkboardStore({ dataDir: tempDir });
+    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    await firstStore.init();
+    await secondStore.init();
+
+    const results = await Promise.allSettled([
+      firstStore.claimTask(task.id, { assignee: "implementer-01", expectedStatus: "ready", expectedAssignee: "" }),
+      secondStore.claimTask(task.id, { assignee: "implementer-02", expectedStatus: "ready", expectedAssignee: "" })
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected").reason).toMatchObject({ status: 409 });
+
+    const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    const savedTask = saved.tasks.find((item) => item.id === task.id);
+
+    expect(savedTask.status).toBe("in_progress");
+    expect(["implementer-01", "implementer-02"]).toContain(savedTask.assignee);
+  });
+
   it("stores attachments with sanitized filenames and sha256 evidence", async () => {
     const project = await store.createProject({ name: "File Project" });
     const task = await store.createTask({ projectId: project.id, title: "Read uploaded spec" });

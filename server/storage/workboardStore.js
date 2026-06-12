@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const STATUSES = [
@@ -13,6 +13,10 @@ export const STATUSES = [
 ];
 
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
+
+const WRITE_LOCK_RETRY_MS = 25;
+const WRITE_LOCK_TIMEOUT_MS = 5000;
+const STALE_WRITE_LOCK_MS = 30000;
 
 export const ROLES = [
   {
@@ -153,6 +157,7 @@ export class WorkboardStore {
   constructor({ dataDir }) {
     this.dataDir = dataDir;
     this.dbPath = path.join(dataDir, "workboard.json");
+    this.lockPath = path.join(dataDir, "workboard.json.lock");
     this.uploadsDir = path.join(dataDir, "uploads");
     this.data = null;
     this.writeQueue = Promise.resolve();
@@ -174,12 +179,62 @@ export class WorkboardStore {
 
   async save() {
     this.writeQueue = this.writeQueue.then(async () => {
-      await mkdir(this.dataDir, { recursive: true });
-      const tmpPath = `${this.dbPath}.tmp`;
-      await writeFile(tmpPath, JSON.stringify(this.data, null, 2));
-      await rename(tmpPath, this.dbPath);
+      await this.writeData(this.data);
     });
     return this.writeQueue;
+  }
+
+  async readData() {
+    const raw = await readFile(this.dbPath, "utf8");
+    return JSON.parse(raw);
+  }
+
+  async writeData(data) {
+    await mkdir(this.dataDir, { recursive: true });
+    const tmpPath = `${this.dbPath}.${randomUUID()}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(data, null, 2));
+    await rename(tmpPath, this.dbPath);
+  }
+
+  async withWriteLock(callback) {
+    await mkdir(this.dataDir, { recursive: true });
+    const startedAt = Date.now();
+
+    while (true) {
+      try {
+        await mkdir(this.lockPath);
+        break;
+      } catch (error) {
+        if (error.code !== "EEXIST") {
+          throw error;
+        }
+
+        await this.removeStaleWriteLock();
+        if (Date.now() - startedAt > WRITE_LOCK_TIMEOUT_MS) {
+          throw Object.assign(new Error("Timed out waiting for workboard write lock."), { status: 503 });
+        }
+        await sleep(WRITE_LOCK_RETRY_MS);
+      }
+    }
+
+    try {
+      return await callback();
+    } finally {
+      await rm(this.lockPath, { recursive: true, force: true });
+    }
+  }
+
+  async removeStaleWriteLock() {
+    try {
+      const lockStat = await stat(this.lockPath);
+      if (Date.now() - lockStat.mtimeMs > STALE_WRITE_LOCK_MS) {
+        await rm(this.lockPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
   }
 
   roles() {
@@ -367,6 +422,62 @@ export class WorkboardStore {
     return task;
   }
 
+  async claimTask(taskId, input) {
+    const assignee = normalizeText(input.assignee);
+    if (!assignee) {
+      throw Object.assign(new Error("Claim assignee is required."), { status: 400 });
+    }
+
+    const hasExpectedStatus = Object.prototype.hasOwnProperty.call(input, "expectedStatus");
+    const expectedStatus = hasExpectedStatus ? normalizeText(input.expectedStatus) : "ready";
+    if (expectedStatus && !STATUS_IDS.has(expectedStatus)) {
+      throw Object.assign(new Error("Expected status is invalid."), { status: 400 });
+    }
+
+    const hasExpectedAssignee = Object.prototype.hasOwnProperty.call(input, "expectedAssignee");
+    const expectedAssignee = hasExpectedAssignee ? normalizeText(input.expectedAssignee) : "";
+    const actor = normalizeText(input.actor) || assignee;
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      const task = this.getTask(taskId);
+
+      if (expectedStatus && task.status !== expectedStatus) {
+        throw Object.assign(new Error(`Task claim expected status ${expectedStatus}, found ${task.status}.`), {
+          status: 409
+        });
+      }
+
+      if (hasExpectedAssignee) {
+        if (task.assignee !== expectedAssignee) {
+          throw Object.assign(
+            new Error(`Task claim expected assignee ${expectedAssignee || "(unassigned)"}, found ${task.assignee || "(unassigned)"}.`),
+            { status: 409 }
+          );
+        }
+      } else if (task.assignee && task.assignee !== assignee) {
+        throw Object.assign(new Error(`Task is already claimed by ${task.assignee}.`), { status: 409 });
+      }
+
+      const claimedAt = now();
+      const previousStatus = task.status;
+      const previousAssignee = task.assignee;
+      task.status = "in_progress";
+      task.assignee = assignee;
+      task.updatedAt = claimedAt;
+      task.activity.unshift({
+        id: id("event"),
+        actor,
+        type: "claimed",
+        message: `Claimed task (${previousStatus}/${previousAssignee || "unassigned"} -> in_progress/${assignee}).`,
+        createdAt: claimedAt
+      });
+
+      await this.writeData(this.data);
+      return task;
+    });
+  }
+
   async addComment(taskId, input) {
     const task = this.getTask(taskId);
     const body = normalizeText(input.body);
@@ -457,4 +568,10 @@ function statusRank(status) {
 
 function priorityRank(priority) {
   return PRIORITIES.indexOf(priority);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

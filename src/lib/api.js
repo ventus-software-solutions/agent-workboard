@@ -27,6 +27,7 @@ export const api = {
   },
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),
   addComment: (taskId, comment) =>
     request(`/api/tasks/${taskId}/comments`, { method: "POST", body: JSON.stringify(comment) }),
   uploadAttachment: (taskId, file, author = "operator") => {

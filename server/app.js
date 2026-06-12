@@ -102,6 +102,15 @@ export function createApp({ store }) {
     }
   });
 
+  app.post("/api/tasks/:taskId/claim", async (req, res, next) => {
+    try {
+      const task = await store.claimTask(req.params.taskId, req.body);
+      res.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/tasks/:taskId/comments", async (req, res, next) => {
     try {
       const comment = await store.addComment(req.params.taskId, req.body);
