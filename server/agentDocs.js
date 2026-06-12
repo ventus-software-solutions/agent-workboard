@@ -81,7 +81,7 @@ export function listAgentDocs({ roles, statuses }) {
   };
 }
 
-export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://localhost:8088" }) {
+export function buildAgentDoc({ agentId, roles, statuses, agentSlots = [], agentTypes = [], baseUrl = "http://localhost:8088" }) {
   const profile = resolveAgentProfile(agentId);
   const role = roles.find((candidate) => candidate.id === profile.role) || roles.find((candidate) => candidate.id === "implementer");
   const rule = ROLE_RULES[profile.role] || ROLE_RULES.implementer;
@@ -94,7 +94,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     role: role?.id || profile.role,
     roleLabel: role?.label || profile.role,
     specialties: profile.specialties,
-    identity: identityModel(agentId),
+    identity: identityModel(agentId, { agentSlots, agentTypes }),
     mission: rule.mission,
     taskSelection: [
       "First, list active projects.",
@@ -210,14 +210,66 @@ export function renderAgentDocMarkdown(doc) {
   ].join("\n");
 }
 
-function identityModel(agentId = "{agentType}") {
+function identityModel(agentId = "{agentType}", { agentSlots = [], agentTypes = [] } = {}) {
+  const normalized = String(agentId || "").toLowerCase();
+  const configuredSlot = agentSlots.find((slot) => slot.id === normalized);
+  const genericType = slotTypeForAgentDoc(normalized, agentTypes, agentSlots);
+  const suggestedSlotIds = genericType?.slotIds?.length ? genericType.slotIds : [];
+
+  if (configuredSlot) {
+    return {
+      status: "http-slot-bootstrap",
+      suggestedAgentsAre: "role types, not unique live worker identities",
+      summary: "Suggested agent names such as `implementer` and `reviewer` are role types.",
+      currentRule: `HTTP slot bootstrap is available at /api/bootstrap. \`${agentId}\` is a configured concrete slot id; use that exact assignee id when claiming work, or renew it through /api/bootstrap when running continuously.`,
+      futureRule: "MCP acquire_agent_slot provides the same slot acquisition path for MCP-only workers."
+    };
+  }
+
+  if (genericType) {
+    const slotExamples = suggestedSlotIds.map((slotId) => `\`${slotId}\``).join(" or ");
+    return {
+      status: "http-slot-bootstrap",
+      suggestedAgentsAre: "role types, not unique live worker identities",
+      summary: "Suggested agent names such as `implementer` and `reviewer` are role types.",
+      currentRule: `You were started from the role type \`${agentId}\`, not a live worker identity. HTTP slot bootstrap is available at /api/bootstrap; acquire a concrete slot${slotExamples ? ` such as ${slotExamples}` : ""} before claiming tasks.`,
+      futureRule: "MCP acquire_agent_slot provides the same slot acquisition path for MCP-only workers."
+    };
+  }
+
   return {
     status: "http-slot-bootstrap",
     suggestedAgentsAre: "role types, not unique live worker identities",
     summary: "Suggested agent names such as `implementer` and `reviewer` are role types.",
-    currentRule: `HTTP slot bootstrap is available at /api/bootstrap. Use a concrete assignee id such as ${agentId} when the PM/operator gives one; otherwise acquire an empty matching slot first.`,
+    currentRule: `HTTP slot bootstrap is available at /api/bootstrap. Use \`${agentId}\` as a non-slot assignee only when the PM/operator explicitly approved it; otherwise acquire an empty matching slot first.`,
     futureRule: "MCP acquire_agent_slot provides the same slot acquisition path for MCP-only workers."
   };
+}
+
+function slotTypeForAgentDoc(agentId, agentTypes, agentSlots) {
+  if (!agentId) return null;
+  if (agentSlots.some((slot) => slot.id === agentId)) return null;
+
+  const directType = agentTypes.find((type) => type.id === agentId);
+  if (directType) return directType;
+
+  const roleTypes = agentTypes.filter((type) => type.role === agentId);
+  if (roleTypes.length === 1) return roleTypes[0];
+
+  const aliases = {
+    backend: "implementer-backend",
+    frontend: "implementer-frontend",
+    implementer: "implementer-general",
+    general: "implementer-general",
+    review: "reviewer",
+    test: "tester",
+    tests: "tester",
+    security: "implementer-security",
+    docs: "docs",
+    documentation: "docs"
+  };
+  const aliasedTypeId = aliases[agentId];
+  return aliasedTypeId ? agentTypes.find((type) => type.id === aliasedTypeId) || null : null;
 }
 
 function resolveAgentProfile(agentId) {

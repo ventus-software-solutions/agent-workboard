@@ -573,6 +573,7 @@ export class WorkboardStore {
     const currentTime = parseTimestamp(nowInput);
     const stats = this.agentSlotTaskStats();
     const slots = this.data.agentSlots.map((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id)));
+    const untrackedInProgressAssignees = this.untrackedInProgressAssignees();
     const activeByType = new Map();
 
     for (const slot of slots) {
@@ -590,7 +591,8 @@ export class WorkboardStore {
         active: activeByType.get(type.id) || 0,
         available: Math.max(0, type.capacity - (activeByType.get(type.id) || 0))
       })),
-      slots
+      slots,
+      untrackedInProgressAssignees
     };
   }
 
@@ -724,6 +726,15 @@ export class WorkboardStore {
       this.ensureAgentSlotSchema();
       this.ensureAgentPresenceSchema();
 
+      const slotRequirement = this.agentSlotRequirement(agentId, input);
+      if (slotRequirement) {
+        throw httpError(
+          `Agent id ${agentId} is not a configured concrete agent slot for ${slotRequirement.role} work. Acquire a concrete agent slot such as ${slotRequirement.suggestedSlotIds.join(" or ")} before reporting presence.`,
+          409,
+          slotRequirement
+        );
+      }
+
       const presence = this.writeAgentPresence(agentId, input, currentTime);
       await this.writeData(this.data);
       return presence;
@@ -743,6 +754,15 @@ export class WorkboardStore {
       this.data = await this.readData();
       this.ensureAgentSlotSchema();
       this.ensureAgentPresenceSchema();
+
+      const slotRequirement = this.agentSlotRequirement(agentId, input);
+      if (slotRequirement) {
+        throw httpError(
+          `Agent id ${agentId} is not a configured concrete agent slot for ${slotRequirement.role} work. Acquire a concrete agent slot such as ${slotRequirement.suggestedSlotIds.join(" or ")} before reporting no eligible work.`,
+          409,
+          slotRequirement
+        );
+      }
 
       const reportedAt = currentTime.toISOString();
       const noEligibleWork = {
@@ -788,6 +808,7 @@ export class WorkboardStore {
     this.ensureAgentSlotSchema();
     const currentTime = parseTimestamp(input.now);
     const profile = this.resolveWorkAgentProfile(agentId, input);
+    const slotRequirement = this.agentSlotRequirement(agentId, input);
     const agent = {
       agentId,
       role: profile.role,
@@ -796,6 +817,24 @@ export class WorkboardStore {
       paused: profile.paused,
       ...(profile.slot ? { slotId: profile.slot.id, typeId: profile.slot.typeId } : {})
     };
+
+    if (slotRequirement) {
+      return {
+        agent: {
+          ...agent,
+          role: slotRequirement.role,
+          specialties: [...slotRequirement.specialties],
+          workMode: slotRequirement.workMode,
+          typeId: slotRequirement.typeId
+        },
+        task: null,
+        selection: {
+          reason: "agent_slot_required",
+          ...slotRequirement
+        },
+        candidates: []
+      };
+    }
 
     if (profile.paused) {
       return {
@@ -1297,7 +1336,17 @@ export class WorkboardStore {
 
     return this.withWriteLock(async () => {
       this.data = await this.readData();
+      this.ensureAgentSlotSchema();
       const task = this.getTask(taskId);
+      const slotRequirement = this.claimSlotIdentityRequirement(assignee, task);
+
+      if (slotRequirement) {
+        throw httpError(
+          `Agent id ${assignee} is not a configured concrete agent slot for ${slotRequirement.role} work. Acquire a concrete agent slot such as ${slotRequirement.suggestedSlotIds.join(" or ")} before claiming work.`,
+          409,
+          slotRequirement
+        );
+      }
 
       if (expectedStatus && task.status !== expectedStatus) {
         throw Object.assign(new Error(`Task claim expected status ${expectedStatus}, found ${task.status}.`), {
@@ -1689,6 +1738,40 @@ export class WorkboardStore {
     return stats;
   }
 
+  untrackedInProgressAssignees() {
+    const slotIds = new Set(this.data.agentSlots.map((slot) => slot.id));
+    const grouped = new Map();
+
+    for (const task of this.data.tasks) {
+      const assignee = normalizeText(task.assignee).toLowerCase();
+      if (!assignee || task.status !== "in_progress" || slotIds.has(assignee)) continue;
+
+      const current = grouped.get(assignee) || {
+        assignee,
+        role: task.role,
+        taskIds: [],
+        taskTitles: []
+      };
+      current.taskIds.push(task.id);
+      current.taskTitles.push(task.title);
+      if (!current.role && task.role) current.role = task.role;
+      grouped.set(assignee, current);
+    }
+
+    return [...grouped.values()]
+      .map((item) => {
+        const type = this.typeForUntrackedAssignee(item.assignee, item.role);
+        return {
+          ...item,
+          reason: "non_slot_assignee",
+          typeId: type?.id || "",
+          suggestedSlotIds: type ? [...type.slotIds] : [],
+          inProgressTaskCount: item.taskIds.length
+        };
+      })
+      .sort((a, b) => a.assignee.localeCompare(b.assignee));
+  }
+
   describeAgentSlot(slot, currentTime, taskStats = {}) {
     const stats = {
       assignedTaskCount: 0,
@@ -1874,6 +1957,83 @@ export class WorkboardStore {
       capability.lastVerifiedAt = completedAt;
       capability.updatedAt = now();
     }
+  }
+
+  slotIdentityRequirement(agentIdInput) {
+    const agentId = normalizeText(agentIdInput).toLowerCase();
+    if (!agentId) return null;
+    if (this.data.agentSlots.some((slot) => slot.id === agentId)) return null;
+
+    const type = this.typeForGenericSlotIdentity(agentId);
+    if (!type) return null;
+
+    return this.slotRequirementForType(agentId, type);
+  }
+
+  claimSlotIdentityRequirement(agentIdInput, task) {
+    const agentId = normalizeText(agentIdInput).toLowerCase();
+    if (!agentId) return null;
+    if (this.data.agentSlots.some((slot) => slot.id === agentId)) return null;
+
+    const genericRequirement = this.slotIdentityRequirement(agentId);
+    if (genericRequirement) return genericRequirement;
+
+    if (normalizeText(task.assignee).toLowerCase() === agentId) {
+      return null;
+    }
+
+    const type = this.typeForUntrackedAssignee(agentId, task.role, task.labels);
+    if (!type || type.role !== task.role || type.slotIds.length === 0) return null;
+
+    return this.slotRequirementForType(agentId, type);
+  }
+
+  agentSlotRequirement(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput).toLowerCase();
+    if (!agentId) return null;
+    if (this.data.agentSlots.some((slot) => slot.id === agentId)) return null;
+
+    const genericRequirement = this.slotIdentityRequirement(agentId);
+    if (genericRequirement) return genericRequirement;
+
+    const role = validOr(normalizeText(input.role), ROLE_IDS, inferRoleFromAgentId(agentId));
+    const type = this.typeForUntrackedAssignee(agentId, role, input.specialties || input.labels);
+    if (!type || type.role !== role || type.slotIds.length === 0) return null;
+
+    return this.slotRequirementForType(agentId, type);
+  }
+
+  slotRequirementForType(agentId, type) {
+    return {
+      agentId,
+      typeId: type.id,
+      role: type.role,
+      specialties: [...type.specialties],
+      workMode: type.defaultWorkMode,
+      suggestedSlotIds: [...type.slotIds]
+    };
+  }
+
+  typeForGenericSlotIdentity(agentIdInput) {
+    const agentId = normalizeText(agentIdInput).toLowerCase();
+    if (!agentId) return null;
+
+    const normalizedTypeId = normalizeAgentType(agentId);
+    const directType = this.data.agentTypes.find((type) => type.id === normalizedTypeId);
+    if (directType) return directType;
+
+    const roleTypes = ROLE_IDS.has(agentId) ? this.data.agentTypes.filter((type) => type.role === agentId) : [];
+    if (roleTypes.length === 1) return roleTypes[0];
+
+    return null;
+  }
+
+  typeForUntrackedAssignee(assignee, role, labels) {
+    const genericType = this.typeForGenericSlotIdentity(assignee);
+    if (genericType) return genericType;
+
+    const inferredTypeId = this.inferAgentTypeId({ agentId: assignee, role, labels });
+    return this.data.agentTypes.find((type) => type.id === inferredTypeId) || null;
   }
 
   resolveWorkAgentProfile(agentId, input = {}) {

@@ -66,6 +66,13 @@ describe("Agent Workboard API", () => {
     const reviewerMarkdown = await request(app).get("/api/agent-docs/reviewer-agent?format=md").expect(200);
     expect(reviewerMarkdown.text).toContain("Reviewer Merge Responsibility");
     expect(reviewerMarkdown.text).toContain("Check the review queue");
+
+    const genericReviewerMarkdown = await request(app).get("/api/agent-docs/reviewer?format=md").expect(200);
+    expect(genericReviewerMarkdown.text).toContain("You are **reviewer**");
+    expect(genericReviewerMarkdown.text).toContain("role type `reviewer`");
+    expect(genericReviewerMarkdown.text).toContain("acquire a concrete slot");
+    expect(genericReviewerMarkdown.text).toContain("reviewer-agent");
+    expect(genericReviewerMarkdown.text).not.toContain("concrete assignee id such as reviewer");
   });
 
   it("creates a project and a task, then moves the task", async () => {
@@ -263,7 +270,7 @@ describe("Agent Workboard API", () => {
     const firstClaim = await request(app)
       .post(`/api/tasks/${task.id}/claim`)
       .send({
-        assignee: "implementer-01",
+        assignee: "implementer-agent",
         expectedStatus: "ready",
         expectedAssignee: ""
       })
@@ -272,23 +279,70 @@ describe("Agent Workboard API", () => {
     expect(firstClaim.body.task).toMatchObject({
       id: task.id,
       status: "in_progress",
-      assignee: "implementer-01"
+      assignee: "implementer-agent"
     });
     expect(firstClaim.body.task.activity[0]).toMatchObject({
-      actor: "implementer-01",
+      actor: "implementer-agent",
       type: "claimed"
     });
 
     const staleClaim = await request(app)
       .post(`/api/tasks/${task.id}/claim`)
       .send({
-        assignee: "implementer-02",
+        assignee: "mcp-agent",
         expectedStatus: "ready",
         expectedAssignee: ""
       })
       .expect(409);
 
     expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
+  });
+
+  it("rejects role-type task claims that bypass concrete agent slots", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Role Claim API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Review with a real reviewer slot",
+          status: "ready",
+          role: "reviewer",
+          assignee: ""
+        })
+        .expect(201)
+    ).body.task;
+
+    const roleClaim = await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "reviewer",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+      .expect(409);
+
+    expect(roleClaim.body.error.message).toMatch(/concrete agent slot/i);
+    expect(roleClaim.body.error.details).toMatchObject({
+      agentId: "reviewer",
+      typeId: "reviewer",
+      suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+    });
+
+    const slotClaim = await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "reviewer-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+      .expect(200);
+
+    expect(slotClaim.body.task).toMatchObject({
+      id: task.id,
+      status: "in_progress",
+      assignee: "reviewer-agent"
+    });
   });
 
   it("reports board-state version changes for task lifecycle mutations", async () => {
@@ -329,12 +383,12 @@ describe("Agent Workboard API", () => {
     version = await expectVersionChange(version, () =>
       request(app)
         .post(`/api/tasks/${task.id}/claim`)
-        .send({ assignee: "implementer-01", expectedStatus: "ready", expectedAssignee: "" })
+        .send({ assignee: "implementer-agent", expectedStatus: "ready", expectedAssignee: "" })
         .expect(200)
     );
 
     version = await expectVersionChange(version, () =>
-      request(app).patch(`/api/tasks/${task.id}`).send({ status: "review", actor: "implementer-01" }).expect(200)
+      request(app).patch(`/api/tasks/${task.id}`).send({ status: "review", actor: "implementer-agent" }).expect(200)
     );
 
     version = await expectVersionChange(version, () =>
@@ -447,6 +501,82 @@ describe("Agent Workboard API", () => {
         })
       ])
     );
+  });
+
+  it("reports in-progress work assigned to non-slot identities as slot warnings", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Slot Warning API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Invisible reviewer work",
+          status: "in_progress",
+          role: "reviewer",
+          assignee: "reviewer"
+        })
+        .expect(201)
+    ).body.task;
+
+    const response = await request(app).get("/api/agent-slots").query({ now: "2026-06-12T15:00:00.000Z" }).expect(200);
+    const reviewerType = response.body.types.find((type) => type.id === "reviewer");
+
+    expect(reviewerType).toMatchObject({
+      active: 0,
+      available: 2
+    });
+    expect(response.body.untrackedInProgressAssignees).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          assignee: "reviewer",
+          role: "reviewer",
+          typeId: "reviewer",
+          inProgressTaskCount: 1,
+          taskIds: [task.id],
+          suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+        })
+      ])
+    );
+  });
+
+  it("rejects slot-managed claim requests from non-configured slot assignees", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Non Slot Claim API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Reviewer must claim through slot",
+          status: "ready",
+          role: "reviewer",
+          assignee: ""
+        })
+        .expect(201)
+    ).body.task;
+
+    const response = await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "reviewer-01",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+      .expect(409);
+
+    expect(response.body.error).toMatchObject({
+      details: {
+        agentId: "reviewer-01",
+        role: "reviewer",
+        typeId: "reviewer",
+        suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+      }
+    });
+
+    const fetched = await request(app).get(`/api/tasks/${task.id}`).expect(200);
+    expect(fetched.body.task).toMatchObject({
+      status: "ready",
+      assignee: ""
+    });
   });
 
   it("bootstraps an anonymous worker into a matching slot", async () => {
@@ -608,6 +738,60 @@ describe("Agent Workboard API", () => {
         })
       ])
     );
+  });
+
+  it("requires generic numbered non-slot workers to use concrete slots for helper endpoints", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Numbered Helper API Project" })).body.project;
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Concrete slot helper work",
+        status: "ready",
+        role: "implementer"
+      })
+      .expect(201);
+
+    const next = await request(app)
+      .get("/api/agents/implementer-1/next-task")
+      .query({ projectId: project.id, now: "2026-06-12T15:00:00.000Z" })
+      .expect(200);
+
+    expect(next.body.task).toBeNull();
+    expect(next.body.selection).toMatchObject({
+      reason: "agent_slot_required",
+      agentId: "implementer-1",
+      typeId: "implementer-general",
+      suggestedSlotIds: ["implementer-agent"]
+    });
+
+    const presence = await request(app)
+      .post("/api/agents/implementer-1/presence")
+      .send({
+        state: "active",
+        message: "I should have acquired a slot first.",
+        now: "2026-06-12T15:01:00.000Z"
+      })
+      .expect(409);
+
+    expect(presence.body.error).toMatchObject({
+      details: {
+        agentId: "implementer-1",
+        typeId: "implementer-general",
+        suggestedSlotIds: ["implementer-agent"]
+      }
+    });
+
+    await request(app)
+      .post("/api/agents/implementer-1/no-eligible-work")
+      .send({
+        reason: "no_ready_work",
+        now: "2026-06-12T15:02:00.000Z"
+      })
+      .expect(409);
+
+    const allPresence = await request(app).get("/api/agents/presence").expect(200);
+    expect(allPresence.body.agents.some((agent) => agent.agentId === "implementer-1")).toBe(false);
   });
 
   it("lists stale in-progress tasks with slot and heartbeat evidence", async () => {

@@ -30,10 +30,13 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       }
     },
     async (input) => {
+      const agentSlotRegistry = store.listAgentSlots();
       const doc = buildAgentDoc({
         agentId: input.agentId,
         roles: store.roles(),
         statuses: store.statuses(),
+        agentSlots: agentSlotRegistry.slots,
+        agentTypes: agentSlotRegistry.types,
         baseUrl
       });
       return asText(input.format === "json" ? doc : renderAgentDocMarkdown(doc));
