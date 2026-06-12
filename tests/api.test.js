@@ -24,8 +24,12 @@ afterEach(async () => {
 describe("Agent Workboard API", () => {
   it("serves role-aware agent bootstrap docs as JSON and Markdown", async () => {
     const overview = await request(app).get("/api/agent-docs").expect(200);
-    expect(overview.body.suggestedAgents).toContain("pm-agent");
-    expect(overview.body.usage.promptTemplate).toContain("/api/agent-docs/{agentId}");
+    expect(overview.body.suggestedAgents).toContain("implementer");
+    expect(overview.body.suggestedAgents).toContain("reviewer");
+    expect(overview.body.suggestedAgents).not.toContain("implementer-frontend-1");
+    expect(overview.body.suggestedAgents).not.toContain("implementer-backend-1");
+    expect(overview.body.usage.promptTemplate).toContain("/api/agent-docs/{agentType}");
+    expect(overview.body.slotBootstrap.plannedMcpTool).toBe("acquire_agent_slot");
 
     const pmDoc = await request(app).get("/api/agent-docs/pm-agent").expect(200);
     expect(pmDoc.body.agent).toMatchObject({

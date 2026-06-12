@@ -58,6 +58,14 @@ For a PM agent:
 You are pm-agent. Read http://localhost:8088/api/agent-docs/pm-agent?format=md and do what it tells you.
 ```
 
+For generic slot-based spawning, prefer agent types:
+
+```text
+You are implementer. Read http://localhost:8088/api/agent-docs/implementer?format=md and do what it tells you.
+```
+
+The intended next step is slot acquisition: a generic worker says `I am implementer`, then `/api/bootstrap` or MCP `acquire_agent_slot` assigns the next available concrete slot such as `implementer-04`.
+
 Useful endpoints:
 
 - `GET /api/agent-docs`

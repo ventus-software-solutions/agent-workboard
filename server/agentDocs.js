@@ -53,17 +53,25 @@ export function listAgentDocs({ roles, statuses }) {
     usage: {
       json: "/api/agent-docs/{agentId}",
       markdown: "/api/agent-docs/{agentId}?format=md",
-      promptTemplate: "You are {agentId}. Read http://localhost:8088/api/agent-docs/{agentId}?format=md and do what it tells you."
+      promptTemplate: "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you."
     },
     suggestedAgents: [
-      "pm-agent",
-      "reviewer-agent",
-      "test-agent",
-      "implementer-frontend-1",
-      "implementer-backend-1",
-      "mcp-agent",
-      "security-reviewer"
+      "pm",
+      "implementer",
+      "reviewer",
+      "tester",
+      "researcher",
+      "security",
+      "docs",
+      "release",
+      "observability"
     ],
+    slotBootstrap: {
+      status: "planned",
+      goal: "A worker should be able to say 'I am implementer' and receive the next empty slot such as implementer-04.",
+      plannedEndpoint: "/api/bootstrap",
+      plannedMcpTool: "acquire_agent_slot"
+    },
     roles,
     statuses,
     worktree: worktreeDiscipline(),

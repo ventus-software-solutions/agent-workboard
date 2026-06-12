@@ -5,12 +5,14 @@ Agent Workboard agents should bootstrap from the running board, not from stale l
 Start with:
 
 ```text
-You are <agent-id>. Read http://localhost:8088/api/agent-docs/<agent-id>?format=md and do what it tells you.
+You are <agent-type-or-id>. Read http://localhost:8088/api/agent-docs/<agent-type-or-id>?format=md and do what it tells you.
 ```
 
 Default dogfood project: `DOGFOOD`.
 
 Core rule: claim exactly one task, post visible progress, attach or comment evidence, then move the task to the correct next status before taking another task.
+
+Preferred spawn language is an agent type such as `implementer`, `reviewer`, `tester`, or `pm`, not a hand-numbered worker name. Slot acquisition is the target workflow: a generic worker should claim the next available slot like `implementer-04` before doing implementation work. Until `/api/bootstrap` or `acquire_agent_slot` exists, the operator may still assign an explicit temporary id.
 
 ## Reviewer Merge Responsibility
 
