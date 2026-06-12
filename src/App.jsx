@@ -22,6 +22,7 @@ import {
   X
 } from "lucide-react";
 import { api } from "./lib/api.js";
+import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 
 const roleIcons = {
   pm: ClipboardList,
@@ -99,11 +100,16 @@ export function App() {
     return { open, blocked, review };
   }, [tasks]);
 
+  async function runMutation(action) {
+    setError("");
+    const result = await action();
+    await refreshTasks();
+    return result;
+  }
+
   async function mutate(action) {
     try {
-      setError("");
-      await action();
-      await refreshTasks();
+      await runMutation(action);
     } catch (nextError) {
       setError(nextError.message);
     }
@@ -237,7 +243,8 @@ export function App() {
           roles={meta.roles}
           completionTypes={meta.completionTypes}
           onClose={() => setSelectedTaskId("")}
-          onMutate={mutate}
+          onMutate={runMutation}
+          onReload={() => refreshTasks()}
         />
       )}
 
@@ -361,8 +368,10 @@ function TaskCard({ task, roles, statuses, selected, onSelect, onMove }) {
   );
 }
 
-function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate }) {
+function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate, onReload }) {
   const [comment, setComment] = useState("");
+  const [drawerError, setDrawerError] = useState(null);
+  const [retryAction, setRetryAction] = useState(null);
   const [draft, setDraft] = useState({
     title: task.title,
     description: task.description,
@@ -385,10 +394,33 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
     });
     setCompletionDraft(defaultCompletionDraft(task));
     setShowCompletionForm(false);
+    setDrawerError(null);
+    setRetryAction(null);
   }, [task.id, task.status]);
 
+  async function runDrawerMutation(action) {
+    try {
+      setDrawerError(null);
+      setRetryAction(() => action);
+      await onMutate(action);
+      setRetryAction(null);
+    } catch (nextError) {
+      setDrawerError(describeTaskSaveError(nextError));
+      setRetryAction(() => action);
+    }
+  }
+
+  async function reloadTaskContext() {
+    try {
+      await onReload();
+      setDrawerError(null);
+    } catch (nextError) {
+      setDrawerError(describeTaskSaveError(nextError));
+    }
+  }
+
   const saveCompletion = () =>
-    onMutate(() =>
+    runDrawerMutation(() =>
       api.updateTask(task.id, {
         status: "done",
         actor: "operator-ui",
@@ -418,13 +450,21 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
                 setShowCompletionForm(true);
                 return;
               }
-              onMutate(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }));
+              runDrawerMutation(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }));
             }}
           >
             {status.label}
           </button>
         ))}
       </div>
+
+      {drawerError && (
+        <TaskSaveErrorPanel
+          error={drawerError}
+          onRetry={() => retryAction && runDrawerMutation(retryAction)}
+          onReload={reloadTaskContext}
+        />
+      )}
 
       <CompletionPanel
         task={task}
@@ -483,7 +523,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
         <button
           className="primaryButton wide"
           onClick={() =>
-            onMutate(() =>
+            runDrawerMutation(() =>
               api.updateTask(task.id, {
                 ...draft,
                 labels: draft.labels,
@@ -510,7 +550,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) {
-                onMutate(() => api.uploadAttachment(task.id, file, "operator-ui"));
+                runDrawerMutation(() => api.uploadAttachment(task.id, file, "operator-ui"));
               }
               event.target.value = "";
             }}
@@ -541,7 +581,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
           <button
             className="primaryButton"
             onClick={() =>
-              onMutate(async () => {
+              runDrawerMutation(async () => {
                 await api.addComment(task.id, { author: "operator-ui", body: comment });
                 setComment("");
               })
@@ -578,6 +618,32 @@ function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate 
         </div>
       </div>
     </aside>
+  );
+}
+
+function TaskSaveErrorPanel({ error, onRetry, onReload }) {
+  return (
+    <div className={`drawerSection saveErrorPanel ${error.tone}`}>
+      <div>
+        <strong>{error.title}</strong>
+        <p>{error.message}</p>
+        {error.detail && <span>{error.detail}</span>}
+      </div>
+      <div className="saveErrorActions">
+        {error.canRetry && (
+          <button className="primaryButton" onClick={onRetry}>
+            <CheckCircle2 size={16} />
+            <span>Retry</span>
+          </button>
+        )}
+        {error.canReload && (
+          <button className="ghostButton" onClick={onReload}>
+            <Clock3 size={16} />
+            <span>Reload</span>
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

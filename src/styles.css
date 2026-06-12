@@ -451,6 +451,62 @@ button {
   color: #ffbfca;
 }
 
+.saveErrorPanel {
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #6f3944;
+  border-radius: 8px;
+  background: #2b1c21;
+  color: #ffbfca;
+}
+
+.saveErrorPanel.validation {
+  border-color: #765e2f;
+  background: #2b261a;
+  color: #ffe3a8;
+}
+
+.saveErrorPanel.conflict {
+  border-color: #775337;
+  background: #2d221a;
+  color: #ffd3af;
+}
+
+.saveErrorPanel strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #fff3f5;
+}
+
+.saveErrorPanel.validation strong,
+.saveErrorPanel.conflict strong {
+  color: #fff1cc;
+}
+
+.saveErrorPanel p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.saveErrorPanel span {
+  display: block;
+  margin-top: 5px;
+  color: #f0aebb;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.saveErrorPanel.validation span,
+.saveErrorPanel.conflict span {
+  color: #eac78c;
+}
+
+.saveErrorActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .drawer {
   position: fixed;
   inset: 0 0 0 auto;
