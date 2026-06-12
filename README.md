@@ -46,7 +46,7 @@ npm test
 npm run mcp
 ```
 
-The MCP server exposes project/task listing, task creation, claiming, status updates, and comments over stdio.
+The MCP server exposes project/task listing, task creation, slot acquisition, next-task selection, presence updates, idle reporting, claiming, status updates, and comments over stdio.
 
 ## Agent Bootstrap
 
@@ -66,16 +66,22 @@ You are implementer. Read http://localhost:8088/api/agent-docs/implementer?forma
 
 Generic workers can acquire a concrete slot before claiming work. A worker can say `I am implementer`, then `POST /api/bootstrap` or MCP `acquire_agent_slot` assigns the next available matching concrete slot such as `implementer-backend-1`.
 
+Queue-draining agents can call MCP `get_next_task` or `GET /api/agents/:agentId/next-task` after slot acquisition. The helper does not claim implicitly; it returns a `selection.claim` payload that can be passed to `claim_task`, or `selection.review` metadata for reviewer agents handling existing `status=review` tasks without overwriting the original assignee. Agents can heartbeat with `update_presence` and report an empty queue with `report_no_eligible_work`.
+
 Useful endpoints:
 
 - `GET /api/agent-docs`
 - `GET /api/agent-docs/pm-agent`
 - `GET /api/agent-docs/pm-agent?format=md`
 - `GET /api/agent-slots`
+- `GET /api/agents/presence`
+- `GET /api/agents/:agentId/next-task`
+- `POST /api/agents/:agentId/presence`
+- `POST /api/agents/:agentId/no-eligible-work`
 - `POST /api/bootstrap`
 - `POST /api/agent-slots/acquire`
 
-The same contract is available over MCP through `get_agent_instructions`.
+The same contract is available over MCP through `get_agent_instructions`, `acquire_agent_slot`, `get_next_task`, `update_presence`, and `report_no_eligible_work`.
 
 Agent instructions include branch/worktree discipline. Implementation agents should claim a task, then create or switch to a task branch/worktree before editing files. The shared `main` checkout should stay available for the running local service and operator state.
 
@@ -128,6 +134,10 @@ Example local MCP command:
 - `GET /api/agent-slots`
 - `POST /api/bootstrap`
 - `POST /api/agent-slots/acquire`
+- `GET /api/agents/presence`
+- `GET /api/agents/:agentId/next-task`
+- `POST /api/agents/:agentId/presence`
+- `POST /api/agents/:agentId/no-eligible-work`
 - `POST /api/tasks/:taskId/comments`
 - `POST /api/tasks/:taskId/attachments`
 - `GET /api/tasks/:taskId/attachments/:attachmentId/download`

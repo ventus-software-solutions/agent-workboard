@@ -124,7 +124,15 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     reviewerMerge: isReviewer ? reviewerMergeRules() : [],
     mcp: {
       firstTool: "get_agent_instructions",
-      then: ["acquire_agent_slot", "list_projects", "list_tasks", "claim_task", "add_comment", "update_task_status"]
+      then: [
+        "acquire_agent_slot",
+        "get_next_task",
+        "claim_task",
+        "update_presence",
+        "add_comment",
+        "update_task_status",
+        "report_no_eligible_work"
+      ]
     },
     statuses: statuses.map((status) => status.id),
     cautions: [

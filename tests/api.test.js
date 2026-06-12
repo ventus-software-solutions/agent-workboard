@@ -196,6 +196,76 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("exposes continuous-work helper endpoints for next-task and presence", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Continuous API Project" })).body.project;
+    const task = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Continuous helper work",
+        status: "ready",
+        role: "implementer",
+        assignee: "mcp-agent",
+        labels: ["mcp"]
+      })
+    ).body.task;
+
+    const next = await request(app)
+      .get("/api/agents/mcp-agent/next-task")
+      .query({ projectId: project.id, now: "2026-06-12T15:00:00.000Z" })
+      .expect(200);
+
+    expect(next.body.task).toMatchObject({ id: task.id });
+    expect(next.body.selection).toMatchObject({
+      reason: "assigned_to_agent",
+      claim: {
+        taskId: task.id,
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: "mcp-agent"
+      }
+    });
+
+    const presence = await request(app)
+      .post("/api/agents/mcp-agent/presence")
+      .send({
+        state: "active",
+        currentTaskId: task.id,
+        message: "Working from API helper.",
+        now: "2026-06-12T15:01:00.000Z"
+      })
+      .expect(200);
+
+    expect(presence.body.presence).toMatchObject({
+      agentId: "mcp-agent",
+      state: "active",
+      status: "online",
+      currentTaskId: task.id
+    });
+
+    const idle = await request(app)
+      .post("/api/agents/mcp-agent/no-eligible-work")
+      .send({
+        reason: "no_ready_work",
+        message: "No matching work.",
+        filters: { projectId: project.id, labels: ["mcp"] },
+        now: "2026-06-12T15:02:00.000Z"
+      })
+      .expect(200);
+
+    expect(idle.body.report).toMatchObject({ reason: "no_ready_work" });
+    expect(idle.body.presence).toMatchObject({ state: "idle", status: "idle" });
+
+    const allPresence = await request(app).get("/api/agents/presence").expect(200);
+    expect(allPresence.body.agents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          agentId: "mcp-agent",
+          state: "idle"
+        })
+      ])
+    );
+  });
+
   it("rejects bootstrap when active slots are full", async () => {
     for (const slotNumber of [1, 2, 3, 4]) {
       await request(app)

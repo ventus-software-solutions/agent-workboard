@@ -294,6 +294,7 @@ function defaultData() {
       }
     ],
     events: [],
+    agentPresence: {},
     agentTypes: defaultAgentTypes(),
     agentSlots: defaultAgentSlots()
   };
@@ -402,6 +403,10 @@ export class WorkboardStore {
     let migrated = false;
     if (!Array.isArray(this.data.events)) {
       this.data.events = [];
+      migrated = true;
+    }
+    if (!this.data.agentPresence || typeof this.data.agentPresence !== "object" || Array.isArray(this.data.agentPresence)) {
+      this.data.agentPresence = {};
       migrated = true;
     }
 
@@ -567,6 +572,139 @@ export class WorkboardStore {
         capacity: type.capacity
       };
     });
+  }
+
+  listAgentPresence({ now: nowInput } = {}) {
+    this.ensureAgentPresenceSchema();
+    const currentTime = parseTimestamp(nowInput);
+    return Object.values(this.data.agentPresence)
+      .map((presence) => this.describeAgentPresence(presence, currentTime))
+      .sort((a, b) => a.agentId.localeCompare(b.agentId));
+  }
+
+  async updateAgentPresence(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput || input.agentId);
+    if (!agentId) {
+      throw Object.assign(new Error("Agent id is required."), { status: 400 });
+    }
+    const currentTime = parseTimestamp(input.now);
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      this.ensureAgentPresenceSchema();
+
+      const presence = this.writeAgentPresence(agentId, input, currentTime);
+      await this.writeData(this.data);
+      return presence;
+    });
+  }
+
+  async reportNoEligibleWork(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput || input.agentId);
+    if (!agentId) {
+      throw Object.assign(new Error("Agent id is required."), { status: 400 });
+    }
+    const currentTime = parseTimestamp(input.now);
+    const reason = normalizeText(input.reason) || "no_eligible_work";
+    const filters = normalizeObject(input.filters);
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      this.ensureAgentPresenceSchema();
+
+      const reportedAt = currentTime.toISOString();
+      const noEligibleWork = {
+        reason,
+        reportedAt,
+        filters
+      };
+      const message = normalizeText(input.message);
+      if (message) noEligibleWork.message = message;
+
+      const presence = this.writeAgentPresence(
+        agentId,
+        {
+          ...input,
+          state: "idle",
+          noEligibleWork
+        },
+        currentTime
+      );
+
+      this.data.events.unshift({
+        id: id("event"),
+        actor: agentId,
+        type: "agent.no_eligible_work",
+        message: message || `No eligible work reported: ${reason}.`,
+        createdAt: reportedAt
+      });
+
+      await this.writeData(this.data);
+      return {
+        presence,
+        report: { ...noEligibleWork }
+      };
+    });
+  }
+
+  getNextTaskForAgent(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput || input.agentId);
+    if (!agentId) {
+      throw Object.assign(new Error("Agent id is required."), { status: 400 });
+    }
+
+    this.ensureAgentSlotSchema();
+    const currentTime = parseTimestamp(input.now);
+    const profile = this.resolveWorkAgentProfile(agentId, input);
+    const agent = {
+      agentId,
+      role: profile.role,
+      specialties: [...profile.specialties],
+      workMode: profile.workMode,
+      paused: profile.paused,
+      ...(profile.slot ? { slotId: profile.slot.id, typeId: profile.slot.typeId } : {})
+    };
+
+    if (profile.paused) {
+      return {
+        agent,
+        task: null,
+        selection: {
+          reason: "agent_paused",
+          paused: true
+        },
+        candidates: []
+      };
+    }
+
+    const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, input));
+    const buckets = profile.role === "reviewer"
+      ? reviewerCandidateBuckets(scopedTasks, agentId, profile)
+      : workerCandidateBuckets(scopedTasks, agentId, profile);
+    const candidates = uniqueTasks(buckets.flatMap((bucket) => bucket.tasks));
+
+    for (const bucket of buckets) {
+      const task = bucket.tasks[0];
+      if (!task) continue;
+
+      return {
+        agent,
+        task,
+        selection: buildSelection(bucket.reason, task, agentId),
+        candidates
+      };
+    }
+
+    return {
+      agent,
+      task: null,
+      selection: {
+        reason: "no_eligible_work"
+      },
+      candidates: []
+    };
   }
 
   listProjects({ includeArchived = false } = {}) {
@@ -986,6 +1124,70 @@ export class WorkboardStore {
     return changed;
   }
 
+  ensureAgentPresenceSchema() {
+    if (!this.data.agentPresence || typeof this.data.agentPresence !== "object" || Array.isArray(this.data.agentPresence)) {
+      this.data.agentPresence = {};
+      return true;
+    }
+    return false;
+  }
+
+  writeAgentPresence(agentId, input, currentTime) {
+    const heartbeatAt = currentTime.toISOString();
+    const existing = this.data.agentPresence[agentId] || {};
+    const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
+    const state = normalizePresenceState(input.state) || existing.state || "active";
+    const currentTaskId = normalizeText(input.currentTaskId || input.currentTask);
+    const workMode = normalizeWorkMode(input.workMode) || existing.workMode || slot?.workMode || "";
+    const message = normalizeText(input.message);
+    const nextPresence = {
+      ...existing,
+      agentId,
+      state,
+      lastHeartbeat: heartbeatAt,
+      updatedAt: heartbeatAt
+    };
+
+    if (currentTaskId) {
+      nextPresence.currentTaskId = currentTaskId;
+    } else if ("currentTaskId" in input || "currentTask" in input || state !== "active") {
+      delete nextPresence.currentTaskId;
+    }
+
+    if (workMode) nextPresence.workMode = workMode;
+    if (message) {
+      nextPresence.message = message;
+    } else if ("message" in input) {
+      delete nextPresence.message;
+    }
+
+    if (input.noEligibleWork) {
+      nextPresence.noEligibleWork = input.noEligibleWork;
+    } else if (state === "active") {
+      delete nextPresence.noEligibleWork;
+    }
+
+    this.data.agentPresence[agentId] = nextPresence;
+    return this.describeAgentPresence(nextPresence, currentTime);
+  }
+
+  describeAgentPresence(presence, currentTime) {
+    const slot = this.data.agentSlots.find((candidate) => candidate.id === presence.agentId);
+    const heartbeatTime = Date.parse(presence.lastHeartbeat || presence.updatedAt || "");
+    const stale = Number.isFinite(heartbeatTime) ? currentTime.getTime() - heartbeatTime > SLOT_LEASE_MS : true;
+    const paused = presence.state === "paused" || Boolean(slot?.paused);
+    const offline = stale && presence.state !== "idle" && !paused;
+    const status = paused ? "paused" : offline ? "offline" : presence.state === "idle" ? "idle" : "online";
+
+    return {
+      ...presence,
+      status,
+      stale,
+      offline,
+      paused
+    };
+  }
+
   agentSlotTaskStats() {
     const stats = new Map();
     for (const task of this.data.tasks) {
@@ -1062,6 +1264,28 @@ export class WorkboardStore {
     if (role === "tester") return "tester";
     return "implementer-general";
   }
+
+  resolveWorkAgentProfile(agentId, input = {}) {
+    const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
+    const type = slot ? this.data.agentTypes.find((candidate) => candidate.id === slot.typeId) : null;
+    const role = validOr(normalizeText(input.role), ROLE_IDS, slot?.role || inferRoleFromAgentId(agentId));
+    const specialtyOverride = normalizeLabels(input.specialties);
+    const specialties =
+      specialtyOverride.length > 0
+        ? specialtyOverride
+        : slot?.specialties?.length
+          ? [...slot.specialties]
+          : inferSpecialtiesFromAgentId(agentId);
+
+    return {
+      slot,
+      type,
+      role,
+      specialties,
+      workMode: normalizeWorkMode(input.workMode) || slot?.workMode || type?.defaultWorkMode || "single-task",
+      paused: Boolean(slot?.paused)
+    };
+  }
 }
 
 function validOr(value, allowed, fallback) {
@@ -1081,6 +1305,174 @@ function normalizeStringList(value) {
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function normalizePresenceState(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return ["active", "idle", "paused"].includes(normalized) ? normalized : "";
+}
+
+function taskMatchesNextTaskScope(task, input = {}) {
+  const projectId = normalizeText(input.projectId);
+  const labels = normalizeLabels(input.labels);
+  const q = normalizeText(input.q).toLowerCase();
+
+  if (projectId && task.projectId !== projectId) return false;
+  if (labels.length > 0 && !labels.every((label) => task.labels.includes(label))) return false;
+  if (q) {
+    const haystack = [task.title, task.description, task.assignee, task.role, task.priority, ...task.labels]
+      .join(" ")
+      .toLowerCase();
+    if (!haystack.includes(q)) return false;
+  }
+
+  return !["done", "blocked"].includes(task.status);
+}
+
+function reviewerCandidateBuckets(tasks, agentId, profile) {
+  return [
+    {
+      reason: "review_queue",
+      tasks: sortNextTasks(tasks.filter((task) => task.status === "review"))
+    },
+    {
+      reason: "assigned_to_agent",
+      tasks: sortNextTasks(tasks.filter((task) => task.status === "ready" && task.assignee === agentId))
+    },
+    {
+      reason: "role_queue",
+      tasks: sortNextTasks(tasks.filter((task) => task.status === "ready" && task.role === profile.role && isUnassignedOrMine(task, agentId)))
+    },
+    {
+      reason: "specialty_match",
+      tasks: sortNextTasks(
+        tasks.filter(
+          (task) =>
+            ["ready", "backlog"].includes(task.status) &&
+            isUnassignedOrMine(task, agentId) &&
+            labelsIntersect(task.labels, profile.specialties)
+        )
+      )
+    }
+  ];
+}
+
+function workerCandidateBuckets(tasks, agentId, profile) {
+  return [
+    {
+      reason: "assigned_to_agent",
+      tasks: sortNextTasks(tasks.filter((task) => isClaimableStatus(task.status, profile.role) && task.assignee === agentId))
+    },
+    {
+      reason: "role_queue",
+      tasks: sortNextTasks(
+        tasks.filter(
+          (task) => isClaimableStatus(task.status, profile.role) && task.role === profile.role && isUnassignedOrMine(task, agentId)
+        )
+      )
+    },
+    {
+      reason: "specialty_match",
+      tasks: sortNextTasks(
+        tasks.filter(
+          (task) =>
+            ["ready", "backlog"].includes(task.status) &&
+            isUnassignedOrMine(task, agentId) &&
+            labelsIntersect(task.labels, profile.specialties)
+        )
+      )
+    }
+  ];
+}
+
+function sortNextTasks(tasks) {
+  return [...tasks].sort((a, b) => {
+    const statusDelta = nextTaskStatusRank(a.status) - nextTaskStatusRank(b.status);
+    if (statusDelta !== 0) return statusDelta;
+    return priorityRank(b.priority) - priorityRank(a.priority) || b.updatedAt.localeCompare(a.updatedAt);
+  });
+}
+
+function nextTaskStatusRank(status) {
+  if (status === "review") return 0;
+  if (status === "ready") return 1;
+  if (status === "testing") return 2;
+  if (status === "backlog") return 3;
+  return 4;
+}
+
+function uniqueTasks(tasks) {
+  const seen = new Set();
+  return tasks.filter((task) => {
+    if (seen.has(task.id)) return false;
+    seen.add(task.id);
+    return true;
+  });
+}
+
+function buildSelection(reason, task, agentId) {
+  if (reason === "review_queue") {
+    return {
+      reason,
+      review: {
+        taskId: task.id,
+        reviewer: agentId,
+        originalAssignee: task.assignee || "",
+        status: task.status
+      }
+    };
+  }
+
+  return {
+    reason,
+    claim: {
+      taskId: task.id,
+      assignee: agentId,
+      expectedStatus: task.status,
+      expectedAssignee: task.assignee || ""
+    }
+  };
+}
+
+function isUnassignedOrMine(task, agentId) {
+  return !task.assignee || task.assignee === agentId;
+}
+
+function isClaimableStatus(status, role) {
+  if (role === "tester") return status === "ready" || status === "testing";
+  return status === "ready";
+}
+
+function labelsIntersect(left = [], right = []) {
+  return left.some((label) => right.includes(label));
+}
+
+function inferRoleFromAgentId(agentId) {
+  const normalized = normalizeText(agentId).toLowerCase();
+  if (normalized.includes("pm")) return "pm";
+  if (normalized.includes("review") || normalized.includes("security-reviewer")) return "reviewer";
+  if (normalized.includes("test") || normalized.includes("qa")) return "tester";
+  if (normalized.includes("research")) return "researcher";
+  return "implementer";
+}
+
+function inferSpecialtiesFromAgentId(agentId) {
+  const normalized = normalizeText(agentId).toLowerCase();
+  const specialties = [];
+  if (normalized.includes("backend") || normalized.includes("api")) specialties.push("backend", "api");
+  if (normalized.includes("frontend") || normalized.includes("ui")) specialties.push("frontend", "ui");
+  if (normalized.includes("mcp")) specialties.push("mcp", "agent-tools");
+  if (normalized.includes("docs")) specialties.push("docs");
+  if (normalized.includes("security")) specialties.push("security");
+  if (normalized.includes("release")) specialties.push("release");
+  if (normalized.includes("observability")) specialties.push("observability");
+  if (normalized.includes("infra")) specialties.push("infra");
+  return [...new Set(specialties)];
 }
 
 function normalizeCompletionRecord(value, { actor } = {}) {

@@ -474,6 +474,147 @@ describe("WorkboardStore", () => {
     expect(nextSlot.agentId).toBe("implementer-backend-2");
   });
 
+  it("returns the next claimable task with stale-safe claim preconditions", async () => {
+    const project = await store.createProject({ name: "Next Task Project" });
+    const assigned = await store.createTask({
+      projectId: project.id,
+      title: "Assigned MCP task",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+    const unassigned = await store.createTask({
+      projectId: project.id,
+      title: "Higher priority unassigned task",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      labels: ["mcp"]
+    });
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toMatchObject({ id: assigned.id, title: "Assigned MCP task" });
+    expect(next.selection).toMatchObject({
+      reason: "assigned_to_agent",
+      claim: {
+        taskId: assigned.id,
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: "mcp-agent"
+      }
+    });
+    expect(next.candidates.map((candidate) => candidate.id)).toContain(unassigned.id);
+  });
+
+  it("prioritizes review-column work over assigned ready reviewer wrappers", async () => {
+    const project = await store.createProject({ name: "Reviewer Queue Project" });
+    const reviewTask = await store.createTask({
+      projectId: project.id,
+      title: "Original implementation in review",
+      status: "review",
+      priority: "normal",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Legacy assigned reviewer wrapper",
+      status: "ready",
+      priority: "urgent",
+      role: "reviewer",
+      assignee: "reviewer-agent"
+    });
+
+    const next = store.getNextTaskForAgent("reviewer-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toMatchObject({ id: reviewTask.id, assignee: "implementer-backend-1" });
+    expect(next.selection).toMatchObject({
+      reason: "review_queue",
+      review: {
+        taskId: reviewTask.id,
+        originalAssignee: "implementer-backend-1"
+      }
+    });
+    expect(next.selection.claim).toBeUndefined();
+  });
+
+  it("does not offer next work to paused agent slots", async () => {
+    const project = await store.createProject({ name: "Paused Agent Project" });
+    await store.createTask({
+      projectId: project.id,
+      title: "Ready but paused",
+      status: "ready",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+    store.data.agentSlots.find((slot) => slot.id === "mcp-agent").paused = true;
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toBeNull();
+    expect(next.selection).toMatchObject({
+      reason: "agent_paused",
+      paused: true
+    });
+  });
+
+  it("records agent presence and no-eligible-work reports", async () => {
+    const active = await store.updateAgentPresence("mcp-agent", {
+      state: "active",
+      currentTaskId: "task_123",
+      workMode: "single-task",
+      message: "Working the claimed helper task.",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(active).toMatchObject({
+      agentId: "mcp-agent",
+      state: "active",
+      status: "online",
+      currentTaskId: "task_123",
+      workMode: "single-task",
+      message: "Working the claimed helper task.",
+      stale: false,
+      offline: false
+    });
+
+    const report = await store.reportNoEligibleWork("mcp-agent", {
+      reason: "no_ready_work",
+      message: "No eligible MCP tasks remain.",
+      filters: { role: "implementer", labels: ["mcp"] },
+      now: "2026-06-12T15:01:00.000Z"
+    });
+
+    expect(report.presence).toMatchObject({
+      agentId: "mcp-agent",
+      state: "idle",
+      status: "idle",
+      message: "No eligible MCP tasks remain."
+    });
+    expect(report.report).toMatchObject({
+      reason: "no_ready_work",
+      filters: { role: "implementer", labels: ["mcp"] }
+    });
+
+    const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    expect(saved.agentPresence["mcp-agent"].noEligibleWork).toMatchObject({
+      reason: "no_ready_work"
+    });
+  });
+
   it("stores attachments with sanitized filenames and sha256 evidence", async () => {
     const project = await store.createProject({ name: "File Project" });
     const task = await store.createTask({ projectId: project.id, title: "Read uploaded spec" });

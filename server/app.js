@@ -4,6 +4,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
+import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -71,6 +72,38 @@ export function createApp({ store }) {
   app.post("/api/agent-slots/acquire", async (req, res, next) => {
     try {
       res.json(await store.acquireAgentSlot(req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/agents/presence", (req, res, next) => {
+    try {
+      res.json({ agents: store.listAgentPresence(req.query) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/agents/:agentId/presence", async (req, res, next) => {
+    try {
+      res.json({ presence: await store.updateAgentPresence(req.params.agentId, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/agents/:agentId/next-task", (req, res, next) => {
+    try {
+      res.json(store.getNextTaskForAgent(req.params.agentId, req.query));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/agents/:agentId/no-eligible-work", async (req, res, next) => {
+    try {
+      res.json(await store.reportNoEligibleWork(req.params.agentId, req.body));
     } catch (error) {
       next(error);
     }
@@ -165,16 +198,7 @@ export function createApp({ store }) {
 
   app.get("/api/mcp/tools", (_req, res) => {
     res.json({
-      tools: [
-        "list_projects",
-        "list_tasks",
-        "create_task",
-        "claim_task",
-        "acquire_agent_slot",
-        "update_task_status",
-        "add_comment",
-        "get_agent_instructions"
-      ]
+      tools: MCP_TOOL_NAMES
     });
   });
 
