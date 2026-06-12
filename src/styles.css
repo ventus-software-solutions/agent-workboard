@@ -208,9 +208,13 @@ button {
 }
 
 .boardArea {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 100vh;
+  max-height: 100vh;
   padding: 20px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .topBar {
@@ -283,11 +287,70 @@ button {
 }
 
 .filterBar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+}
+
+.workspaceTabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(360px, 100%);
+  margin-bottom: 12px;
+}
+
+.workspaceTabs button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid #363d46;
+  border-radius: 8px;
+  color: #dce4ee;
+  background: #181d23;
+  text-align: left;
+}
+
+.workspaceTabs button.selected {
+  border-color: #7fb7c7;
+  background: #20333b;
+  color: #f3f8fb;
+}
+
+.workspaceTabs button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceTabs button strong {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #c7d3df;
+  font-size: 12px;
+}
+
+.workspaceTabs button.selected strong {
+  background: #2d4b56;
+  color: #c7f0fb;
+}
+
+.tasksWorkspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .searchBox,
@@ -329,11 +392,135 @@ button {
 .talksPanel {
   display: grid;
   gap: 10px;
-  margin-bottom: 14px;
   padding: 12px;
   border: 1px solid #2f3741;
   border-radius: 8px;
   background: #151a20;
+}
+
+.coordinationWorkspace {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 10px;
+}
+
+.coordinationSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.coordinationStat {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid #303842;
+  border-radius: 8px;
+  background: #181d23;
+  color: #aeb9c6;
+}
+
+.coordinationStat strong {
+  color: #eef4fb;
+  font-size: 18px;
+}
+
+.coordinationGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.8fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.coordinationMain,
+.coordinationSide {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.coordinationPanel,
+.coordinationAttention {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #2f3741;
+  border-radius: 8px;
+  background: #151a20;
+}
+
+.coordinationPanel p,
+.attentionList p {
+  margin: 0;
+  color: #aeb9c6;
+  font-size: 13px;
+}
+
+.coordinationAttentionHeader,
+.attentionListHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.coordinationAttentionHeader h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.coordinationAttentionHeader > span,
+.attentionListHeader strong {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #c7d3df;
+  font-size: 12px;
+}
+
+.attentionList {
+  display: grid;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid #252b32;
+}
+
+.attentionListHeader span {
+  color: #dce4ee;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.attentionLink,
+.attentionAgent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.attentionLink span,
+.attentionAgent span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.attentionLink small,
+.attentionAgent small {
+  color: #9aa6b4;
 }
 
 .talksHeader {
@@ -592,7 +779,11 @@ button {
 
 .agentsRegistry {
   display: grid;
+  flex: 1 1 auto;
   gap: 20px;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 10px;
 }
 
 .agentGroup {
@@ -785,10 +976,11 @@ button {
 
 .kanbanBoard {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: repeat(7, minmax(230px, 1fr));
   gap: 12px;
-  height: calc(100vh - 456px);
-  min-height: 340px;
+  height: auto;
+  min-height: 500px;
   overflow-x: auto;
   padding-bottom: 10px;
 }
@@ -1541,7 +1733,18 @@ button {
     border-bottom: 1px solid #2b3037;
   }
 
+  .boardArea {
+    min-height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
   .topBar {
+    grid-template-columns: 1fr;
+  }
+
+  .coordinationSummary,
+  .coordinationGrid {
     grid-template-columns: 1fr;
   }
 

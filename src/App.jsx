@@ -85,6 +85,7 @@ export function App() {
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
   const [view, setView] = useState("board");
+  const [workspaceTab, setWorkspaceTab] = useState("tasks");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [error, setError] = useState("");
@@ -217,6 +218,7 @@ export function App() {
         setProjectTasks(result.tasks);
       }
       setView("board");
+      setWorkspaceTab("tasks");
       setSelectedTaskId(taskId);
     } catch (nextError) {
       setError(nextError.message);
@@ -225,6 +227,7 @@ export function App() {
 
   async function filterBoardByAgent(agentId) {
     setView("board");
+    setWorkspaceTab("tasks");
     setSelectedTaskId("");
     await refreshTasks({ q: "", role: "", assignee: agentId });
   }
@@ -292,6 +295,20 @@ export function App() {
     () => buildAgentRegistry({ agentSlots, tasks: projectTasks, roles: meta.roles }),
     [agentSlots, projectTasks, meta.roles]
   );
+
+  const coordinationAttention = useMemo(() => {
+    const blockedTasks = projectTasks.filter((task) => task.status === "blocked");
+    const reviewTasks = projectTasks.filter((task) => task.status === "review");
+    const testingTasks = projectTasks.filter((task) => task.status === "testing");
+    const staleAgents = agentRegistry.agents.filter((agent) => agent.stale || agent.status === "paused");
+    return {
+      blockedTasks,
+      reviewTasks,
+      testingTasks,
+      staleAgents,
+      count: staleWork.length + blockedTasks.length + reviewTasks.length + testingTasks.length + staleAgents.length
+    };
+  }, [agentRegistry, projectTasks, staleWork]);
 
   const viewTitle = view === "capabilities" ? "Capability Registry" : view === "agents" ? "Agents" : selectedProject?.name || "No project";
 
@@ -365,7 +382,13 @@ export function App() {
         </button>
 
         <div className="viewSwitch">
-          <button className={view === "board" ? "selected" : ""} onClick={() => setView("board")}>
+          <button
+            className={view === "board" ? "selected" : ""}
+            onClick={() => {
+              setView("board");
+              setWorkspaceTab("tasks");
+            }}
+          >
             <FolderKanban size={16} />
             <span>Board</span>
           </button>
@@ -457,67 +480,28 @@ export function App() {
           </button>
         </header>
 
+        {view === "board" && (
+          <WorkspaceTabs
+            activeTab={workspaceTab}
+            taskCount={tasks.length}
+            coordinationCount={coordinationAttention.count}
+            onChange={setWorkspaceTab}
+          />
+        )}
+
         {view === "capabilities" ? (
           <CapabilityFilters
             filters={capabilityFilters}
             statuses={meta.capabilityStatuses}
             onChange={refreshCapabilities}
           />
-        ) : view === "agents" ? null : (
-          <div className="filterBar">
-            <label className="searchBox">
-              <Search size={17} />
-              <input
-                value={filters.q}
-                placeholder="Search tasks"
-                onChange={(event) => refreshTasks({ q: event.target.value })}
-              />
-            </label>
-            <label className="agentFilter">
-              <Filter size={16} />
-              <input
-                value={filters.assignee}
-                placeholder="Agent"
-                onChange={(event) => refreshTasks({ assignee: event.target.value })}
-              />
-            </label>
-            {filters.role && (
-              <button className="ghostButton" onClick={() => refreshTasks({ role: "" })}>
-                <X size={15} />
-                <span>{filters.role}</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        <AgentTalksPanel
-          talks={talks}
-          tasks={projectTasks}
-          filters={talkFilters}
-          onFilterChange={refreshTalks}
-          onSelectTask={openLinkedTask}
-          onPost={(draft) =>
-            mutate(async () => {
-              await api.postTalk(selectedProjectId, draft);
-            })
-          }
-        />
+        ) : null}
 
         {error && (
           <div className="errorBanner">
             <AlertCircle size={18} />
             <span>{error}</span>
           </div>
-        )}
-
-        {staleWork.length > 0 && (
-          <StaleWorkPanel
-            items={staleWork}
-            notes={staleWorkNotes}
-            onNoteChange={(taskId, note) => setStaleWorkNotes((current) => ({ ...current, [taskId]: note }))}
-            onRecover={recoverStaleWork}
-            onSelectTask={setSelectedTaskId}
-          />
         )}
 
         {loading ? (
@@ -534,8 +518,28 @@ export function App() {
             onOpenTask={openLinkedTask}
             onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
           />
+        ) : workspaceTab === "coordination" ? (
+          <CoordinationWorkspace
+            talks={talks}
+            tasks={projectTasks}
+            filters={talkFilters}
+            onFilterChange={refreshTalks}
+            onSelectTask={openLinkedTask}
+            onPost={(draft) =>
+              mutate(async () => {
+                await api.postTalk(selectedProjectId, draft);
+              })
+            }
+            staleWork={staleWork}
+            staleWorkNotes={staleWorkNotes}
+            onStaleWorkNoteChange={(taskId, note) => setStaleWorkNotes((current) => ({ ...current, [taskId]: note }))}
+            onRecoverStaleWork={recoverStaleWork}
+            attention={coordinationAttention}
+          />
         ) : (
-          <KanbanBoard
+          <TasksWorkspace
+            filters={filters}
+            onFilterChange={refreshTasks}
             statuses={meta.statuses}
             roles={meta.roles}
             tasks={tasks}
@@ -603,6 +607,200 @@ function Stat({ icon: Icon, label, value }) {
       <Icon size={16} />
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function WorkspaceTabs({ activeTab, taskCount, coordinationCount, onChange }) {
+  const tabs = [
+    { id: "tasks", label: "Tasks", count: taskCount, icon: FolderKanban },
+    { id: "coordination", label: "Coordination", count: coordinationCount, icon: MessageSquarePlus }
+  ];
+
+  return (
+    <div className="workspaceTabs" role="tablist" aria-label="Workspace sections">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? "selected" : ""}
+            onClick={() => onChange(tab.id)}
+          >
+            <Icon size={16} />
+            <span>{tab.label}</span>
+            <strong>{tab.count}</strong>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TasksWorkspace({ filters, onFilterChange, statuses, roles, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+  return (
+    <div className="tasksWorkspace">
+      <div className="filterBar">
+        <label className="searchBox">
+          <Search size={17} />
+          <input
+            value={filters.q}
+            placeholder="Search tasks"
+            onChange={(event) => onFilterChange({ q: event.target.value })}
+          />
+        </label>
+        <label className="agentFilter">
+          <Filter size={16} />
+          <input
+            value={filters.assignee}
+            placeholder="Agent"
+            onChange={(event) => onFilterChange({ assignee: event.target.value })}
+          />
+        </label>
+        {filters.role && (
+          <button className="ghostButton" onClick={() => onFilterChange({ role: "" })}>
+            <X size={15} />
+            <span>{filters.role}</span>
+          </button>
+        )}
+      </div>
+
+      <KanbanBoard
+        statuses={statuses}
+        roles={roles}
+        tasks={tasks}
+        selectedTaskId={selectedTaskId}
+        onSelectTask={onSelectTask}
+        onMoveTask={onMoveTask}
+      />
+    </div>
+  );
+}
+
+function CoordinationWorkspace({
+  talks,
+  tasks,
+  filters,
+  onFilterChange,
+  onSelectTask,
+  onPost,
+  staleWork,
+  staleWorkNotes,
+  onStaleWorkNoteChange,
+  onRecoverStaleWork,
+  attention
+}) {
+  return (
+    <div className="coordinationWorkspace">
+      <div className="coordinationSummary">
+        <CoordinationStat icon={MessageSquarePlus} label="Talks" value={talks.length} />
+        <CoordinationStat icon={AlertCircle} label="Stale Work" value={staleWork.length} />
+        <CoordinationStat icon={Clock3} label="Blocked" value={attention.blockedTasks.length} />
+        <CoordinationStat icon={ShieldCheck} label="Review" value={attention.reviewTasks.length} />
+      </div>
+
+      <div className="coordinationGrid">
+        <div className="coordinationMain">
+          <AgentTalksPanel
+            talks={talks}
+            tasks={tasks}
+            filters={filters}
+            onFilterChange={onFilterChange}
+            onSelectTask={onSelectTask}
+            onPost={onPost}
+          />
+        </div>
+
+        <div className="coordinationSide">
+          {staleWork.length > 0 ? (
+            <StaleWorkPanel
+              items={staleWork}
+              notes={staleWorkNotes}
+              onNoteChange={onStaleWorkNoteChange}
+              onRecover={onRecoverStaleWork}
+              onSelectTask={onSelectTask}
+            />
+          ) : (
+            <section className="coordinationPanel">
+              <div className="sectionLabel">Stale Work</div>
+              <p>No stale in-progress work.</p>
+            </section>
+          )}
+          <CoordinationAttention attention={attention} onSelectTask={onSelectTask} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoordinationStat({ icon: Icon, label, value }) {
+  return (
+    <article className="coordinationStat">
+      <Icon size={16} />
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function CoordinationAttention({ attention, onSelectTask }) {
+  return (
+    <section className="coordinationAttention" data-testid="coordination-attention">
+      <div className="coordinationAttentionHeader">
+        <div>
+          <div className="sectionLabel">Attention</div>
+          <h3>Queues</h3>
+        </div>
+        <span>{attention.count}</span>
+      </div>
+      <AttentionTaskList label="Blocked" tasks={attention.blockedTasks} onSelectTask={onSelectTask} />
+      <AttentionTaskList label="Review" tasks={attention.reviewTasks} onSelectTask={onSelectTask} />
+      <AttentionTaskList label="Testing" tasks={attention.testingTasks} onSelectTask={onSelectTask} />
+      <AttentionAgentList agents={attention.staleAgents} />
+    </section>
+  );
+}
+
+function AttentionTaskList({ label, tasks, onSelectTask }) {
+  return (
+    <div className="attentionList">
+      <div className="attentionListHeader">
+        <span>{label}</span>
+        <strong>{tasks.length}</strong>
+      </div>
+      {tasks.length > 0 ? (
+        tasks.slice(0, 5).map((task) => (
+          <button key={task.id} className="linkButton attentionLink" onClick={() => onSelectTask(task.id)}>
+            <span>{task.title}</span>
+            <small>{task.assignee || "Unassigned"}</small>
+          </button>
+        ))
+      ) : (
+        <p>None</p>
+      )}
+    </div>
+  );
+}
+
+function AttentionAgentList({ agents }) {
+  return (
+    <div className="attentionList">
+      <div className="attentionListHeader">
+        <span>Stale Agents</span>
+        <strong>{agents.length}</strong>
+      </div>
+      {agents.length > 0 ? (
+        agents.slice(0, 5).map((agent) => (
+          <div key={agent.id} className="attentionAgent">
+            <span>{agent.id}</span>
+            <small>{agent.statusLabel}</small>
+          </div>
+        ))
+      ) : (
+        <p>None</p>
+      )}
     </div>
   );
 }
