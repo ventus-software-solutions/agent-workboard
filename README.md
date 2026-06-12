@@ -23,6 +23,8 @@ docker compose up --build
 
 Open `http://localhost:8088`.
 
+Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
+
 ## Run In Development
 
 ```bash

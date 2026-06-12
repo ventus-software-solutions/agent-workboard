@@ -9,8 +9,5 @@ services:
       PORT: 8080
       WORKBOARD_DATA_DIR: /data
     volumes:
-      - agent-workboard-data:/data
+      - ./.workboard-data:/data
     restart: unless-stopped
-
-volumes:
-  agent-workboard-data:
