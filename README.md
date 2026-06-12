@@ -147,3 +147,5 @@ Example local MCP command:
 ## Open Source Status
 
 This project is prepared for open-source release under the MIT license. Before publishing, the next useful pass is a security review for auth, project isolation, and hosted/team deployment assumptions.
+
+See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary, pre-OSS-launch requirements, and later hosted/team candidates.
