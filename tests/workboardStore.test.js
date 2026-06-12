@@ -468,6 +468,72 @@ describe("WorkboardStore", () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
+  it("rejects a second active claim for one-active-at-a-time agents", async () => {
+    const project = await store.createProject({ name: "Single Active Claim Project" });
+    const active = await store.createTask({
+      projectId: project.id,
+      title: "Already in progress",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "mcp-agent"
+    });
+    const next = await store.createTask({
+      projectId: project.id,
+      title: "Second active claim",
+      status: "ready",
+      role: "implementer",
+      assignee: ""
+    });
+
+    await expect(
+      store.claimTask(next.id, {
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining(active.id)
+    });
+    await expect(
+      store.claimTask(next.id, {
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toThrow(/finish, hand off, or requeue/i);
+  });
+
+  it("lets one-active-at-a-time agents claim work when their previous task is only in review", async () => {
+    const project = await store.createProject({ name: "Review Does Not Block Claims Project" });
+    await store.createTask({
+      projectId: project.id,
+      title: "Implementation awaiting review",
+      status: "review",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    const next = await store.createTask({
+      projectId: project.id,
+      title: "Next implementation task",
+      status: "ready",
+      role: "implementer",
+      assignee: ""
+    });
+
+    const claimed = await store.claimTask(next.id, {
+      assignee: "implementer-backend-1",
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+
+    expect(claimed).toMatchObject({
+      id: next.id,
+      status: "in_progress",
+      assignee: "implementer-backend-1"
+    });
+  });
+
   it("lets only one store instance claim a task from a shared data directory", async () => {
     const project = await store.createProject({ name: "Shared Store Claim Project" });
     const task = await store.createTask({
@@ -756,6 +822,103 @@ describe("WorkboardStore", () => {
       }
     });
     expect(next.candidates.map((candidate) => candidate.id)).toContain(unassigned.id);
+  });
+
+  it("returns no next task while a single-task agent already owns in-progress work", async () => {
+    const project = await store.createProject({ name: "Occupied Single Task Project" });
+    const active = await store.createTask({
+      projectId: project.id,
+      title: "Current implementation",
+      status: "in_progress",
+      priority: "normal",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Tempting follow-up",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+
+    const next = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(next.task).toBeNull();
+    expect(next.candidates).toEqual([]);
+    expect(next.selection).toMatchObject({
+      reason: "active_task_in_progress",
+      activeTask: {
+        id: active.id,
+        title: "Current implementation"
+      }
+    });
+  });
+
+  it("treats drain-role-queue as one-active-at-a-time but leaves watch-mode eligible", async () => {
+    const project = await store.createProject({ name: "Work Mode Active Claim Project" });
+    const reviewerActive = await store.createTask({
+      projectId: project.id,
+      title: "Reviewer already active",
+      status: "in_progress",
+      priority: "normal",
+      role: "reviewer",
+      assignee: "reviewer-agent"
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Reviewer role queue",
+      status: "ready",
+      priority: "urgent",
+      role: "reviewer"
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Observability already active",
+      status: "in_progress",
+      priority: "normal",
+      role: "implementer",
+      assignee: "implementer-observability-1"
+    });
+    const watchReady = await store.createTask({
+      projectId: project.id,
+      title: "Watch-mode follow-up",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      assignee: "implementer-observability-1"
+    });
+
+    const reviewerNext = store.getNextTaskForAgent("reviewer-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const watchNext = store.getNextTaskForAgent("implementer-observability-1", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(reviewerNext.task).toBeNull();
+    expect(reviewerNext.selection).toMatchObject({
+      reason: "active_task_in_progress",
+      activeTask: {
+        id: reviewerActive.id
+      }
+    });
+    expect(watchNext.task).toMatchObject({ id: watchReady.id });
+    expect(watchNext.selection).toMatchObject({
+      reason: "assigned_to_agent",
+      claim: {
+        taskId: watchReady.id,
+        assignee: "implementer-observability-1"
+      }
+    });
   });
 
   it("falls back to role queue work and respects priority order", async () => {

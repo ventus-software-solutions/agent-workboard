@@ -367,6 +367,63 @@ describe("Agent Workboard API", () => {
     );
   });
 
+  it("rejects a second active REST claim and withholds next-task work for single-task agents", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Single Active API Project" })).body.project;
+    const active = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API active task",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "mcp-agent",
+          labels: ["mcp"]
+        })
+        .expect(201)
+    ).body.task;
+    const ready = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API second claim",
+          status: "ready",
+          role: "implementer",
+          assignee: "mcp-agent",
+          labels: ["mcp"]
+        })
+        .expect(201)
+    ).body.task;
+
+    const claim = await request(app)
+      .post(`/api/tasks/${ready.id}/claim`)
+      .send({
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: "mcp-agent"
+      })
+      .expect(409);
+
+    expect(claim.body.error.message).toContain(active.id);
+    expect(claim.body.error.message).toMatch(/finish, hand off, or requeue/i);
+
+    const next = await request(app)
+      .get("/api/agents/mcp-agent/next-task")
+      .query({ projectId: project.id, now: "2026-06-12T15:00:00.000Z" })
+      .expect(200);
+
+    expect(next.body.task).toBeNull();
+    expect(next.body.candidates).toEqual([]);
+    expect(next.body.selection).toMatchObject({
+      reason: "active_task_in_progress",
+      activeTask: {
+        id: active.id,
+        title: "API active task"
+      }
+    });
+  });
+
   it("lists configured agent slots", async () => {
     const response = await request(app).get("/api/agent-slots").expect(200);
 

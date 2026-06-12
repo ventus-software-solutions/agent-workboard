@@ -1,6 +1,10 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { MCP_TOOL_NAMES } from "../server/mcpToolHandlers.js";
 import { registerWorkboardMcpTools } from "../server/mcp.js";
+import { WorkboardStore } from "../server/storage/workboardStore.js";
 
 function parseTextResult(result) {
   return JSON.parse(result.content[0].text);
@@ -101,5 +105,50 @@ describe("Agent Workboard MCP tools", () => {
       }
     });
     expect(fakeStore.getCapability).toHaveBeenCalledWith("cap_mcp_workflow_tools");
+  });
+
+  it("surfaces the store one-active-task guard through claim_task", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-mcp-"));
+    const store = new WorkboardStore({ dataDir: tempDir });
+    await store.init();
+    try {
+      const project = await store.createProject({ name: "MCP Single Active Claim Project" });
+      const active = await store.createTask({
+        projectId: project.id,
+        title: "MCP active task",
+        status: "in_progress",
+        role: "implementer",
+        assignee: "mcp-agent"
+      });
+      const next = await store.createTask({
+        projectId: project.id,
+        title: "MCP second task",
+        status: "ready",
+        role: "implementer",
+        assignee: "mcp-agent"
+      });
+      const registrations = [];
+      const fakeServer = {
+        registerTool: (name, config, handler) => {
+          registrations.push({ name, config, handler });
+        }
+      };
+      registerWorkboardMcpTools(fakeServer, store);
+
+      const claimTask = registrations.find((registration) => registration.name === "claim_task");
+      await expect(
+        claimTask.handler({
+          taskId: next.id,
+          assignee: "mcp-agent",
+          expectedStatus: "ready",
+          expectedAssignee: "mcp-agent"
+        })
+      ).rejects.toMatchObject({
+        status: 409,
+        message: expect.stringContaining(active.id)
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
