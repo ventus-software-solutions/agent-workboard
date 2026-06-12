@@ -36,6 +36,16 @@ button {
   min-height: 100vh;
 }
 
+@media (min-width: 921px) {
+  .appShell.sidebarCollapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .appShell.sidebarCollapsed .projectRail {
+    display: none;
+  }
+}
+
 .projectRail {
   display: flex;
   flex-direction: column;
@@ -49,6 +59,11 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.brandBlock .railCloseButton {
+  display: none;
+  margin-left: auto;
 }
 
 .brandIcon {
@@ -221,9 +236,37 @@ button {
   margin-bottom: 16px;
 }
 
+.topTitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.topTitle > div {
+  min-width: 0;
+}
+
 .topBar h2 {
   margin-top: 3px;
   font-size: 24px;
+  overflow-wrap: anywhere;
+}
+
+.sidebarToggle {
+  border-color: #43505c;
+  background: #1a2229;
+  color: #d9e7ef;
+}
+
+.sidebarToggle.active {
+  border-color: #7fb7c7;
+  background: #20333b;
+  color: #bce7f2;
+}
+
+.sidebarScrim {
+  display: none;
 }
 
 .topStats {
@@ -1553,13 +1596,47 @@ button {
   }
 
   .projectRail {
-    position: static;
-    border-right: 0;
-    border-bottom: 1px solid #2b3037;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 31;
+    width: min(320px, calc(100vw - 56px));
+    max-width: 100%;
+    border-right: 1px solid #2b3037;
+    border-bottom: 0;
+    box-shadow: 18px 0 40px rgba(0, 0, 0, 0.35);
+    overflow-y: auto;
+    pointer-events: none;
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition:
+      transform 160ms ease,
+      visibility 160ms ease;
+  }
+
+  .appShell.sidebarOverlayOpen .projectRail {
+    pointer-events: auto;
+    transform: translateX(0);
+    visibility: visible;
+  }
+
+  .brandBlock .railCloseButton {
+    display: grid;
+  }
+
+  .sidebarScrim {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    background: rgba(9, 11, 14, 0.66);
   }
 
   .topBar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .talksHeader,

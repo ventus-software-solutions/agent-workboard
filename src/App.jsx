@@ -12,6 +12,7 @@ import {
   Filter,
   FolderKanban,
   Link2,
+  Menu,
   MessageSquarePlus,
   Paperclip,
   Plus,
@@ -51,6 +52,8 @@ const priorityClass = {
 
 const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
 const LIVE_POLL_INTERVAL_MS = 2500;
+const SIDEBAR_PREFERENCE_KEY = "agentWorkboard.sidebarCollapsed";
+const SIDEBAR_NARROW_QUERY = "(max-width: 920px)";
 
 function formatDate(value) {
   const date = new Date(value);
@@ -88,6 +91,19 @@ export function App() {
   const [view, setView] = useState("board");
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [isSidebarOverlayOpen, setIsSidebarOverlayOpen] = useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(SIDEBAR_NARROW_QUERY).matches;
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshState, setRefreshState] = useState({
@@ -101,6 +117,46 @@ export function App() {
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const sidebarVisible = isNarrowViewport ? isSidebarOverlayOpen : !isSidebarCollapsed;
+  const sidebarToggleLabel = sidebarVisible ? (isNarrowViewport ? "Close sidebar" : "Collapse sidebar") : "Open sidebar";
+  const appShellClassName = [
+    "appShell",
+    isSidebarCollapsed ? "sidebarCollapsed" : "",
+    isSidebarOverlayOpen ? "sidebarOverlayOpen" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  function persistSidebarCollapsed(nextCollapsed) {
+    setIsSidebarCollapsed(nextCollapsed);
+    try {
+      window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(nextCollapsed));
+    } catch {
+      // Preference persistence is best-effort; toggling should still work.
+    }
+  }
+
+  function toggleSidebar() {
+    if (isNarrowViewport) {
+      setIsSidebarOverlayOpen((current) => !current);
+      return;
+    }
+    persistSidebarCollapsed(!isSidebarCollapsed);
+  }
+
+  function closeSidebar() {
+    if (isNarrowViewport) {
+      setIsSidebarOverlayOpen(false);
+      return;
+    }
+    persistSidebarCollapsed(true);
+  }
+
+  function closeSidebarOverlay() {
+    if (isNarrowViewport) {
+      setIsSidebarOverlayOpen(false);
+    }
+  }
 
   async function loadAll(projectId = selectedProjectId) {
     setError("");
@@ -238,6 +294,38 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const query = window.matchMedia(SIDEBAR_NARROW_QUERY);
+    const handleChange = () => {
+      setIsNarrowViewport(query.matches);
+      if (!query.matches) {
+        setIsSidebarOverlayOpen(false);
+      }
+    };
+
+    handleChange();
+    if (query.addEventListener) {
+      query.addEventListener("change", handleChange);
+      return () => query.removeEventListener("change", handleChange);
+    }
+
+    query.addListener(handleChange);
+    return () => query.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isSidebarOverlayOpen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsSidebarOverlayOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSidebarOverlayOpen]);
+
+  useEffect(() => {
     if (!selectedProjectId || loading) return;
     Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
@@ -348,8 +436,12 @@ export function App() {
   }
 
   return (
-    <main className="appShell">
-      <aside className="projectRail">
+    <main className={appShellClassName}>
+      <aside
+        id="project-rail"
+        className="projectRail"
+        aria-hidden={isNarrowViewport && !isSidebarOverlayOpen ? "true" : undefined}
+      >
         <div className="brandBlock">
           <div className="brandIcon">
             <FolderKanban size={22} />
@@ -358,23 +450,58 @@ export function App() {
             <h1>Agent Workboard</h1>
             <p>Projects, tasks, roles, files</p>
           </div>
+          <button
+            type="button"
+            className="iconButton railCloseButton"
+            aria-label={isNarrowViewport ? "Close sidebar" : "Collapse sidebar"}
+            aria-expanded={sidebarVisible}
+            aria-controls="project-rail"
+            onClick={closeSidebar}
+            title={isNarrowViewport ? "Close sidebar" : "Collapse sidebar"}
+          >
+            <X size={18} />
+          </button>
         </div>
 
-        <button className="railAction" onClick={() => setIsCreatingProject(true)}>
+        <button
+          className="railAction"
+          onClick={() => {
+            setIsCreatingProject(true);
+            closeSidebarOverlay();
+          }}
+        >
           <Plus size={16} />
           <span>Project</span>
         </button>
 
         <div className="viewSwitch">
-          <button className={view === "board" ? "selected" : ""} onClick={() => setView("board")}>
+          <button
+            className={view === "board" ? "selected" : ""}
+            onClick={() => {
+              setView("board");
+              closeSidebarOverlay();
+            }}
+          >
             <FolderKanban size={16} />
             <span>Board</span>
           </button>
-          <button className={view === "agents" ? "selected" : ""} onClick={() => setView("agents")}>
+          <button
+            className={view === "agents" ? "selected" : ""}
+            onClick={() => {
+              setView("agents");
+              closeSidebarOverlay();
+            }}
+          >
             <Bot size={16} />
             <span>Agents</span>
           </button>
-          <button className={view === "capabilities" ? "selected" : ""} onClick={() => setView("capabilities")}>
+          <button
+            className={view === "capabilities" ? "selected" : ""}
+            onClick={() => {
+              setView("capabilities");
+              closeSidebarOverlay();
+            }}
+          >
             <Database size={16} />
             <span>Capabilities</span>
           </button>
@@ -385,7 +512,10 @@ export function App() {
             <button
               key={project.id}
               className={`projectButton ${project.id === selectedProjectId ? "selected" : ""}`}
-              onClick={() => setSelectedProjectId(project.id)}
+              onClick={() => {
+                setSelectedProjectId(project.id);
+                closeSidebarOverlay();
+              }}
             >
               <span className="projectKey">{project.key}</span>
               <span className="projectName">{project.name}</span>
@@ -402,7 +532,10 @@ export function App() {
               <button
                 key={role.id}
                 className={`roleChip ${filters.role === role.id ? "selected" : ""}`}
-                onClick={() => refreshTasks({ role: filters.role === role.id ? "" : role.id })}
+                onClick={() => {
+                  refreshTasks({ role: filters.role === role.id ? "" : role.id });
+                  closeSidebarOverlay();
+                }}
                 title={role.summary}
               >
                 <Icon size={15} />
@@ -415,9 +548,22 @@ export function App() {
 
       <section className="boardArea">
         <header className="topBar">
-          <div>
-            <div className="eyebrow">Project</div>
-            <h2>{viewTitle}</h2>
+          <div className="topTitle">
+            <button
+              type="button"
+              className={`iconButton sidebarToggle ${sidebarVisible ? "active" : ""}`}
+              aria-label={sidebarToggleLabel}
+              aria-expanded={sidebarVisible}
+              aria-controls="project-rail"
+              onClick={toggleSidebar}
+              title={sidebarToggleLabel}
+            >
+              <Menu size={19} />
+            </button>
+            <div>
+              <div className="eyebrow">Project</div>
+              <h2>{viewTitle}</h2>
+            </div>
           </div>
           <div className="topStats">
             {view === "capabilities" ? (
@@ -553,6 +699,15 @@ export function App() {
           />
         )}
       </section>
+
+      {isSidebarOverlayOpen && (
+        <button
+          type="button"
+          className="sidebarScrim"
+          aria-label="Close sidebar"
+          onClick={() => setIsSidebarOverlayOpen(false)}
+        />
+      )}
 
       {selectedTask && (
         <TaskDrawer
