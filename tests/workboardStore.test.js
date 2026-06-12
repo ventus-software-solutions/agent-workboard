@@ -447,23 +447,23 @@ describe("WorkboardStore", () => {
       projectId: project.id,
       title: "Claim exactly once",
       status: "ready",
-      assignee: "implementer-01"
+      assignee: "implementer-backend-1"
     });
 
     const claimed = await store.claimTask(task.id, {
-      assignee: "implementer-02",
-      actor: "implementer-02",
+      assignee: "implementer-backend-2",
+      actor: "implementer-backend-2",
       expectedStatus: "ready",
-      expectedAssignee: "implementer-01"
+      expectedAssignee: "implementer-backend-1"
     });
 
     expect(claimed).toMatchObject({
       id: task.id,
       status: "in_progress",
-      assignee: "implementer-02"
+      assignee: "implementer-backend-2"
     });
     expect(claimed.activity[0]).toMatchObject({
-      actor: "implementer-02",
+      actor: "implementer-backend-2",
       type: "claimed"
     });
   });
@@ -478,14 +478,14 @@ describe("WorkboardStore", () => {
     });
 
     await store.claimTask(task.id, {
-      assignee: "implementer-01",
+      assignee: "implementer-backend-1",
       expectedStatus: "ready",
       expectedAssignee: ""
     });
 
     await expect(
       store.claimTask(task.id, {
-        assignee: "implementer-02",
+        assignee: "implementer-backend-2",
         expectedStatus: "ready",
         expectedAssignee: ""
       })
@@ -558,6 +558,102 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("rejects slot-managed role-type task claims before they bypass slot accounting", async () => {
+    const project = await store.createProject({ name: "Role Type Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Review with a slot",
+      status: "ready",
+      role: "reviewer",
+      assignee: ""
+    });
+
+    await expect(
+      store.claimTask(task.id, {
+        assignee: "reviewer",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        agentId: "reviewer",
+        typeId: "reviewer",
+        suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+      }
+    });
+
+    expect(store.getTask(task.id)).toMatchObject({
+      status: "ready",
+      assignee: ""
+    });
+
+    const claimed = await store.claimTask(task.id, {
+      assignee: "reviewer-agent",
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+
+    expect(claimed).toMatchObject({
+      status: "in_progress",
+      assignee: "reviewer-agent"
+    });
+  });
+
+  it("rejects slot-managed task claims from non-configured slot assignees", async () => {
+    const project = await store.createProject({ name: "Non Slot Claim Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Reviewer must use configured slot",
+      status: "ready",
+      role: "reviewer",
+      assignee: ""
+    });
+
+    await expect(
+      store.claimTask(task.id, {
+        assignee: "reviewer-01",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        agentId: "reviewer-01",
+        role: "reviewer",
+        typeId: "reviewer",
+        suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+      }
+    });
+
+    expect(store.getTask(task.id)).toMatchObject({
+      status: "ready",
+      assignee: ""
+    });
+  });
+
+  it("allows explicitly assigned non-slot assignees to claim their assigned task", async () => {
+    const project = await store.createProject({ name: "Operator Assigned Non Slot Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Operator assigned temporary worker",
+      status: "ready",
+      role: "implementer",
+      assignee: "implementer-1"
+    });
+
+    const claimed = await store.claimTask(task.id, {
+      assignee: "implementer-1",
+      expectedStatus: "ready",
+      expectedAssignee: "implementer-1"
+    });
+
+    expect(claimed).toMatchObject({
+      status: "in_progress",
+      assignee: "implementer-1"
+    });
+  });
+
   it("lets only one store instance claim a task from a shared data directory", async () => {
     const project = await store.createProject({ name: "Shared Store Claim Project" });
     const task = await store.createTask({
@@ -573,8 +669,8 @@ describe("WorkboardStore", () => {
     await secondStore.init();
 
     const results = await Promise.allSettled([
-      firstStore.claimTask(task.id, { assignee: "implementer-01", expectedStatus: "ready", expectedAssignee: "" }),
-      secondStore.claimTask(task.id, { assignee: "implementer-02", expectedStatus: "ready", expectedAssignee: "" })
+      firstStore.claimTask(task.id, { assignee: "implementer-backend-1", expectedStatus: "ready", expectedAssignee: "" }),
+      secondStore.claimTask(task.id, { assignee: "implementer-backend-2", expectedStatus: "ready", expectedAssignee: "" })
     ]);
 
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
@@ -585,7 +681,7 @@ describe("WorkboardStore", () => {
     const savedTask = saved.tasks.find((item) => item.id === task.id);
 
     expect(savedTask.status).toBe("in_progress");
-    expect(["implementer-01", "implementer-02"]).toContain(savedTask.assignee);
+    expect(["implementer-backend-1", "implementer-backend-2"]).toContain(savedTask.assignee);
   });
 
   it("initializes default agent types and stable slots", () => {
@@ -610,6 +706,34 @@ describe("WorkboardStore", () => {
       available: true,
       paused: false
     });
+  });
+
+  it("reports untracked in-progress role-type assignees in the slot registry", async () => {
+    const project = await store.createProject({ name: "Untracked Slot Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Invisible reviewer claim",
+      status: "in_progress",
+      role: "reviewer",
+      assignee: "reviewer"
+    });
+
+    const registry = store.listAgentSlots({ now: "2026-06-12T15:00:00.000Z" });
+
+    expect(registry.types.find((type) => type.id === "reviewer")).toMatchObject({
+      active: 0,
+      available: 2
+    });
+    expect(registry.untrackedInProgressAssignees).toEqual([
+      expect.objectContaining({
+        assignee: "reviewer",
+        role: "reviewer",
+        typeId: "reviewer",
+        inProgressTaskCount: 1,
+        taskIds: [task.id],
+        suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+      })
+    ]);
   });
 
   it("lets two store instances acquire distinct slots from a shared data directory", async () => {
@@ -945,6 +1069,87 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("requires generic role-type workers to acquire a concrete slot before next-task selection", async () => {
+    const project = await store.createProject({ name: "Role Type Next Task Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Review through a concrete slot",
+      status: "ready",
+      priority: "high",
+      role: "reviewer"
+    });
+
+    const genericNext = store.getNextTaskForAgent("reviewer", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(genericNext.task).toBeNull();
+    expect(genericNext.candidates).toEqual([]);
+    expect(genericNext.selection).toMatchObject({
+      reason: "agent_slot_required",
+      typeId: "reviewer",
+      suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+    });
+
+    const concreteNext = store.getNextTaskForAgent("reviewer-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(concreteNext.task).toMatchObject({ id: task.id });
+    expect(concreteNext.selection).toMatchObject({
+      reason: "role_queue",
+      claim: {
+        taskId: task.id,
+        assignee: "reviewer-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      }
+    });
+  });
+
+  it("requires generic numbered non-slot workers to acquire a concrete slot before next-task selection", async () => {
+    const project = await store.createProject({ name: "Numbered Worker Next Task Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Implement through a concrete slot",
+      status: "ready",
+      priority: "high",
+      role: "implementer"
+    });
+
+    const genericNext = store.getNextTaskForAgent("implementer-1", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(genericNext.task).toBeNull();
+    expect(genericNext.candidates).toEqual([]);
+    expect(genericNext.selection).toMatchObject({
+      reason: "agent_slot_required",
+      agentId: "implementer-1",
+      typeId: "implementer-general",
+      suggestedSlotIds: ["implementer-agent"]
+    });
+
+    const concreteNext = store.getNextTaskForAgent("implementer-agent", {
+      projectId: project.id,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(concreteNext.task).toMatchObject({ id: task.id });
+    expect(concreteNext.selection).toMatchObject({
+      reason: "role_queue",
+      claim: {
+        taskId: task.id,
+        assignee: "implementer-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      }
+    });
+  });
+
   it("falls back to role queue work and respects priority order", async () => {
     const project = await store.createProject({ name: "Role Queue Project" });
     const lowPriority = await store.createTask({
@@ -1189,6 +1394,39 @@ describe("WorkboardStore", () => {
     expect(saved.agentPresence["mcp-agent"].noEligibleWork).toMatchObject({
       reason: "no_ready_work"
     });
+  });
+
+  it("rejects presence reports from generic numbered non-slot workers", async () => {
+    await expect(
+      store.updateAgentPresence("implementer-1", {
+        state: "active",
+        message: "I should have acquired a slot first.",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        agentId: "implementer-1",
+        typeId: "implementer-general",
+        suggestedSlotIds: ["implementer-agent"]
+      }
+    });
+
+    await expect(
+      store.reportNoEligibleWork("implementer-1", {
+        reason: "no_ready_work",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        agentId: "implementer-1",
+        typeId: "implementer-general",
+        suggestedSlotIds: ["implementer-agent"]
+      }
+    });
+
+    expect(store.data.agentPresence["implementer-1"]).toBeUndefined();
   });
 
   it("identifies stale in-progress work from missing slots and stale heartbeats", async () => {

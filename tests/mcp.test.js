@@ -68,6 +68,27 @@ describe("Agent Workboard MCP tools", () => {
       projectId: "project_123"
     });
 
+    const claimTask = registrations.find((registration) => registration.name === "claim_task");
+    const roleClaimError = Object.assign(new Error("Agent id reviewer is a role type; acquire a concrete agent slot first."), {
+      status: 409,
+      details: {
+        agentId: "reviewer",
+        typeId: "reviewer",
+        suggestedSlotIds: ["reviewer-agent", "reviewer-agent-2"]
+      }
+    });
+    fakeStore.claimTask.mockRejectedValueOnce(roleClaimError);
+    await expect(claimTask.handler({ taskId: "task_123", assignee: "reviewer" })).rejects.toMatchObject({
+      status: 409,
+      details: {
+        typeId: "reviewer"
+      }
+    });
+    expect(fakeStore.claimTask).toHaveBeenCalledWith("task_123", {
+      taskId: "task_123",
+      assignee: "reviewer"
+    });
+
     const updatePresence = registrations.find((registration) => registration.name === "update_presence");
     expect(parseTextResult(await updatePresence.handler({ agentId: "mcp-agent", state: "active" }))).toMatchObject({
       presence: {

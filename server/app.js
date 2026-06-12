@@ -39,10 +39,13 @@ export function createApp({ store }) {
 
   app.get("/api/agent-docs/:agentId", (req, res) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const agentSlotRegistry = store.listAgentSlots();
     const doc = buildAgentDoc({
       agentId: req.params.agentId,
       roles: store.roles(),
       statuses: store.statuses(),
+      agentSlots: agentSlotRegistry.slots,
+      agentTypes: agentSlotRegistry.types,
       baseUrl
     });
 
