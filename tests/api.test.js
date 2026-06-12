@@ -433,4 +433,72 @@ describe("Agent Workboard API", () => {
     expect(filtered.body.tasks).toHaveLength(1);
     expect(filtered.body.tasks[0].attachments).toHaveLength(1);
   });
+
+  it("sanitizes uploaded attachment filenames and downloads only from the owning task", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Attachment Safety Project" })).body.project;
+    const firstTask = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Attach unsafe file",
+        role: "tester"
+      })
+    ).body.task;
+    const secondTask = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Unrelated attachment scope",
+        role: "tester"
+      })
+    ).body.task;
+
+    const uploaded = await request(app)
+      .post(`/api/tasks/${firstTask.id}/attachments`)
+      .field("author", "tester-agent")
+      .attach("file", Buffer.from("download evidence"), "../bad spec?.txt")
+      .expect(201);
+
+    expect(uploaded.body.attachment).toMatchObject({
+      filename: "bad_spec_.txt",
+      size: "download evidence".length,
+      uploadedBy: "tester-agent"
+    });
+    expect(uploaded.body.attachment.storedName).toMatch(new RegExp(`^${uploaded.body.attachment.id}-bad_spec_\\.txt$`));
+    expect(uploaded.body.task.attachments[0]).toMatchObject({
+      id: uploaded.body.attachment.id,
+      filename: "bad_spec_.txt"
+    });
+
+    const downloaded = await request(app)
+      .get(`/api/tasks/${firstTask.id}/attachments/${uploaded.body.attachment.id}/download`)
+      .expect(200);
+
+    expect(downloaded.headers["content-disposition"]).toContain('filename="bad_spec_.txt"');
+    expect(downloaded.text).toBe("download evidence");
+
+    await request(app)
+      .get(`/api/tasks/${secondTask.id}/attachments/${uploaded.body.attachment.id}/download`)
+      .expect(404);
+  });
+
+  it("returns 404 for missing attachments and rejects files over the upload limit", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Attachment Limits Project" })).body.project;
+    const task = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Check attachment limits",
+        role: "tester"
+      })
+    ).body.task;
+
+    await request(app).get(`/api/tasks/${task.id}/attachments/file_missing/download`).expect(404);
+
+    const oversized = Buffer.alloc(25 * 1024 * 1024 + 1, "a");
+    const rejected = await request(app)
+      .post(`/api/tasks/${task.id}/attachments`)
+      .attach("file", oversized, "too-large.txt")
+      .expect(413);
+
+    expect(rejected.body.error.message).toMatch(/file too large/i);
+    expect(store.getTask(task.id).attachments).toHaveLength(0);
+  });
 });
