@@ -808,6 +808,18 @@ export class WorkboardStore {
       };
     }
 
+    if (isOneActiveTaskWorkMode(profile.workMode)) {
+      const activeTask = findActiveTaskForAgent(this.data.tasks, agentId);
+      if (activeTask) {
+        return {
+          agent,
+          task: null,
+          selection: buildActiveTaskSelection(activeTask, profile.workMode),
+          candidates: []
+        };
+      }
+    }
+
     const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, input));
     const buckets = profile.role === "reviewer"
       ? reviewerCandidateBuckets(scopedTasks, agentId, profile)
@@ -1301,6 +1313,14 @@ export class WorkboardStore {
         }
       } else if (task.assignee && task.assignee !== assignee) {
         throw Object.assign(new Error(`Task is already claimed by ${task.assignee}.`), { status: 409 });
+      }
+
+      const profile = this.resolveWorkAgentProfile(assignee, input);
+      if (isOneActiveTaskWorkMode(profile.workMode)) {
+        const activeTask = findActiveTaskForAgent(this.data.tasks, assignee, task.id);
+        if (activeTask) {
+          throw activeTaskClaimError(assignee, activeTask, profile.workMode);
+        }
       }
 
       const claimedAt = now();
@@ -2018,6 +2038,49 @@ function uniqueTasks(tasks) {
     seen.add(task.id);
     return true;
   });
+}
+
+function isOneActiveTaskWorkMode(workMode) {
+  return workMode === "single-task" || workMode === "drain-role-queue";
+}
+
+function findActiveTaskForAgent(tasks, agentId, excludedTaskId = "") {
+  return tasks
+    .filter((task) => task.status === "in_progress" && task.assignee === agentId && task.id !== excludedTaskId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title))[0];
+}
+
+function buildActiveTaskSelection(activeTask, workMode) {
+  return {
+    reason: "active_task_in_progress",
+    workMode,
+    activeTask: {
+      id: activeTask.id,
+      title: activeTask.title,
+      status: activeTask.status,
+      projectId: activeTask.projectId,
+      updatedAt: activeTask.updatedAt
+    },
+    message: `Active task ${activeTask.id} is still in progress. Finish, hand off, or requeue it before taking another task.`
+  };
+}
+
+function activeTaskClaimError(agentId, activeTask, workMode) {
+  return httpError(
+    `Agent ${agentId} already has active task ${activeTask.id} (${activeTask.title}). Finish, hand off, or requeue it before claiming another task.`,
+    409,
+    {
+      reason: "active_task_in_progress",
+      workMode,
+      activeTask: {
+        id: activeTask.id,
+        title: activeTask.title,
+        status: activeTask.status,
+        projectId: activeTask.projectId,
+        updatedAt: activeTask.updatedAt
+      }
+    }
+  );
 }
 
 function buildSelection(reason, task, agentId) {
