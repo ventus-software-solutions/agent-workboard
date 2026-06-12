@@ -30,10 +30,10 @@ describe("Agent Workboard API", () => {
     expect(overview.body.suggestedAgents).not.toContain("implementer-backend-1");
     expect(overview.body.usage.promptTemplate).toContain("/api/agent-docs/{agentType}");
     expect(overview.body.identityModel.suggestedAgentsAre).toContain("role types");
-    expect(overview.body.identityModel.currentRule).toContain("concrete assignee id");
-    expect(overview.body.slotBootstrap.status).toBe("planned");
+    expect(overview.body.identityModel.currentRule).toContain("/api/bootstrap");
+    expect(overview.body.slotBootstrap.status).toBe("available-http");
     expect(overview.body.slotBootstrap.plannedMcpTool).toBe("acquire_agent_slot");
-    expect(overview.body.slotBootstrap.currentFallback).toContain("implementer-a");
+    expect(overview.body.slotBootstrap.httpEndpoint).toBe("/api/bootstrap");
 
     const pmDoc = await request(app).get("/api/agent-docs/pm-agent").expect(200);
     expect(pmDoc.body.agent).toMatchObject({
@@ -58,7 +58,7 @@ describe("Agent Workboard API", () => {
     expect(markdown.headers["content-type"]).toContain("text/markdown");
     expect(markdown.text).toContain("You are **test-agent**");
     expect(markdown.text).toContain("Identity And Slots");
-    expect(markdown.text).toContain("Automatic slot assignment is not implemented yet");
+    expect(markdown.text).toContain("HTTP slot bootstrap is available");
     expect(markdown.text).toContain("Claim exactly one task");
     expect(markdown.text).toContain("Branch And Worktree Discipline");
     expect(markdown.text).toContain("wt-agent-workboard-test-agent");
@@ -135,6 +135,94 @@ describe("Agent Workboard API", () => {
       .expect(409);
 
     expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
+  });
+
+  it("lists configured agent slots", async () => {
+    const response = await request(app).get("/api/agent-slots").expect(200);
+
+    expect(response.body.types).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "implementer-backend",
+          capacity: 4,
+          active: 0,
+          available: 4
+        })
+      ])
+    );
+    expect(response.body.slots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "implementer-backend-1",
+          typeId: "implementer-backend",
+          active: false,
+          available: true
+        })
+      ])
+    );
+  });
+
+  it("bootstraps an anonymous worker into a matching slot", async () => {
+    const response = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        preferredType: "backend",
+        runtimeId: "api-runtime-1",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      acquired: true,
+      renewed: false,
+      agentId: "implementer-backend-1",
+      typeId: "implementer-backend",
+      role: "implementer",
+      slotNumber: 1
+    });
+
+    const renewed = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        preferredType: "backend",
+        runtimeId: "api-runtime-1",
+        now: "2026-06-12T15:05:00.000Z"
+      })
+      .expect(200);
+
+    expect(renewed.body).toMatchObject({
+      renewed: true,
+      agentId: "implementer-backend-1"
+    });
+  });
+
+  it("rejects bootstrap when active slots are full", async () => {
+    for (const slotNumber of [1, 2, 3, 4]) {
+      await request(app)
+        .post("/api/bootstrap")
+        .send({
+          preferredType: "implementer-backend",
+          runtimeId: `api-runtime-${slotNumber}`,
+          now: "2026-06-12T15:00:00.000Z"
+        })
+        .expect(200);
+    }
+
+    const rejected = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        preferredType: "implementer-backend",
+        runtimeId: "api-runtime-5",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(409);
+
+    expect(rejected.body.error.message).toContain("No available agent slot for implementer-backend");
+    expect(rejected.body.error.details).toMatchObject({
+      typeId: "implementer-backend",
+      capacity: 4,
+      active: 4
+    });
   });
 
   it("requires completion evidence when marking a task done", async () => {

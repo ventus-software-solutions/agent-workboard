@@ -112,6 +112,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "acquire_agent_slot",
+  {
+    title: "Acquire agent slot",
+    description: "Acquire or renew a concrete agent slot for a generic worker.",
+    inputSchema: {
+      preferredType: z.string().optional(),
+      agentType: z.string().optional(),
+      type: z.string().optional(),
+      role: z.string().optional(),
+      specialties: z.array(z.string()).optional(),
+      labels: z.array(z.string()).optional(),
+      agentId: z.string().optional(),
+      runtimeId: z.string().optional(),
+      workMode: z.string().optional(),
+      now: z.string().optional()
+    }
+  },
+  async (input) => asText(await store.acquireAgentSlot(input))
+);
+
+server.registerTool(
   "update_task_status",
   {
     title: "Update task status",

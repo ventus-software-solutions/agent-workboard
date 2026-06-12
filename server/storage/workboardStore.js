@@ -18,6 +18,7 @@ export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded"
 const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
+const SLOT_LEASE_MS = 15 * 60 * 1000;
 
 export const ROLES = [
   {
@@ -56,6 +57,135 @@ const STATUS_IDS = new Set(STATUSES.map((status) => status.id));
 const ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const PRIORITY_IDS = new Set(PRIORITIES);
 const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
+
+const DEFAULT_AGENT_TYPES = [
+  {
+    id: "pm",
+    role: "pm",
+    capacity: 2,
+    slotIds: ["pm-agent", "pm-agent-2"],
+    specialties: ["pm", "workflow", "backlog", "roadmap"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "implementer-backend",
+    role: "implementer",
+    capacity: 4,
+    slotIds: ["implementer-backend-1", "implementer-backend-2", "implementer-backend-3", "implementer-backend-4"],
+    specialties: ["backend", "api", "storage", "concurrency", "reliability", "agents"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "implementer-frontend",
+    role: "implementer",
+    capacity: 3,
+    slotIds: ["implementer-frontend-1", "implementer-frontend-2", "implementer-frontend-3"],
+    specialties: ["frontend", "ui", "operator", "agents"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "implementer-general",
+    role: "implementer",
+    capacity: 1,
+    slotIds: ["implementer-agent"],
+    specialties: ["general"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "mcp",
+    role: "implementer",
+    capacity: 2,
+    slotIds: ["mcp-agent", "mcp-agent-2"],
+    specialties: ["mcp", "agent-tools", "docs"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "reviewer",
+    role: "reviewer",
+    capacity: 2,
+    slotIds: ["reviewer-agent", "reviewer-agent-2"],
+    specialties: ["review", "architecture", "process", "workflow"],
+    defaultWorkMode: "drain-role-queue"
+  },
+  {
+    id: "tester",
+    role: "tester",
+    capacity: 2,
+    slotIds: ["test-agent", "test-agent-2"],
+    specialties: ["tests", "e2e", "regression", "attachments"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "docs",
+    role: "implementer",
+    capacity: 2,
+    slotIds: ["docs-agent", "docs-agent-2"],
+    specialties: ["docs", "onboarding", "architecture", "release"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "security-reviewer",
+    role: "reviewer",
+    capacity: 1,
+    slotIds: ["security-reviewer"],
+    specialties: ["security", "auth", "roles", "deployment"],
+    defaultWorkMode: "watch-mode"
+  },
+  {
+    id: "implementer-security",
+    role: "implementer",
+    capacity: 1,
+    slotIds: ["implementer-security-1"],
+    specialties: ["security", "local", "deployment"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "release",
+    role: "implementer",
+    capacity: 1,
+    slotIds: ["release-agent"],
+    specialties: ["release", "changelog", "packaging", "opensource"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "observability",
+    role: "implementer",
+    capacity: 1,
+    slotIds: ["implementer-observability-1"],
+    specialties: ["observability", "audit", "operator", "telemetry"],
+    defaultWorkMode: "watch-mode"
+  },
+  {
+    id: "infra",
+    role: "implementer",
+    capacity: 1,
+    slotIds: ["implementer-infra-1"],
+    specialties: ["infra", "ci", "docker", "packaging"],
+    defaultWorkMode: "single-task"
+  },
+  {
+    id: "packaging-reviewer",
+    role: "reviewer",
+    capacity: 1,
+    slotIds: ["packaging-reviewer"],
+    specialties: ["packaging", "release", "review"],
+    defaultWorkMode: "single-task"
+  }
+];
+
+const AGENT_TYPE_ALIASES = new Map([
+  ["backend", "implementer-backend"],
+  ["frontend", "implementer-frontend"],
+  ["implementer", "implementer-general"],
+  ["general", "implementer-general"],
+  ["security", "implementer-security"],
+  ["security-implementer", "implementer-security"],
+  ["test", "tester"],
+  ["tests", "tester"],
+  ["review", "reviewer"],
+  ["docs-agent", "docs"],
+  ["documentation", "docs"]
+]);
 
 function now() {
   return new Date().toISOString();
@@ -163,7 +293,9 @@ function defaultData() {
         ]
       }
     ],
-    events: []
+    events: [],
+    agentTypes: defaultAgentTypes(),
+    agentSlots: defaultAgentSlots()
   };
 }
 
@@ -315,7 +447,126 @@ export class WorkboardStore {
       }
     }
 
+    if (this.ensureAgentSlotSchema()) {
+      migrated = true;
+    }
+
     return migrated;
+  }
+
+  listAgentSlots({ now: nowInput } = {}) {
+    this.ensureAgentSlotSchema();
+    const currentTime = parseTimestamp(nowInput);
+    const stats = this.agentSlotTaskStats();
+    const slots = this.data.agentSlots.map((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id)));
+    const activeByType = new Map();
+
+    for (const slot of slots) {
+      if (slot.active) {
+        activeByType.set(slot.typeId, (activeByType.get(slot.typeId) || 0) + 1);
+      }
+    }
+
+    return {
+      leaseMs: SLOT_LEASE_MS,
+      types: this.data.agentTypes.map((type) => ({
+        ...type,
+        slotIds: [...type.slotIds],
+        specialties: [...type.specialties],
+        active: activeByType.get(type.id) || 0,
+        available: Math.max(0, type.capacity - (activeByType.get(type.id) || 0))
+      })),
+      slots
+    };
+  }
+
+  async acquireAgentSlot(input = {}) {
+    const currentTime = parseTimestamp(input.now);
+    const runtimeId = normalizeText(input.runtimeId) || id("runtime");
+    const requestedAgentId = normalizeText(input.agentId);
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+
+      const stats = this.agentSlotTaskStats();
+      const requestedSlot = requestedAgentId
+        ? this.data.agentSlots.find((slot) => slot.id === requestedAgentId)
+        : null;
+      const typeId = requestedSlot?.typeId || this.inferAgentTypeId(input);
+      const type = this.data.agentTypes.find((candidate) => candidate.id === typeId);
+
+      if (!type) {
+        throw httpError(`Unknown agent type ${typeId || "(none)"}.`, 400, { typeId });
+      }
+      if (requestedAgentId && !requestedSlot) {
+        throw httpError(`Agent slot ${requestedAgentId} is not configured.`, 404, { agentId: requestedAgentId });
+      }
+
+      const typeSlots = this.data.agentSlots
+        .filter((slot) => slot.typeId === type.id)
+        .sort((a, b) => a.slotNumber - b.slotNumber);
+      const existingRuntimeSlot = runtimeId
+        ? typeSlots.find((slot) => slot.lease?.runtimeId === runtimeId && this.isLeaseFresh(slot.lease, currentTime))
+        : null;
+      const selected =
+        requestedSlot ||
+        existingRuntimeSlot ||
+        selectAvailableSlot(typeSlots, {
+          currentTime,
+          runtimeId,
+          stats,
+          isLeaseFresh: (lease) => this.isLeaseFresh(lease, currentTime)
+        });
+
+      if (!selected) {
+        const active = typeSlots.filter((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id)).active);
+        throw httpError(`No available agent slot for ${type.id}; active capacity is ${active.length}/${type.capacity}.`, 409, {
+          typeId: type.id,
+          capacity: type.capacity,
+          active: active.length,
+          activeSlotIds: active.map((slot) => slot.id)
+        });
+      }
+
+      const described = this.describeAgentSlot(selected, currentTime, stats.get(selected.id));
+      const sameRuntime = selected.lease?.runtimeId === runtimeId;
+      if (selected.paused) {
+        throw httpError(`Agent slot ${selected.id} is paused.`, 409, { agentId: selected.id, typeId: type.id });
+      }
+      if (described.active && !sameRuntime) {
+        throw httpError(`Agent slot ${selected.id} is already active.`, 409, { agentId: selected.id, typeId: type.id });
+      }
+
+      const heartbeatAt = currentTime.toISOString();
+      const previousLease = selected.lease;
+      const reclaimed = Boolean(previousLease && !this.isLeaseFresh(previousLease, currentTime) && !described.inProgressTaskCount);
+      selected.lease = {
+        runtimeId,
+        acquiredAt: sameRuntime && previousLease?.acquiredAt ? previousLease.acquiredAt : heartbeatAt,
+        heartbeatAt,
+        expiresAt: new Date(currentTime.getTime() + SLOT_LEASE_MS).toISOString()
+      };
+      selected.workMode = normalizeWorkMode(input.workMode) || selected.workMode || type.defaultWorkMode;
+      selected.updatedAt = heartbeatAt;
+
+      await this.writeData(this.data);
+
+      return {
+        acquired: true,
+        renewed: Boolean(sameRuntime),
+        reclaimed,
+        agentId: selected.id,
+        typeId: type.id,
+        role: selected.role,
+        specialties: [...selected.specialties],
+        slotNumber: selected.slotNumber,
+        workMode: selected.workMode,
+        paused: selected.paused,
+        lease: { ...selected.lease },
+        capacity: type.capacity
+      };
+    });
   }
 
   listProjects({ includeArchived = false } = {}) {
@@ -672,6 +923,145 @@ export class WorkboardStore {
     await stat(filePath);
     return { attachment, filePath };
   }
+
+  ensureAgentSlotSchema() {
+    let changed = false;
+    if (!Array.isArray(this.data.agentTypes)) {
+      this.data.agentTypes = [];
+      changed = true;
+    }
+    if (!Array.isArray(this.data.agentSlots)) {
+      this.data.agentSlots = [];
+      changed = true;
+    }
+
+    for (const defaultType of defaultAgentTypes()) {
+      let type = this.data.agentTypes.find((candidate) => candidate.id === defaultType.id);
+      if (!type) {
+        this.data.agentTypes.push(defaultType);
+        type = defaultType;
+        changed = true;
+      }
+
+      for (const field of ["role", "capacity", "defaultWorkMode"]) {
+        if (!(field in type)) {
+          type[field] = defaultType[field];
+          changed = true;
+        }
+      }
+      if (!Array.isArray(type.specialties)) {
+        type.specialties = [...defaultType.specialties];
+        changed = true;
+      }
+      if (!Array.isArray(type.slotIds)) {
+        type.slotIds = [...defaultType.slotIds];
+        changed = true;
+      }
+
+      for (const [index, slotId] of type.slotIds.entries()) {
+        let slot = this.data.agentSlots.find((candidate) => candidate.id === slotId);
+        if (!slot) {
+          this.data.agentSlots.push(createAgentSlot(type, slotId, index + 1));
+          changed = true;
+          continue;
+        }
+
+        const defaults = createAgentSlot(type, slotId, index + 1);
+        for (const field of ["typeId", "slotNumber", "role", "workMode", "paused"]) {
+          if (!(field in slot)) {
+            slot[field] = defaults[field];
+            changed = true;
+          }
+        }
+        if (!Array.isArray(slot.specialties)) {
+          slot.specialties = [...defaults.specialties];
+          changed = true;
+        }
+        if (!("lease" in slot)) {
+          slot.lease = null;
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
+  agentSlotTaskStats() {
+    const stats = new Map();
+    for (const task of this.data.tasks) {
+      if (!task.assignee) continue;
+      const slotStats = stats.get(task.assignee) || {
+        assignedTaskCount: 0,
+        readyTaskCount: 0,
+        backlogTaskCount: 0,
+        inProgressTaskCount: 0
+      };
+      slotStats.assignedTaskCount += 1;
+      if (task.status === "ready") slotStats.readyTaskCount += 1;
+      if (task.status === "backlog") slotStats.backlogTaskCount += 1;
+      if (task.status === "in_progress") slotStats.inProgressTaskCount += 1;
+      stats.set(task.assignee, slotStats);
+    }
+    return stats;
+  }
+
+  describeAgentSlot(slot, currentTime, taskStats = {}) {
+    const stats = {
+      assignedTaskCount: 0,
+      readyTaskCount: 0,
+      backlogTaskCount: 0,
+      inProgressTaskCount: 0,
+      ...(taskStats || {})
+    };
+    const leaseFresh = this.isLeaseFresh(slot.lease, currentTime);
+    const active = !slot.paused && (leaseFresh || stats.inProgressTaskCount > 0);
+    return {
+      ...slot,
+      specialties: [...(slot.specialties || [])],
+      lease: slot.lease ? { ...slot.lease } : null,
+      leaseFresh,
+      active,
+      stale: Boolean(slot.lease && !leaseFresh && stats.inProgressTaskCount === 0),
+      assignedTaskCount: stats.assignedTaskCount,
+      readyTaskCount: stats.readyTaskCount,
+      backlogTaskCount: stats.backlogTaskCount,
+      inProgressTaskCount: stats.inProgressTaskCount,
+      available: !slot.paused && !active
+    };
+  }
+
+  isLeaseFresh(lease, currentTime) {
+    if (!lease?.expiresAt) return false;
+    return Date.parse(lease.expiresAt) > currentTime.getTime();
+  }
+
+  inferAgentTypeId(input = {}) {
+    const preferred = normalizeAgentType(input.preferredType || input.agentType || input.type);
+    if (preferred) return preferred;
+
+    const agentId = normalizeText(input.agentId);
+    const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
+    if (slot) return slot.typeId;
+
+    const role = normalizeText(input.role);
+    const specialties = normalizeLabels(input.specialties || input.labels);
+    if (specialties.includes("backend") || specialties.includes("api") || specialties.includes("storage")) {
+      return "implementer-backend";
+    }
+    if (specialties.includes("frontend") || specialties.includes("ui") || specialties.includes("ux")) {
+      return "implementer-frontend";
+    }
+    if (specialties.includes("mcp") || specialties.includes("agent-tools")) return "mcp";
+    if (specialties.includes("docs") || specialties.includes("onboarding") || specialties.includes("architecture")) return "docs";
+    if (specialties.includes("security")) return role === "reviewer" ? "security-reviewer" : "implementer-security";
+    if (specialties.includes("release") || specialties.includes("packaging")) return "release";
+    if (specialties.includes("observability") || specialties.includes("audit")) return "observability";
+    if (specialties.includes("infra") || specialties.includes("ci") || specialties.includes("docker")) return "infra";
+    if (role === "pm") return "pm";
+    if (role === "reviewer") return "reviewer";
+    if (role === "tester") return "tester";
+    return "implementer-general";
+  }
 }
 
 function validOr(value, allowed, fallback) {
@@ -757,4 +1147,69 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function defaultAgentTypes() {
+  return DEFAULT_AGENT_TYPES.map((type) => ({
+    ...type,
+    slotIds: [...type.slotIds],
+    specialties: [...type.specialties]
+  }));
+}
+
+function defaultAgentSlots(types = DEFAULT_AGENT_TYPES) {
+  return types.flatMap((type) => type.slotIds.map((slotId, index) => createAgentSlot(type, slotId, index + 1)));
+}
+
+function createAgentSlot(type, slotId, slotNumber) {
+  return {
+    id: slotId,
+    typeId: type.id,
+    slotNumber,
+    role: type.role,
+    specialties: [...type.specialties],
+    workMode: type.defaultWorkMode,
+    paused: false,
+    lease: null,
+    updatedAt: null
+  };
+}
+
+function parseTimestamp(value) {
+  if (!value) return new Date();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw httpError("Invalid timestamp.", 400);
+  }
+  return date;
+}
+
+function normalizeAgentType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return "";
+  return AGENT_TYPE_ALIASES.get(normalized) || normalized;
+}
+
+function normalizeWorkMode(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return ["single-task", "drain-role-queue", "watch-mode", "blocked-only"].includes(normalized) ? normalized : "";
+}
+
+function selectAvailableSlot(slots, { currentTime, runtimeId, stats, isLeaseFresh }) {
+  return slots
+    .filter((slot) => {
+      const slotStats = stats.get(slot.id) || {};
+      const leaseFresh = isLeaseFresh(slot.lease, currentTime);
+      const sameRuntime = runtimeId && slot.lease?.runtimeId === runtimeId;
+      return !slot.paused && !(slotStats.inProgressTaskCount > 0) && (!leaseFresh || sameRuntime);
+    })
+    .sort((a, b) => {
+      const aStats = stats.get(a.id) || {};
+      const bStats = stats.get(b.id) || {};
+      return (bStats.readyTaskCount || 0) - (aStats.readyTaskCount || 0) || a.slotNumber - b.slotNumber;
+    })[0];
+}
+
+function httpError(message, status, details) {
+  return Object.assign(new Error(message), { status, details });
 }

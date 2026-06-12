@@ -64,13 +64,16 @@ For generic slot-based spawning, prefer agent types:
 You are implementer. Read http://localhost:8088/api/agent-docs/implementer?format=md and do what it tells you.
 ```
 
-The intended next step is slot acquisition: a generic worker says `I am implementer`, then `/api/bootstrap` or MCP `acquire_agent_slot` assigns the next available concrete slot such as `implementer-04`.
+Generic workers can acquire a concrete slot before claiming work. A worker can say `I am implementer`, then `POST /api/bootstrap` or MCP `acquire_agent_slot` assigns the next available matching concrete slot such as `implementer-backend-1`.
 
 Useful endpoints:
 
 - `GET /api/agent-docs`
 - `GET /api/agent-docs/pm-agent`
 - `GET /api/agent-docs/pm-agent?format=md`
+- `GET /api/agent-slots`
+- `POST /api/bootstrap`
+- `POST /api/agent-slots/acquire`
 
 The same contract is available over MCP through `get_agent_instructions`.
 
@@ -122,6 +125,9 @@ Example local MCP command:
 - `GET /api/tasks/:taskId`
 - `PATCH /api/tasks/:taskId`
 - `POST /api/tasks/:taskId/claim`
+- `GET /api/agent-slots`
+- `POST /api/bootstrap`
+- `POST /api/agent-slots/acquire`
 - `POST /api/tasks/:taskId/comments`
 - `POST /api/tasks/:taskId/attachments`
 - `GET /api/tasks/:taskId/attachments/:attachmentId/download`

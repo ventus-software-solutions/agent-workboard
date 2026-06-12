@@ -68,11 +68,11 @@ export function listAgentDocs({ roles, statuses }) {
     ],
     identityModel: identityModel(),
     slotBootstrap: {
-      status: "planned",
-      goal: "A worker should be able to say 'I am implementer' and receive the next empty slot such as implementer-04.",
-      plannedEndpoint: "/api/bootstrap",
+      status: "available-http",
+      goal: "A worker can say 'I am implementer' and receive the next empty matching slot such as implementer-backend-1.",
+      httpEndpoint: "/api/bootstrap",
       plannedMcpTool: "acquire_agent_slot",
-      currentFallback: "Until this exists, a PM/operator must assign each live worker a concrete temporary id such as implementer-a."
+      currentRule: "Generic workers should acquire a concrete slot before claiming tasks unless the PM/operator gave an explicit agent id."
     },
     roles,
     statuses,
@@ -98,7 +98,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
     mission: rule.mission,
     taskSelection: [
       "First, list active projects.",
-      "If you were spawned from a role type only, use the concrete assignee/task the PM or operator gave you.",
+      "If you were spawned from a role type only, acquire a concrete slot through /api/bootstrap before claiming tasks.",
       "Prefer the DOGFOOD project when it exists unless the operator named another project.",
       "Find tasks assigned to your exact agent id.",
       ...(isReviewer ? ["Then scan tasks in status=review; review-column work takes priority over ordinary reviewer-role tasks."] : []),
@@ -116,13 +116,15 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
       listProjects: `${baseUrl}/api/projects`,
       listTasks: `${baseUrl}/api/tasks?${new URLSearchParams(filters).toString()}`,
       claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
+      bootstrap: `${baseUrl}/api/bootstrap`,
+      agentSlots: `${baseUrl}/api/agent-slots`,
       ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
     },
     reviewerMerge: isReviewer ? reviewerMergeRules() : [],
     mcp: {
       firstTool: "get_agent_instructions",
-      then: ["list_projects", "list_tasks", "claim_task", "add_comment", "update_task_status"]
+      then: ["acquire_agent_slot", "list_projects", "list_tasks", "claim_task", "add_comment", "update_task_status"]
     },
     statuses: statuses.map((status) => status.id),
     cautions: [
@@ -156,9 +158,10 @@ export function renderAgentDocMarkdown(doc) {
     "",
     "## Where To Start",
     `1. Read this document: ${doc.api.agentDoc}`,
-    `2. List projects: ${doc.api.listProjects}`,
-    `3. Find your tasks: ${doc.api.listTasks}`,
-    ...(doc.api.reviewQueue ? [`4. Check the review queue: ${doc.api.reviewQueue}`, "5. Claim exactly one task before doing substantive work."] : ["4. Claim exactly one task before doing substantive work."]),
+    `2. If you were started as a generic type, acquire a concrete slot: ${doc.api.bootstrap}`,
+    `3. List projects: ${doc.api.listProjects}`,
+    `4. Find your tasks: ${doc.api.listTasks}`,
+    ...(doc.api.reviewQueue ? [`5. Check the review queue: ${doc.api.reviewQueue}`, "6. Claim exactly one task before doing substantive work."] : ["5. Claim exactly one task before doing substantive work."]),
     "",
     "## Task Selection",
     ...doc.taskSelection.map((line, index) => `${index + 1}. ${line}`),
@@ -193,11 +196,11 @@ export function renderAgentDocMarkdown(doc) {
 
 function identityModel(agentId = "{agentType}") {
   return {
-    status: "manual-slots",
+    status: "http-slot-bootstrap",
     suggestedAgentsAre: "role types, not unique live worker identities",
     summary: "Suggested agent names such as `implementer` and `reviewer` are role types.",
-    currentRule: `Automatic slot assignment is not implemented yet. Until /api/bootstrap exists, the PM/operator must give each live worker a concrete assignee id such as implementer-a, reviewer-a, or ${agentId}.`,
-    futureRule: "After slot bootstrap lands, agents will be able to start from a role type and acquire an empty slot automatically."
+    currentRule: `HTTP slot bootstrap is available at /api/bootstrap. Use a concrete assignee id such as ${agentId} when the PM/operator gives one; otherwise acquire an empty matching slot first.`,
+    futureRule: "MCP acquire_agent_slot provides the same slot acquisition path for MCP-only workers."
   };
 }
 

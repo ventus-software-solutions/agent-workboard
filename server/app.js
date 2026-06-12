@@ -52,6 +52,30 @@ export function createApp({ store }) {
     res.json({ agent: doc });
   });
 
+  app.get("/api/agent-slots", (req, res, next) => {
+    try {
+      res.json(store.listAgentSlots(req.query));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/bootstrap", async (req, res, next) => {
+    try {
+      res.json(await store.acquireAgentSlot(req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/agent-slots/acquire", async (req, res, next) => {
+    try {
+      res.json(await store.acquireAgentSlot(req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/projects", (req, res, next) => {
     try {
       res.json({ projects: store.listProjects({ includeArchived: req.query.includeArchived === "true" }) });
@@ -146,6 +170,7 @@ export function createApp({ store }) {
         "list_tasks",
         "create_task",
         "claim_task",
+        "acquire_agent_slot",
         "update_task_status",
         "add_comment",
         "get_agent_instructions"
@@ -169,7 +194,8 @@ export function createApp({ store }) {
     const status = error.status || (error.code === "LIMIT_FILE_SIZE" ? 413 : 500);
     res.status(status).json({
       error: {
-        message: status === 500 ? "Internal server error." : error.message
+        message: status === 500 ? "Internal server error." : error.message,
+        ...(error.details ? { details: error.details } : {})
       }
     });
   });

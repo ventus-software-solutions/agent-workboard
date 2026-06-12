@@ -19,6 +19,8 @@ export async function request(path, options = {}) {
 
 export const api = {
   meta: () => request("/api/meta"),
+  agentSlots: () => request("/api/agent-slots"),
+  bootstrap: (input) => request("/api/bootstrap", { method: "POST", body: JSON.stringify(input) }),
   projects: () => request("/api/projects"),
   createProject: (project) => request("/api/projects", { method: "POST", body: JSON.stringify(project) }),
   tasks: (filters = {}) => {

@@ -325,6 +325,155 @@ describe("WorkboardStore", () => {
     expect(["implementer-01", "implementer-02"]).toContain(savedTask.assignee);
   });
 
+  it("initializes default agent types and stable slots", () => {
+    const registry = store.listAgentSlots({ now: "2026-06-12T15:00:00.000Z" });
+    const backendType = registry.types.find((type) => type.id === "implementer-backend");
+    const backendSlots = registry.slots.filter((slot) => slot.typeId === "implementer-backend");
+
+    expect(backendType).toMatchObject({
+      role: "implementer",
+      capacity: 4,
+      available: 4
+    });
+    expect(backendSlots.map((slot) => slot.id)).toEqual([
+      "implementer-backend-1",
+      "implementer-backend-2",
+      "implementer-backend-3",
+      "implementer-backend-4"
+    ]);
+    expect(backendSlots[0]).toMatchObject({
+      slotNumber: 1,
+      active: false,
+      available: true,
+      paused: false
+    });
+  });
+
+  it("lets two store instances acquire distinct slots from a shared data directory", async () => {
+    const firstStore = new WorkboardStore({ dataDir: tempDir });
+    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    await firstStore.init();
+    await secondStore.init();
+
+    const results = await Promise.all([
+      firstStore.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: "runtime-a",
+        now: "2026-06-12T15:00:00.000Z"
+      }),
+      secondStore.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: "runtime-b",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+    ]);
+
+    expect(results.map((result) => result.agentId).sort()).toEqual([
+      "implementer-backend-1",
+      "implementer-backend-2"
+    ]);
+
+    const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    const activeBackendSlots = saved.agentSlots.filter(
+      (slot) => slot.typeId === "implementer-backend" && slot.lease
+    );
+    expect(activeBackendSlots.map((slot) => slot.id).sort()).toEqual([
+      "implementer-backend-1",
+      "implementer-backend-2"
+    ]);
+  });
+
+  it("rejects agent slot acquisition when active capacity is full", async () => {
+    for (const slotNumber of [1, 2, 3, 4]) {
+      await store.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: `runtime-${slotNumber}`,
+        now: "2026-06-12T15:00:00.000Z"
+      });
+    }
+
+    await expect(
+      store.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: "runtime-5",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        typeId: "implementer-backend",
+        capacity: 4,
+        active: 4
+      }
+    });
+  });
+
+  it("does not count assigned backlog work as active slot capacity", async () => {
+    const project = await store.createProject({ name: "Backlog Assignment Project" });
+    for (const slotNumber of [1, 2, 3, 4]) {
+      await store.createTask({
+        projectId: project.id,
+        title: `Backlog task ${slotNumber}`,
+        status: "backlog",
+        assignee: `implementer-backend-${slotNumber}`
+      });
+    }
+
+    const acquired = [];
+    for (const slotNumber of [1, 2, 3, 4]) {
+      acquired.push(
+        await store.acquireAgentSlot({
+          preferredType: "implementer-backend",
+          runtimeId: `runtime-${slotNumber}`,
+          now: "2026-06-12T15:00:00.000Z"
+        })
+      );
+    }
+
+    expect(acquired.map((slot) => slot.agentId)).toEqual([
+      "implementer-backend-1",
+      "implementer-backend-2",
+      "implementer-backend-3",
+      "implementer-backend-4"
+    ]);
+  });
+
+  it("reclaims stale leases while preserving slots with in-progress work", async () => {
+    const project = await store.createProject({ name: "Stale Slot Project" });
+
+    await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "runtime-stale",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    const reclaimed = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "runtime-new",
+      now: "2026-06-12T15:16:00.000Z"
+    });
+
+    expect(reclaimed).toMatchObject({
+      agentId: "implementer-backend-1",
+      reclaimed: true
+    });
+
+    await store.createTask({
+      projectId: project.id,
+      title: "Keep occupied slot",
+      status: "in_progress",
+      assignee: "implementer-backend-1"
+    });
+
+    const nextSlot = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "runtime-next",
+      now: "2026-06-12T15:32:00.000Z"
+    });
+
+    expect(nextSlot.agentId).toBe("implementer-backend-2");
+  });
+
   it("stores attachments with sanitized filenames and sha256 evidence", async () => {
     const project = await store.createProject({ name: "File Project" });
     const task = await store.createTask({ projectId: project.id, title: "Read uploaded spec" });
