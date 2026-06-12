@@ -101,6 +101,39 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("requires completion evidence when creating an already-done task", async () => {
+    const project = await store.createProject({ name: "Create Done Gate Project" });
+
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Created already done",
+        status: "done"
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    const completed = await store.createTask({
+      projectId: project.id,
+      title: "Created done with evidence",
+      status: "done",
+      role: "pm",
+      actor: "pm-agent",
+      completion: {
+        completionType: "no-code",
+        notes: "Seeded as an already completed planning task."
+      }
+    });
+
+    expect(completed).toMatchObject({
+      status: "done",
+      completion: {
+        completionType: "no-code",
+        completedBy: "pm-agent",
+        notes: "Seeded as an already completed planning task."
+      }
+    });
+  });
+
   it("records merged completion evidence when a task moves to done", async () => {
     const project = await store.createProject({ name: "Completion Project" });
     const task = await store.createTask({

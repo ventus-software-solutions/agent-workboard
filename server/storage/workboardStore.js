@@ -386,6 +386,20 @@ export class WorkboardStore {
     const priority = validOr(input.priority, PRIORITY_IDS, "normal");
     const role = validOr(input.role, ROLE_IDS, "implementer");
     const createdAt = now();
+    const actor = normalizeText(input.actor) || "operator";
+    const hasCompletion =
+      Object.prototype.hasOwnProperty.call(input, "completion") || Object.prototype.hasOwnProperty.call(input, "completionRecord");
+    const completionInput = Object.prototype.hasOwnProperty.call(input, "completion") ? input.completion : input.completionRecord;
+
+    if (status === "done" && !hasCompletion) {
+      throw Object.assign(new Error("A completion record is required before creating a done task."), { status: 400 });
+    }
+
+    if (status !== "done" && hasCompletion) {
+      throw Object.assign(new Error("Completion records can only be saved on done tasks."), { status: 400 });
+    }
+
+    const completion = status === "done" ? normalizeCompletionRecord(completionInput, { actor }) : null;
     const task = {
       id: id("task"),
       projectId,
@@ -396,7 +410,7 @@ export class WorkboardStore {
       role,
       assignee: normalizeText(input.assignee),
       labels: normalizeLabels(input.labels),
-      completion: null,
+      completion,
       createdAt,
       updatedAt: createdAt,
       comments: [],
@@ -404,7 +418,7 @@ export class WorkboardStore {
       activity: [
         {
           id: id("event"),
-          actor: normalizeText(input.actor) || "operator",
+          actor,
           type: "created",
           message: "Task created.",
           createdAt

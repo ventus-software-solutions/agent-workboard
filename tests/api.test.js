@@ -214,6 +214,43 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("requires completion evidence when creating an already-done task", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Create Done API Project" })).body.project;
+
+    const missingEvidence = await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Created already done",
+        status: "done"
+      })
+      .expect(400);
+    expect(missingEvidence.body.error.message).toMatch(/completion record/i);
+
+    const completed = await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Created done with evidence",
+        status: "done",
+        role: "pm",
+        actor: "pm-agent",
+        completion: {
+          completionType: "no-code",
+          notes: "Seeded as an already completed planning task."
+        }
+      })
+      .expect(201);
+
+    expect(completed.body.task).toMatchObject({
+      status: "done",
+      completion: {
+        completionType: "no-code",
+        completedBy: "pm-agent"
+      }
+    });
+  });
+
   it("filters tasks and accepts file attachments", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Upload Project" })).body.project;
     const task = (
