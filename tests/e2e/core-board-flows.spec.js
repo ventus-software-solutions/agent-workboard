@@ -214,6 +214,91 @@ test("labels task status controls as actions", async ({ page }) => {
   await expect(drawer.locator(".statusRow").getByRole("button", { name: "Complete", exact: true })).toBeVisible();
 });
 
+test("collapses the desktop sidebar without resetting board context", async ({ page }) => {
+  const projectName = uniqueName("E2E Sidebar Project");
+  const projectKey = uniqueKey("NAV");
+  const testerTaskTitle = uniqueName("Verify sidebar context");
+  const implementerTaskTitle = uniqueName("Implement hidden sidebar item");
+  const draftTitle = "Unsaved sidebar drawer draft";
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  for (const task of [
+    {
+      projectId: project.id,
+      title: testerTaskTitle,
+      status: "ready",
+      role: "tester",
+      priority: "high",
+      assignee: "test-agent"
+    },
+    {
+      projectId: project.id,
+      title: implementerTaskTitle,
+      status: "ready",
+      role: "implementer",
+      priority: "normal",
+      assignee: "implementer-agent"
+    }
+  ]) {
+    const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, { data: task });
+    expect(taskResponse.ok()).toBe(true);
+  }
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await page.getByRole("button", { name: "Test Agent" }).click();
+  await page.getByPlaceholder("Search tasks").fill("sidebar context");
+  await expect(taskCard(page, testerTaskTitle)).toBeVisible();
+  await expect(taskCard(page, implementerTaskTitle)).toHaveCount(0);
+
+  await taskCard(page, testerTaskTitle).click();
+  const drawer = page.locator(".drawer");
+  await drawer.getByLabel("Title").fill(draftTitle);
+
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(page.locator(".projectRail")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Open sidebar" })).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(page.getByPlaceholder("Search tasks")).toHaveValue("sidebar context");
+  await expect(page.getByRole("button", { name: "tester" })).toBeVisible();
+  await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
+
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open sidebar" })).toBeVisible();
+  await expect(page.locator(".projectRail")).toBeHidden();
+
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await expect(page.locator(".projectRail")).toBeVisible();
+});
+
+test("uses an off-canvas sidebar on mobile with keyboard and outside-click close", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(baseURL);
+  await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
+
+  await expect(page.locator(".projectRail")).toBeHidden();
+
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await expect(page.locator(".projectRail")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Close sidebar" }).first()).toHaveAttribute("aria-expanded", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".projectRail")).toBeHidden();
+
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await expect(page.locator(".projectRail")).toBeVisible();
+  await page.locator(".sidebarScrim").click({ position: { x: 370, y: 40 } });
+  await expect(page.locator(".projectRail")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
+});
+
 test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {
   const projectName = uniqueName("E2E Stale Work Project");
   const projectKey = uniqueKey("STL");
@@ -383,6 +468,7 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(taskCard(page, testerTaskTitle)).toHaveCount(0);
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open sidebar" }).click();
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(backendCard).toBeVisible();
   const hasHorizontalOverflow = await page.locator(".agentsRegistry").evaluate((registry) => registry.scrollWidth > registry.clientWidth + 1);
