@@ -433,13 +433,18 @@ export class WorkboardStore {
     const completionPatch = Object.prototype.hasOwnProperty.call(patch, "completion") ? patch.completion : patch.completionRecord;
     let completionAppliedDuringStatusChange = false;
     const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status") ? validOr(patch.status, STATUS_IDS, task.status) : task.status;
+    let nextCompletion = null;
 
     if (task.status !== requestedStatus && requestedStatus === "done" && !hasCompletionPatch) {
       throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
     }
 
-    if (hasCompletionPatch && requestedStatus !== "done" && task.status !== "done") {
+    if (hasCompletionPatch && requestedStatus !== "done") {
       throw Object.assign(new Error("Completion records can only be saved on done tasks."), { status: 400 });
+    }
+
+    if (hasCompletionPatch) {
+      nextCompletion = normalizeCompletionRecord(completionPatch, { actor: actorId });
     }
 
     for (const field of ["title", "description", "assignee"]) {
@@ -458,7 +463,7 @@ export class WorkboardStore {
         changes.push(`status:${task.status}->${next}`);
         task.status = next;
         if (next === "done") {
-          task.completion = normalizeCompletionRecord(completionPatch, { actor: actorId });
+          task.completion = nextCompletion;
           changes.push(`completion:${task.completion.completionType}`);
           completionAppliedDuringStatusChange = true;
         } else if (task.completion) {
@@ -469,7 +474,6 @@ export class WorkboardStore {
     }
 
     if (hasCompletionPatch && task.status === "done" && !completionAppliedDuringStatusChange) {
-      const nextCompletion = normalizeCompletionRecord(completionPatch, { actor: actorId });
       if (JSON.stringify(task.completion) !== JSON.stringify(nextCompletion)) {
         task.completion = nextCompletion;
         changes.push(`completion:${nextCompletion.completionType}`);

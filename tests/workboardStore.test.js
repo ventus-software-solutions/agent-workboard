@@ -70,6 +70,37 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("leaves a task unchanged when completion validation fails", async () => {
+    const project = await store.createProject({ name: "Atomic Done Gate Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Original title",
+      role: "implementer",
+      status: "review",
+      assignee: "implementer-01"
+    });
+
+    await expect(
+      store.updateTask(
+        task.id,
+        {
+          title: "Mutated through failed completion",
+          status: "done",
+          completion: {
+            completionType: "merged"
+          }
+        },
+        "reviewer-01"
+      )
+    ).rejects.toMatchObject({ status: 400 });
+
+    expect(store.getTask(task.id)).toMatchObject({
+      title: "Original title",
+      status: "review",
+      completion: null
+    });
+  });
+
   it("records merged completion evidence when a task moves to done", async () => {
     const project = await store.createProject({ name: "Completion Project" });
     const task = await store.createTask({

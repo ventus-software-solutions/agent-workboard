@@ -182,6 +182,38 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("does not mutate a task when completion validation fails", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Atomic Completion API Project" })).body.project;
+    const task = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Original API title",
+        status: "review",
+        role: "implementer",
+        assignee: "implementer-01"
+      })
+    ).body.task;
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Mutated through failed API completion",
+        status: "done",
+        actor: "reviewer-01",
+        completion: {
+          completionType: "merged"
+        }
+      })
+      .expect(400);
+
+    const fetched = await request(app).get(`/api/tasks/${task.id}`).expect(200);
+    expect(fetched.body.task).toMatchObject({
+      title: "Original API title",
+      status: "review",
+      completion: null
+    });
+  });
+
   it("filters tasks and accepts file attachments", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Upload Project" })).body.project;
     const task = (
