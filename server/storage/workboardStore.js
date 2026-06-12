@@ -219,7 +219,7 @@ function slugify(value, fallback = "project") {
 }
 
 function safeFilename(value) {
-  const base = path.basename(normalizeText(value) || "attachment");
+  const base = path.posix.basename((normalizeText(value) || "attachment").replaceAll("\\", "/"));
   return base.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 160) || "attachment";
 }
 

@@ -478,15 +478,24 @@ describe("WorkboardStore", () => {
     const project = await store.createProject({ name: "File Project" });
     const task = await store.createTask({ projectId: project.id, title: "Read uploaded spec" });
 
-    const attachment = await store.addAttachment(task.id, {
+    const firstAttachment = await store.addAttachment(task.id, {
       originalname: "../bad spec?.txt",
       mimetype: "text/plain",
       size: 11,
       buffer: Buffer.from("hello world")
     });
+    const secondAttachment = await store.addAttachment(task.id, {
+      originalname: "..\\nested\\evil<>.txt",
+      mimetype: "text/plain",
+      size: 6,
+      buffer: Buffer.from("second")
+    });
 
-    expect(attachment.filename).toBe("bad_spec_.txt");
-    expect(attachment.sha256).toHaveLength(64);
-    expect(store.getTask(task.id).attachments).toHaveLength(1);
+    expect(firstAttachment.filename).toBe("bad_spec_.txt");
+    expect(firstAttachment.sha256).toHaveLength(64);
+    expect(secondAttachment.filename).toBe("evil_.txt");
+    expect(secondAttachment.storedName).not.toMatch(/[\\/]/);
+    expect(secondAttachment.sha256).toHaveLength(64);
+    expect(store.getTask(task.id).attachments).toHaveLength(2);
   });
 });
