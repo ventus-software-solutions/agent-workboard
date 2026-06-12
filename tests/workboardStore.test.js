@@ -893,6 +893,67 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("identifies stale in-progress work from missing slots and stale heartbeats", async () => {
+    const project = await store.createProject({ name: "Stale Work Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      runtimeId: "stale-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-2",
+      runtimeId: "fresh-runtime",
+      now: "2026-06-12T15:10:00.000Z"
+    });
+    const missingSlotTask = await store.createTask({
+      projectId: project.id,
+      title: "Assigned to vanished worker",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-99"
+    });
+    const expiredHeartbeatTask = await store.createTask({
+      projectId: project.id,
+      title: "Assigned to expired backend slot",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1"
+    });
+    const freshTask = await store.createTask({
+      projectId: project.id,
+      title: "Assigned to fresh backend slot",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-2"
+    });
+
+    await store.updateAgentPresence("implementer-backend-2", {
+      state: "active",
+      currentTaskId: freshTask.id,
+      now: "2026-06-12T15:10:30.000Z"
+    });
+
+    const stale = store.listStaleInProgressTasks({
+      projectId: project.id,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+
+    expect(stale.tasks.map((item) => item.task.id)).toEqual([missingSlotTask.id, expiredHeartbeatTask.id]);
+    expect(stale.tasks[0]).toMatchObject({
+      reason: "missing_slot",
+      assignee: "implementer-backend-99",
+      canAcknowledge: false,
+      suggestedActions: ["comment", "requeue", "block"]
+    });
+    expect(stale.tasks[1]).toMatchObject({
+      reason: "expired_heartbeat",
+      assignee: "implementer-backend-1",
+      canAcknowledge: true,
+      suggestedActions: ["comment", "requeue", "block", "acknowledge"]
+    });
+    expect(stale.tasks[1].lastProgressAt).toBe(expiredHeartbeatTask.updatedAt);
+  });
+
   it("stores attachments with sanitized filenames and sha256 evidence", async () => {
     const project = await store.createProject({ name: "File Project" });
     const task = await store.createTask({ projectId: project.id, title: "Read uploaded spec" });

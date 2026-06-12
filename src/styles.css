@@ -260,6 +260,7 @@ button {
 .talkComposer input,
 .talkComposer select,
 .talkComposer textarea,
+.staleWorkCard textarea,
 .formGrid input,
 .formGrid select,
 .formGrid textarea,
@@ -408,6 +409,131 @@ button {
   min-height: 54px;
   border: 1px dashed #343b44;
   border-radius: 8px;
+}
+
+.staleWorkPanel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #4a3b27;
+  border-radius: 8px;
+  background: #1d1c19;
+}
+
+.staleWorkHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.staleWorkHeader h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.staleWorkHeader > span {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 26px;
+  border-radius: 999px;
+  background: #433922;
+  color: #ffd991;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.staleWorkList {
+  display: grid;
+  gap: 8px;
+}
+
+.staleWorkCard {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(220px, 0.8fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #40362a;
+  border-radius: 8px;
+  background: #17191b;
+}
+
+.staleWorkBody {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.linkButton {
+  border: 0;
+  padding: 0;
+  color: #9ee7ff;
+  background: transparent;
+  text-align: left;
+}
+
+.staleTaskLink {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.staleWorkMeta {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: #aeb9c6;
+  font-size: 12px;
+}
+
+.staleWorkMeta span {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #20262d;
+  overflow-wrap: anywhere;
+}
+
+.staleWorkCard textarea {
+  min-height: 40px;
+  max-height: 90px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid #333a43;
+  border-radius: 8px;
+  background: #111418;
+}
+
+.staleWorkActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.staleWorkActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid #363d46;
+  border-radius: 8px;
+  color: #eef2f7;
+  background: #20262d;
+}
+
+.staleWorkActions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .kanbanBoard {
@@ -972,6 +1098,15 @@ button {
   .talkFilters,
   .talkComposer {
     grid-template-columns: 1fr;
+  }
+
+  .staleWorkCard {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .staleWorkActions {
+    justify-content: flex-start;
   }
 
   .kanbanBoard {

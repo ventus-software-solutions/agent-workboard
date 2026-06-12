@@ -40,6 +40,11 @@ export const api = {
   meta: () => request("/api/meta"),
   agentSlots: () => request("/api/agent-slots"),
   bootstrap: (input) => request("/api/bootstrap", { method: "POST", body: JSON.stringify(input) }),
+  updatePresence: (agentId, presence) =>
+    request(`/api/agents/${encodeURIComponent(agentId)}/presence`, {
+      method: "POST",
+      body: JSON.stringify(presence)
+    }),
   projects: () => request("/api/projects"),
   createProject: (project) => request("/api/projects", { method: "POST", body: JSON.stringify(project) }),
   tasks: (filters = {}) => {
@@ -52,6 +57,10 @@ export const api = {
   },
   postTalk: (projectId, message) =>
     request(`/api/projects/${projectId}/talks`, { method: "POST", body: JSON.stringify(message) }),
+  staleInProgressTasks: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/tasks/stale-in-progress${params.size ? `?${params}` : ""}`);
+  },
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),
