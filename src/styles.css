@@ -281,6 +281,14 @@ button {
   border-radius: 8px;
   background: #15191e;
   overflow: hidden;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease;
+}
+
+.kanbanColumn.dropTarget {
+  border-color: #9ee7ff;
+  background: #192029;
 }
 
 .columnHeader {
@@ -331,10 +339,26 @@ button {
   border-radius: 8px;
   background: #20262d;
   overflow: visible;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition:
+    border-color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
 }
 
 .taskCard.selected {
   border-color: #9ee7ff;
+}
+
+.taskCard.dragging {
+  opacity: 0.55;
+  transform: scale(0.985);
+}
+
+.taskCard:active {
+  cursor: grabbing;
 }
 
 .taskCardTop,
