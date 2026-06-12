@@ -54,6 +54,10 @@ export const api = {
   createCapability: (capability) => request("/api/capabilities", { method: "POST", body: JSON.stringify(capability) }),
   updateCapability: (capabilityId, patch) =>
     request(`/api/capabilities/${capabilityId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  boardState: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/board-state${params.size ? `?${params}` : ""}`);
+  },
   tasks: (filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks${params.size ? `?${params}` : ""}`);

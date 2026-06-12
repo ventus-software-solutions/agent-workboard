@@ -22,6 +22,7 @@ import {
   Sparkles,
   TestTube2,
   UserRoundCheck,
+  WifiOff,
   X
 } from "lucide-react";
 import { api } from "./lib/api.js";
@@ -47,6 +48,7 @@ const priorityClass = {
 };
 
 const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+const LIVE_POLL_INTERVAL_MS = 2500;
 
 function formatDate(value) {
   const date = new Date(value);
@@ -57,6 +59,13 @@ function formatDate(value) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatClock(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function App() {
@@ -78,6 +87,14 @@ export function App() {
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshState, setRefreshState] = useState({
+    status: "connecting",
+    lastCheckedAt: "",
+    lastUpdatedAt: "",
+    error: ""
+  });
+  const boardVersionRef = useRef("");
+  const boardProjectRef = useRef("");
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -112,9 +129,11 @@ export function App() {
     setLoading(false);
   }
 
-  async function refreshTasks(overrides = {}) {
-    const nextFilters = { ...filters, ...overrides };
-    setFilters(nextFilters);
+  async function refreshTasks(overrides = null) {
+    const nextFilters = overrides ? { ...filters, ...overrides } : filters;
+    if (overrides) {
+      setFilters(nextFilters);
+    }
     if (!selectedProjectId) return;
     const [result, projectResult, staleResult] = await Promise.all([
       api.tasks({ projectId: selectedProjectId, ...nextFilters }),
@@ -124,6 +143,7 @@ export function App() {
     setTasks(result.tasks);
     setProjectTasks(projectResult.tasks);
     setStaleWork(staleResult.tasks);
+    return result.tasks;
   }
 
   async function refreshTalks(overrides = {}, projectId = selectedProjectId) {
@@ -132,6 +152,43 @@ export function App() {
     if (!projectId) return;
     const result = await api.talks(projectId, nextFilters);
     setTalks(result.messages);
+    return result.messages;
+  }
+
+  async function pollBoardState({ refreshOnChange = true } = {}) {
+    if (!selectedProjectId) return;
+
+    const checkedAt = new Date().toISOString();
+    try {
+      const result = await api.boardState({ projectId: selectedProjectId });
+      const previousVersion = boardVersionRef.current;
+      const changed = Boolean(previousVersion && previousVersion !== result.state.version);
+
+      if (changed && refreshOnChange) {
+        setRefreshState({
+          status: "updating",
+          lastCheckedAt: checkedAt,
+          lastUpdatedAt: result.state.latestUpdatedAt || "",
+          error: ""
+        });
+        await refreshTasks();
+      }
+
+      boardVersionRef.current = result.state.version;
+      setRefreshState({
+        status: changed && refreshOnChange ? "updated" : "live",
+        lastCheckedAt: new Date().toISOString(),
+        lastUpdatedAt: result.state.latestUpdatedAt || "",
+        error: ""
+      });
+    } catch (nextError) {
+      setRefreshState((current) => ({
+        ...current,
+        status: "disconnected",
+        lastCheckedAt: checkedAt,
+        error: nextError.message
+      }));
+    }
   }
 
   async function refreshCapabilities(overrides = {}) {
@@ -169,6 +226,40 @@ export function App() {
     if (!selectedProjectId || loading) return;
     Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId || loading) return;
+    if (boardProjectRef.current !== selectedProjectId) {
+      boardProjectRef.current = selectedProjectId;
+      boardVersionRef.current = "";
+      setRefreshState({
+        status: "connecting",
+        lastCheckedAt: "",
+        lastUpdatedAt: "",
+        error: ""
+      });
+    }
+
+    let stopped = false;
+    const poll = (options) =>
+      pollBoardState(options).catch((nextError) => {
+        if (!stopped) {
+          setRefreshState((current) => ({
+            ...current,
+            status: "disconnected",
+            lastCheckedAt: new Date().toISOString(),
+            error: nextError.message
+          }));
+        }
+      });
+
+    poll({ refreshOnChange: false });
+    const intervalId = window.setInterval(() => poll(), LIVE_POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+  }, [selectedProjectId, filters, loading]);
 
   const boardStats = useMemo(() => {
     const open = tasks.filter((task) => task.status !== "done").length;
@@ -316,6 +407,7 @@ export function App() {
               </>
             )}
           </div>
+          <BoardRefreshStatus state={refreshState} />
           <button
             className="primaryButton"
             onClick={() => (view === "capabilities" ? refreshCapabilities() : setIsCreatingTask(true))}
@@ -663,6 +755,31 @@ function CapabilityFilters({ filters, statuses, onChange }) {
   );
 }
 
+function BoardRefreshStatus({ state }) {
+  const disconnected = state.status === "disconnected";
+  const Icon = disconnected ? WifiOff : RefreshCw;
+  const label =
+    state.status === "updated"
+      ? "Updated"
+      : state.status === "updating"
+        ? "Updating"
+        : disconnected
+          ? "Disconnected"
+          : state.status === "connecting"
+            ? "Connecting"
+            : "Live";
+  const checkedAt = formatClock(state.lastCheckedAt);
+  const updatedAt = formatClock(state.lastUpdatedAt);
+
+  return (
+    <div className={`refreshStatus ${state.status}`} aria-live="polite" title={state.error || "Board refresh status"}>
+      <Icon size={15} />
+      <span>{label}</span>
+      <time>{checkedAt ? `Checked ${checkedAt}` : updatedAt ? `Updated ${updatedAt}` : "Checking"}</time>
+    </div>
+  );
+}
+
 function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
   if (capabilities.length === 0) {
     return <div className="emptyState">No capabilities match the current filters.</div>;
@@ -933,31 +1050,43 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
   const [comment, setComment] = useState("");
   const [drawerError, setDrawerError] = useState(null);
   const [retryAction, setRetryAction] = useState(null);
-  const [draft, setDraft] = useState({
-    title: task.title,
-    description: task.description,
-    assignee: task.assignee,
-    role: task.role,
-    priority: task.priority,
-    labels: task.labels.join(", ")
-  });
+  const [draft, setDraft] = useState(() => taskDraftFromTask(task));
+  const [hasDraftEdits, setHasDraftEdits] = useState(false);
+  const [liveUpdateNotice, setLiveUpdateNotice] = useState(false);
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completionDraft, setCompletionDraft] = useState(() => defaultCompletionDraft(task));
+  const taskVersionRef = useRef({ id: task.id, updatedAt: task.updatedAt });
 
   useEffect(() => {
-    setDraft({
-      title: task.title,
-      description: task.description,
-      assignee: task.assignee,
-      role: task.role,
-      priority: task.priority,
-      labels: task.labels.join(", ")
-    });
+    const previous = taskVersionRef.current;
+    const isNewTask = previous.id !== task.id;
+    const changedElsewhere = previous.updatedAt !== task.updatedAt;
+    if (!isNewTask && !changedElsewhere) return;
+
+    taskVersionRef.current = { id: task.id, updatedAt: task.updatedAt };
+    if (!isNewTask && hasDraftEdits) {
+      setLiveUpdateNotice(true);
+      return;
+    }
+
+    setDraft(taskDraftFromTask(task));
     setCompletionDraft(defaultCompletionDraft(task));
     setShowCompletionForm(false);
     setDrawerError(null);
     setRetryAction(null);
-  }, [task.id, task.status]);
+    setHasDraftEdits(false);
+    setLiveUpdateNotice(false);
+  }, [task.id, task.updatedAt, hasDraftEdits]);
+
+  function updateDraft(patch) {
+    setHasDraftEdits(true);
+    setDraft({ ...draft, ...patch });
+  }
+
+  function updateCompletionDraft(nextDraft) {
+    setHasDraftEdits(true);
+    setCompletionDraft(nextDraft);
+  }
 
   async function runDrawerMutation(action) {
     try {
@@ -972,22 +1101,31 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
   }
 
   async function reloadTaskContext() {
+    const wasDirty = hasDraftEdits;
     try {
       await onReload();
+      setDraft(taskDraftFromTask(task));
+      setCompletionDraft(defaultCompletionDraft(task));
+      setShowCompletionForm(false);
+      setHasDraftEdits(false);
       setDrawerError(null);
+      setLiveUpdateNotice(false);
     } catch (nextError) {
+      setHasDraftEdits(wasDirty);
       setDrawerError(describeTaskSaveError(nextError));
     }
   }
 
   const saveCompletion = () =>
-    runDrawerMutation(() =>
-      api.updateTask(task.id, {
+    runDrawerMutation(async () => {
+      await api.updateTask(task.id, {
         status: "done",
         actor: "operator-ui",
         completion: completionPayload(completionDraft)
-      })
-    );
+      });
+      setHasDraftEdits(false);
+      setLiveUpdateNotice(false);
+    });
 
   return (
     <aside className="drawer">
@@ -1027,12 +1165,25 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
         />
       )}
 
+      {liveUpdateNotice && (
+        <div className="drawerSection liveUpdateNotice">
+          <div>
+            <strong>Task changed elsewhere</strong>
+            <p>Your draft is still here. Save it when ready or reload the latest task details.</p>
+          </div>
+          <button className="ghostButton" onClick={reloadTaskContext}>
+            <RefreshCw size={16} />
+            <span>Reload</span>
+          </button>
+        </div>
+      )}
+
       <CompletionPanel
         task={task}
         completionTypes={completionTypes}
         capabilities={capabilities}
         draft={completionDraft}
-        setDraft={setCompletionDraft}
+        setDraft={updateCompletionDraft}
         showForm={showCompletionForm}
         setShowForm={setShowCompletionForm}
         onComplete={saveCompletion}
@@ -1041,19 +1192,19 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
       <div className="drawerSection formGrid">
         <label>
           Title
-          <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+          <input value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} />
         </label>
         <label>
           Assignee
           <input
             value={draft.assignee}
-            onChange={(event) => setDraft({ ...draft, assignee: event.target.value })}
+            onChange={(event) => updateDraft({ assignee: event.target.value })}
             placeholder="agent name"
           />
         </label>
         <label>
           Role
-          <select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value })}>
+          <select value={draft.role} onChange={(event) => updateDraft({ role: event.target.value })}>
             {roles.map((role) => (
               <option key={role.id} value={role.id}>
                 {role.label}
@@ -1063,7 +1214,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
         </label>
         <label>
           Priority
-          <select value={draft.priority} onChange={(event) => setDraft({ ...draft, priority: event.target.value })}>
+          <select value={draft.priority} onChange={(event) => updateDraft({ priority: event.target.value })}>
             {["low", "normal", "high", "urgent"].map((priority) => (
               <option key={priority} value={priority}>
                 {priority}
@@ -1073,25 +1224,27 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
         </label>
         <label className="wide">
           Labels
-          <input value={draft.labels} onChange={(event) => setDraft({ ...draft, labels: event.target.value })} />
+          <input value={draft.labels} onChange={(event) => updateDraft({ labels: event.target.value })} />
         </label>
         <label className="wide">
           Description
           <textarea
             value={draft.description}
-            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+            onChange={(event) => updateDraft({ description: event.target.value })}
           />
         </label>
         <button
           className="primaryButton wide"
           onClick={() =>
-            runDrawerMutation(() =>
-              api.updateTask(task.id, {
+            runDrawerMutation(async () => {
+              await api.updateTask(task.id, {
                 ...draft,
                 labels: draft.labels,
                 actor: "operator-ui"
-              })
-            )
+              });
+              setHasDraftEdits(false);
+              setLiveUpdateNotice(false);
+            })
           }
         >
           <CheckCircle2 size={17} />
@@ -1207,6 +1360,17 @@ function TaskSaveErrorPanel({ error, onRetry, onReload }) {
       </div>
     </div>
   );
+}
+
+function taskDraftFromTask(task) {
+  return {
+    title: task.title,
+    description: task.description,
+    assignee: task.assignee,
+    role: task.role,
+    priority: task.priority,
+    labels: task.labels.join(", ")
+  };
 }
 
 function defaultCompletionDraft(task) {

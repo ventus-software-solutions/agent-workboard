@@ -195,6 +195,44 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   });
 });
 
+test("refreshes an open board after external task changes without discarding drawer drafts", async ({ page }) => {
+  const externalTitle = uniqueName("Externally created live task");
+  const draftTitle = "Local unsaved live draft";
+
+  await page.goto(baseURL);
+  await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
+  await expect(page.locator(".refreshStatus")).toContainText(/Live|Updated/, { timeout: 10_000 });
+
+  const createResponse = await page.request.post(`${baseURL}/api/tasks`, {
+    data: {
+      projectId: "project_demo",
+      title: externalTitle,
+      status: "ready",
+      role: "implementer",
+      description: "Created by a second client while the board stayed open."
+    }
+  });
+  expect(createResponse.ok()).toBe(true);
+  const created = (await createResponse.json()).task;
+
+  await expect(taskCard(page, externalTitle)).toBeVisible({ timeout: 10_000 });
+  await taskCard(page, externalTitle).click();
+
+  const drawer = page.locator(".drawer");
+  await drawer.getByLabel("Title").fill(draftTitle);
+
+  const patchResponse = await page.request.patch(`${baseURL}/api/tasks/${created.id}`, {
+    data: {
+      actor: "external-client",
+      description: "Changed by a second client while the drawer draft is dirty."
+    }
+  });
+  expect(patchResponse.ok()).toBe(true);
+
+  await expect(drawer.locator(".liveUpdateNotice")).toContainText("changed elsewhere", { timeout: 10_000 });
+  await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
+});
+
 async function createTask(page, { title, role, priority, assignee, labels, description }) {
   await page.getByRole("button", { name: "Task", exact: true }).click();
   const dialog = page.locator(".dialog");

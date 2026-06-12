@@ -291,6 +291,82 @@ describe("Agent Workboard API", () => {
     expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
   });
 
+  it("reports board-state version changes for task lifecycle mutations", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Live State API Project" })).body.project;
+
+    async function readState() {
+      const response = await request(app).get("/api/board-state").query({ projectId: project.id }).expect(200);
+      expect(response.body.state).toMatchObject({
+        projectId: project.id,
+        taskCount: expect.any(Number),
+        version: expect.any(String)
+      });
+      return response.body.state;
+    }
+
+    async function expectVersionChange(previousVersion, action) {
+      await action();
+      const nextState = await readState();
+      expect(nextState.version).not.toBe(previousVersion);
+      expect(nextState.latestUpdatedAt).toEqual(expect.any(String));
+      return nextState.version;
+    }
+
+    let version = (await readState()).version;
+    let task;
+
+    version = await expectVersionChange(version, async () => {
+      task = (
+        await request(app).post("/api/tasks").send({
+          projectId: project.id,
+          title: "Live board lifecycle task",
+          status: "ready",
+          role: "implementer"
+        })
+      ).body.task;
+    });
+
+    version = await expectVersionChange(version, () =>
+      request(app)
+        .post(`/api/tasks/${task.id}/claim`)
+        .send({ assignee: "implementer-01", expectedStatus: "ready", expectedAssignee: "" })
+        .expect(200)
+    );
+
+    version = await expectVersionChange(version, () =>
+      request(app).patch(`/api/tasks/${task.id}`).send({ status: "review", actor: "implementer-01" }).expect(200)
+    );
+
+    version = await expectVersionChange(version, () =>
+      request(app)
+        .post(`/api/tasks/${task.id}/comments`)
+        .send({ author: "reviewer-01", body: "Live update comment evidence." })
+        .expect(201)
+    );
+
+    version = await expectVersionChange(version, () =>
+      request(app)
+        .post(`/api/tasks/${task.id}/attachments`)
+        .field("author", "reviewer-01")
+        .attach("file", Buffer.from("live update attachment\n"), "live-evidence.txt")
+        .expect(201)
+    );
+
+    await expectVersionChange(version, () =>
+      request(app)
+        .patch(`/api/tasks/${task.id}`)
+        .send({
+          status: "done",
+          actor: "reviewer-01",
+          completion: {
+            completionType: "no-code",
+            notes: "Live board state noticed completion."
+          }
+        })
+        .expect(200)
+    );
+  });
+
   it("lists configured agent slots", async () => {
     const response = await request(app).get("/api/agent-slots").expect(200);
 

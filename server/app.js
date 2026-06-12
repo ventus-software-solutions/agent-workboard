@@ -180,6 +180,14 @@ export function createApp({ store }) {
     }
   });
 
+  app.get("/api/board-state", (req, res, next) => {
+    try {
+      res.json({ state: store.getBoardState(req.query) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/tasks", (req, res, next) => {
     try {
       res.json({ tasks: store.listTasks(req.query) });

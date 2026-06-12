@@ -1038,6 +1038,53 @@ export class WorkboardStore {
     return capability;
   }
 
+  getBoardState(filters = {}) {
+    const projectId = normalizeText(filters.projectId);
+    const projects = projectId ? [this.getProject(projectId)] : this.data.projects;
+    const projectIds = new Set(projects.map((project) => project.id));
+    const tasks = this.data.tasks.filter((task) => projectIds.has(task.projectId));
+    const latestUpdatedAt =
+      [...projects.map((project) => project.updatedAt), ...tasks.map((task) => task.updatedAt)]
+        .filter(Boolean)
+        .sort()
+        .at(-1) || null;
+    const signature = {
+      projects: projects.map((project) => ({
+        id: project.id,
+        key: project.key,
+        name: project.name,
+        description: project.description,
+        archived: project.archived,
+        updatedAt: project.updatedAt
+      })),
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        projectId: task.projectId,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        role: task.role,
+        assignee: task.assignee,
+        labels: task.labels,
+        comments: task.comments,
+        attachments: task.attachments,
+        completion: task.completion,
+        activity: task.activity,
+        updatedAt: task.updatedAt
+      }))
+    };
+
+    return {
+      projectId,
+      version: createHash("sha256").update(JSON.stringify(signature)).digest("hex"),
+      latestUpdatedAt,
+      generatedAt: now(),
+      projectCount: projects.length,
+      taskCount: tasks.length
+    };
+  }
+
   async createTask(input) {
     const projectId = normalizeText(input.projectId);
     const project = this.data.projects.find((candidate) => candidate.id === projectId);
