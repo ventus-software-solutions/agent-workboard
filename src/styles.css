@@ -312,6 +312,7 @@ button {
 .taskStack {
   display: grid;
   align-content: start;
+  grid-auto-rows: max-content;
   gap: 10px;
   height: calc(100% - 46px);
   padding: 10px;
@@ -320,12 +321,16 @@ button {
 
 .taskCard {
   display: grid;
+  grid-template-rows: auto auto auto auto auto;
+  align-content: start;
   gap: 9px;
   min-height: 150px;
+  height: max-content;
   padding: 11px;
   border: 1px solid #343b44;
   border-radius: 8px;
   background: #20262d;
+  overflow: visible;
 }
 
 .taskCard.selected {
@@ -345,6 +350,7 @@ button {
   margin: 0;
   font-size: 15px;
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .taskCard p {
@@ -407,8 +413,11 @@ button {
 }
 
 .taskMeta {
+  align-items: flex-start;
   color: #b9c5d1;
+  flex-wrap: wrap;
   font-size: 12px;
+  justify-content: flex-start;
 }
 
 .taskMeta span {
@@ -416,6 +425,19 @@ button {
   align-items: center;
   gap: 5px;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.taskMeta span:first-child {
+  flex: 1 1 120px;
+}
+
+.taskMeta span:last-child {
+  flex: 1 1 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .taskActions button {
@@ -423,9 +445,16 @@ button {
   align-items: center;
   gap: 5px;
   min-height: 30px;
+  max-width: 100%;
   padding: 0 8px;
   margin-left: auto;
   color: #cdebf2;
+  white-space: normal;
+}
+
+.taskActions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .columnEmpty,
