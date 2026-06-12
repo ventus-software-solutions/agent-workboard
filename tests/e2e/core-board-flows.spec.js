@@ -110,6 +110,40 @@ test("covers core board flows in the browser", async ({ page }) => {
   await expect.poll(async () => readFile(downloadedPath, "utf8")).toBe("browser attachment evidence\n");
 });
 
+test("keeps wrapped task-card content inside the card at responsive widths", async ({ page }) => {
+  const projectName = uniqueName("E2E Card Layout Project");
+  const projectKey = uniqueKey("LAY");
+  const longTitle =
+    "Backend/frontend implementer: add task dependency and blocker links with a very long wrapped title for clipping coverage";
+  const longAssignee = "implementer-backend-very-long-assignee-name-that-wraps-cleanly";
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Project", exact: true }).click();
+  await page.locator(".dialog").getByLabel("Name").fill(projectName);
+  await page.locator(".dialog").getByLabel("Key").fill(projectKey);
+  await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await createTask(page, {
+    title: longTitle,
+    role: "implementer",
+    priority: "high",
+    assignee: longAssignee,
+    labels: "responsive,cards",
+    description: "Short description keeps the regression focused on wrapped title and metadata rows."
+  });
+
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 860, height: 720 },
+    { width: 390, height: 844 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(taskCard(page, longTitle)).toBeVisible();
+    await expectCardContentInsideCard(page, longTitle);
+  }
+});
+
 async function createTask(page, { title, role, priority, assignee, labels, description }) {
   await page.getByRole("button", { name: "Task", exact: true }).click();
   const dialog = page.locator(".dialog");
@@ -134,6 +168,35 @@ function uniqueName(prefix) {
 
 function uniqueKey(prefix) {
   return `${prefix}${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+}
+
+async function expectCardContentInsideCard(page, title) {
+  const result = await page.locator(".taskCard", { hasText: title }).evaluate((card) => {
+    const cardRect = card.getBoundingClientRect();
+    const checked = [card.querySelector("h4"), card.querySelector(".taskMeta"), card.querySelector(".taskActions")].filter(Boolean);
+    const overflow = checked
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          className: element.className || element.tagName,
+          top: rect.top < cardRect.top - 0.5,
+          bottom: rect.bottom > cardRect.bottom + 0.5,
+          left: rect.left < cardRect.left - 0.5,
+          right: rect.right > cardRect.right + 0.5
+        };
+      })
+      .filter((item) => item.top || item.bottom || item.left || item.right);
+
+    return {
+      cardHeight: cardRect.height,
+      overflow,
+      scrollOverflow: card.scrollHeight > card.clientHeight + 1
+    };
+  });
+
+  expect(result.overflow).toEqual([]);
+  expect(result.scrollOverflow).toBe(false);
+  expect(result.cardHeight).toBeGreaterThan(150);
 }
 
 async function closeDrawerIfOpen(page) {

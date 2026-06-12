@@ -349,7 +349,7 @@ function TaskCard({ task, roles, statuses, selected, onSelect, onMove }) {
           <Icon size={14} />
           {role?.label || task.role}
         </span>
-        <span>{task.assignee || "Unassigned"}</span>
+        <span title={task.assignee || "Unassigned"}>{task.assignee || "Unassigned"}</span>
       </div>
       <div className="taskActions">
         {nextStatus?.id !== task.status && (
