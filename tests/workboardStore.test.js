@@ -70,6 +70,27 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("treats undefined completion in a status patch as omitted", async () => {
+    const project = await store.createProject({ name: "MCP Status Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Move through MCP",
+      role: "implementer",
+      status: "ready"
+    });
+
+    const moved = await store.updateTask(
+      task.id,
+      { status: "in_progress", completion: undefined },
+      "implementer-01"
+    );
+
+    expect(moved).toMatchObject({
+      status: "in_progress",
+      completion: null
+    });
+  });
+
   it("leaves a task unchanged when completion validation fails", async () => {
     const project = await store.createProject({ name: "Atomic Done Gate Project" });
     const task = await store.createTask({

@@ -69,6 +69,16 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readCompletionInput(input) {
+  if (Object.prototype.hasOwnProperty.call(input, "completion") && input.completion !== undefined) {
+    return { hasCompletion: true, completionInput: input.completion };
+  }
+  if (Object.prototype.hasOwnProperty.call(input, "completionRecord") && input.completionRecord !== undefined) {
+    return { hasCompletion: true, completionInput: input.completionRecord };
+  }
+  return { hasCompletion: false, completionInput: undefined };
+}
+
 function slugify(value, fallback = "project") {
   const slug = normalizeText(value)
     .toUpperCase()
@@ -387,9 +397,7 @@ export class WorkboardStore {
     const role = validOr(input.role, ROLE_IDS, "implementer");
     const createdAt = now();
     const actor = normalizeText(input.actor) || "operator";
-    const hasCompletion =
-      Object.prototype.hasOwnProperty.call(input, "completion") || Object.prototype.hasOwnProperty.call(input, "completionRecord");
-    const completionInput = Object.prototype.hasOwnProperty.call(input, "completion") ? input.completion : input.completionRecord;
+    const { hasCompletion, completionInput } = readCompletionInput(input);
 
     if (status === "done" && !hasCompletion) {
       throw Object.assign(new Error("A completion record is required before creating a done task."), { status: 400 });
@@ -442,9 +450,7 @@ export class WorkboardStore {
     const task = this.getTask(taskId);
     const changes = [];
     const actorId = normalizeText(actor) || "operator";
-    const hasCompletionPatch =
-      Object.prototype.hasOwnProperty.call(patch, "completion") || Object.prototype.hasOwnProperty.call(patch, "completionRecord");
-    const completionPatch = Object.prototype.hasOwnProperty.call(patch, "completion") ? patch.completion : patch.completionRecord;
+    const { hasCompletion: hasCompletionPatch, completionInput: completionPatch } = readCompletionInput(patch);
     let completionAppliedDuringStatusChange = false;
     const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status") ? validOr(patch.status, STATUS_IDS, task.status) : task.status;
     let nextCompletion = null;

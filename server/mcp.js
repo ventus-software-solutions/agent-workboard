@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildAgentDoc, renderAgentDocMarkdown } from "./agentDocs.js";
+import { buildUpdateTaskStatusPatch } from "./mcpToolHandlers.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
 
 const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");
@@ -135,7 +136,7 @@ server.registerTool(
       actor: z.string().optional()
     }
   },
-  async (input) => asText({ task: await store.updateTask(input.taskId, { status: input.status, completion: input.completion }, input.actor) })
+  async (input) => asText({ task: await store.updateTask(input.taskId, buildUpdateTaskStatusPatch(input), input.actor) })
 );
 
 server.registerTool(
