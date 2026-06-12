@@ -2,6 +2,8 @@ export const MCP_TOOL_NAMES = [
   "get_agent_instructions",
   "list_projects",
   "list_tasks",
+  "list_capabilities",
+  "get_capability",
   "create_task",
   "claim_task",
   "acquire_agent_slot",

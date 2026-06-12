@@ -35,6 +35,117 @@ describe("WorkboardStore", () => {
     expect(store.listTasks({ projectId: project.id, role: "tester" })).toEqual([]);
   });
 
+  it("seeds searchable product capabilities", () => {
+    const capabilities = store.listCapabilities({ q: "MCP" });
+
+    expect(capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "cap_mcp_workflow_tools",
+          name: "MCP workflow tools",
+          status: "live",
+          live: true,
+          ownerRole: "implementer"
+        })
+      ])
+    );
+    expect(store.capabilityStatuses()).toEqual(
+      expect.arrayContaining(["proposed", "planned", "in_progress", "review", "live", "broken", "deprecated", "superseded"])
+    );
+  });
+
+  it("creates, filters, reads, and updates capabilities with validated task links", async () => {
+    const project = await store.createProject({ name: "Capability Project", key: "CAP" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Ship live updates",
+      labels: ["realtime"]
+    });
+
+    const capability = await store.createCapability({
+      id: "cap_live_updates_test",
+      projectId: project.id,
+      name: "Live board updates",
+      summary: "Operators see changes across sessions without refreshing.",
+      status: "planned",
+      ownerRole: "implementer",
+      ownerAgent: "implementer-frontend-2",
+      relatedTaskIds: [task.id],
+      surfaces: ["Board"],
+      acceptanceNotes: ["Refreshes within a few seconds"],
+      verificationEvidence: ["Pending implementation"],
+      notes: "Seeded from task acceptance."
+    });
+
+    expect(store.getCapability(capability.id)).toMatchObject({
+      id: "cap_live_updates_test",
+      live: false,
+      relatedTaskIds: [task.id]
+    });
+    expect(store.listCapabilities({ projectId: project.id, status: "planned", q: "sessions" })).toHaveLength(1);
+
+    const updated = await store.updateCapability(capability.id, {
+      status: "live",
+      blockers: ["None"],
+      lastVerifiedAt: "2026-06-12T20:00:00.000Z"
+    });
+
+    expect(updated).toMatchObject({
+      status: "live",
+      live: true,
+      blockers: ["None"],
+      lastVerifiedAt: "2026-06-12T20:00:00.000Z"
+    });
+
+    await expect(
+      store.createCapability({
+        name: "Broken link",
+        summary: "Should reject missing task ids.",
+        relatedTaskIds: ["task_missing"]
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(store.updateCapability(capability.id, { status: "unknown" })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("links completion records back to capabilities as verification evidence", async () => {
+    const project = await store.createProject({ name: "Capability Completion Project", key: "CCP" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Merge stale-write protection",
+      role: "implementer",
+      status: "review",
+      assignee: "implementer-backend-3"
+    });
+    const capability = await store.createCapability({
+      id: "cap_revision_test",
+      projectId: project.id,
+      name: "Task revision protection",
+      summary: "Rejects stale task writes.",
+      status: "review"
+    });
+
+    const completed = await store.updateTask(
+      task.id,
+      {
+        status: "done",
+        completion: {
+          completionType: "merged",
+          commitSha: "abc1234",
+          tests: ["npm test"],
+          capabilityIds: [capability.id]
+        }
+      },
+      "reviewer-01"
+    );
+
+    expect(completed.completion.capabilityIds).toEqual([capability.id]);
+    expect(store.getCapability(capability.id)).toMatchObject({
+      relatedTaskIds: [task.id],
+      lastVerifiedAt: completed.completion.completedAt
+    });
+    expect(store.getCapability(capability.id).verificationEvidence.join("\n")).toContain(task.id);
+  });
+
   it("records status changes, comments, and persisted data", async () => {
     const project = await store.createProject({ name: "Release Train" });
     const task = await store.createTask({ projectId: project.id, title: "Ship notes", role: "pm" });

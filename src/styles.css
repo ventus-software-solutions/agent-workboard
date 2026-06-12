@@ -87,6 +87,7 @@ button {
 .taskActions button,
 .roleChip,
 .projectButton,
+.viewSwitch button,
 .uploadButton {
   border: 1px solid #363d46;
   color: #eef2f7;
@@ -118,6 +119,25 @@ button {
 
 .ghostButton {
   background: #1a1f25;
+}
+
+.viewSwitch {
+  display: grid;
+  gap: 8px;
+}
+
+.viewSwitch button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.viewSwitch button.selected {
+  border-color: #7fb7c7;
+  background: #20333b;
 }
 
 .projectList {
@@ -255,6 +275,7 @@ button {
 
 .searchBox input,
 .agentFilter input,
+.agentFilter select,
 .talkFilters input,
 .talkFilters select,
 .talkComposer input,
@@ -659,6 +680,153 @@ button {
   -webkit-box-orient: vertical;
 }
 
+.capabilityRegistry {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  height: calc(100vh - 142px);
+  overflow: auto;
+  padding-bottom: 10px;
+}
+
+.capabilityCard {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 250px;
+  padding: 14px;
+  border: 1px solid #343b44;
+  border-radius: 8px;
+  background: #1b2026;
+}
+
+.capabilityHeader {
+  display: grid;
+  gap: 10px;
+}
+
+.capabilityHeader code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+  border-radius: 6px;
+  background: #10151a;
+  color: #b8dce6;
+  font-size: 12px;
+}
+
+.capabilityTitleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capabilityTitleRow h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.capabilityHeader p,
+.capabilityFreeform {
+  margin: 7px 0 0;
+  color: #b7c3ce;
+  line-height: 1.4;
+}
+
+.capabilityStatus,
+.liveBadge,
+.tagRow span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.capabilityStatus {
+  background: #2d3340;
+  color: #ccd7e2;
+}
+
+.capabilityStatus.live {
+  background: #203b31;
+  color: #bdf2d1;
+}
+
+.capabilityStatus.broken {
+  background: #4a242b;
+  color: #ffb1bf;
+}
+
+.capabilityStatus.planned,
+.capabilityStatus.proposed {
+  background: #332a1b;
+  color: #ffd991;
+}
+
+.capabilityStatus.in_progress,
+.capabilityStatus.review {
+  background: #213a43;
+  color: #aee7f6;
+}
+
+.capabilityStatus.deprecated,
+.capabilityStatus.superseded {
+  background: #2e3034;
+  color: #b8c1ca;
+}
+
+.liveBadge {
+  background: #274a3f;
+  color: #c9f4d9;
+}
+
+.capabilityMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #9aa6b4;
+  font-size: 13px;
+}
+
+.tagRow,
+.capabilityLinkedTasks {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tagRow span {
+  background: #2f3842;
+  color: #ccd5df;
+}
+
+.capabilityLinkedTasks {
+  align-items: flex-start;
+}
+
+.capabilityNotes {
+  display: grid;
+  gap: 5px;
+}
+
+.capabilityNotes strong {
+  color: #eaf2f7;
+}
+
+.capabilityNotes p {
+  margin: 0;
+  color: #c4ced8;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .priorityPill,
 .attachmentPill,
 .completionPill {
@@ -977,6 +1145,41 @@ button {
   padding-top: 2px;
 }
 
+.capabilityPicker {
+  display: grid;
+  gap: 8px;
+}
+
+.capabilityCheckboxes {
+  display: grid;
+  gap: 7px;
+}
+
+.capabilityCheckboxes label {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #333a43;
+  border-radius: 8px;
+  background: #11161b;
+}
+
+.capabilityCheckboxes input {
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.capabilityCheckboxes code {
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: #26303a;
+  color: #c9d5df;
+  font-size: 11px;
+}
+
 .uploadButton {
   position: relative;
   width: fit-content;
@@ -1112,6 +1315,10 @@ button {
   .kanbanBoard {
     height: auto;
     min-height: 620px;
+  }
+
+  .capabilityRegistry {
+    height: auto;
   }
 }
 

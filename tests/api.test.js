@@ -166,6 +166,89 @@ describe("Agent Workboard API", () => {
     expect(tools.body.tools).toEqual(expect.arrayContaining(["post_talk_message", "list_talk_messages"]));
   });
 
+  it("exposes capability CRUD, filtering, and task completion links", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Capability API", key: "CAPAPI" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Publish capability endpoint",
+          status: "review",
+          role: "implementer",
+          assignee: "implementer-01"
+        })
+    ).body.task;
+
+    const seeded = await request(app).get("/api/capabilities?q=MCP").expect(200);
+    expect(seeded.body.capabilities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "cap_mcp_workflow_tools",
+          status: "live"
+        })
+      ])
+    );
+
+    const created = await request(app)
+      .post("/api/capabilities")
+      .send({
+        id: "cap_api_registry_test",
+        projectId: project.id,
+        name: "Capability API registry",
+        summary: "List, read, create, and update product capabilities.",
+        status: "planned",
+        ownerRole: "implementer",
+        relatedTaskIds: [task.id],
+        surfaces: ["API", "MCP"]
+      })
+      .expect(201);
+
+    await request(app)
+      .get(`/api/capabilities/${created.body.capability.id}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          id: "cap_api_registry_test",
+          live: false,
+          relatedTaskIds: [task.id]
+        });
+      });
+
+    await request(app)
+      .get(`/api/capabilities?projectId=${project.id}&status=planned&q=product`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capabilities).toHaveLength(1);
+      });
+
+    await request(app)
+      .patch(`/api/capabilities/${created.body.capability.id}`)
+      .send({ status: "live", verificationEvidence: ["API test verified registry CRUD."] })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          status: "live",
+          live: true
+        });
+      });
+
+    const completed = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        status: "done",
+        actor: "reviewer-01",
+        completion: {
+          completionType: "merged",
+          commitSha: "abc1234",
+          capabilityIds: [created.body.capability.id]
+        }
+      })
+      .expect(200);
+
+    expect(completed.body.task.completion.capabilityIds).toEqual([created.body.capability.id]);
+  });
+
   it("claims a task through a stale-safe first-class endpoint", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Claim API Project" })).body.project;
     const task = (

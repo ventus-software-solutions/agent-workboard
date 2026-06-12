@@ -28,7 +28,8 @@ export function createApp({ store }) {
     res.json({
       roles: store.roles(),
       statuses: store.statuses(),
-      completionTypes: store.completionTypes()
+      completionTypes: store.completionTypes(),
+      capabilityStatuses: store.capabilityStatuses()
     });
   });
 
@@ -141,6 +142,39 @@ export function createApp({ store }) {
     try {
       const message = await store.addTalkMessage(req.params.projectId, req.body);
       res.status(201).json({ message: decorateTalkMessage(store, message) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/capabilities", (req, res, next) => {
+    try {
+      res.json({ capabilities: store.listCapabilities(req.query) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/capabilities", async (req, res, next) => {
+    try {
+      const capability = await store.createCapability(req.body);
+      res.status(201).json({ capability });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/capabilities/:capabilityId", (req, res, next) => {
+    try {
+      res.json({ capability: store.getCapability(req.params.capabilityId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/capabilities/:capabilityId", async (req, res, next) => {
+    try {
+      res.json({ capability: await store.updateCapability(req.params.capabilityId, req.body) });
     } catch (error) {
       next(error);
     }
