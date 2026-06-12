@@ -51,7 +51,8 @@ describe("Agent Workboard API", () => {
     const reviewerDoc = await request(app).get("/api/agent-docs/reviewer-agent").expect(200);
     expect(reviewerDoc.body.agent.api.reviewQueue).toContain("status=review");
     expect(reviewerDoc.body.agent.taskSelection.join("\n")).toContain("review-column work takes priority");
-    expect(reviewerDoc.body.agent.reviewerMerge.join("\n")).toContain("merge commit SHA");
+    expect(reviewerDoc.body.agent.reviewerMerge.join("\n")).toContain("completionType=merged");
+    expect(reviewerDoc.body.agent.reviewerMerge.join("\n")).toContain("commitSha");
 
     const markdown = await request(app).get("/api/agent-docs/test-agent?format=md").expect(200);
     expect(markdown.headers["content-type"]).toContain("text/markdown");
@@ -134,6 +135,51 @@ describe("Agent Workboard API", () => {
       .expect(409);
 
     expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
+  });
+
+  it("requires completion evidence when marking a task done", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Completion API Project" })).body.project;
+    const task = (
+      await request(app).post("/api/tasks").send({
+        projectId: project.id,
+        title: "Complete with evidence",
+        status: "review",
+        role: "implementer",
+        assignee: "implementer-01"
+      })
+    ).body.task;
+
+    const missingEvidence = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "done", actor: "reviewer-01" })
+      .expect(400);
+    expect(missingEvidence.body.error.message).toMatch(/completion record/i);
+
+    const completed = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        status: "done",
+        actor: "reviewer-01",
+        completion: {
+          completionType: "merged",
+          branch: "implementer-01/evidence",
+          commitSha: "def5678",
+          tests: ["npm test"]
+        }
+      })
+      .expect(200);
+
+    expect(completed.body.task).toMatchObject({
+      status: "done",
+      completion: {
+        completionType: "merged",
+        completedBy: "reviewer-01",
+        branch: "implementer-01/evidence",
+        commitSha: "def5678",
+        mergedTo: "main",
+        tests: ["npm test"]
+      }
+    });
   });
 
   it("filters tasks and accepts file attachments", async () => {

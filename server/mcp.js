@@ -118,10 +118,24 @@ server.registerTool(
     inputSchema: {
       taskId: z.string(),
       status: z.string(),
+      completion: z
+        .object({
+          completionType: z.string(),
+          completedBy: z.string().optional(),
+          completedAt: z.string().optional(),
+          branch: z.string().optional(),
+          commitSha: z.string().optional(),
+          mergedTo: z.string().optional(),
+          tests: z.array(z.string()).optional(),
+          reviewTaskId: z.string().optional(),
+          supersededByTaskId: z.string().optional(),
+          notes: z.string().optional()
+        })
+        .optional(),
       actor: z.string().optional()
     }
   },
-  async (input) => asText({ task: await store.updateTask(input.taskId, { status: input.status }, input.actor) })
+  async (input) => asText({ task: await store.updateTask(input.taskId, { status: input.status, completion: input.completion }, input.actor) })
 );
 
 server.registerTool(

@@ -13,6 +13,7 @@ export const STATUSES = [
 ];
 
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
+export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
 
 const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
@@ -54,6 +55,7 @@ export const ROLES = [
 const STATUS_IDS = new Set(STATUSES.map((status) => status.id));
 const ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const PRIORITY_IDS = new Set(PRIORITIES);
+const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
 
 function now() {
   return new Date().toISOString();
@@ -110,6 +112,7 @@ function defaultData() {
         role: "pm",
         assignee: "pm-agent",
         labels: ["planning"],
+        completion: null,
         createdAt,
         updatedAt: createdAt,
         comments: [],
@@ -134,6 +137,7 @@ function defaultData() {
         role: "implementer",
         assignee: "",
         labels: ["mvp"],
+        completion: null,
         createdAt,
         updatedAt: createdAt,
         comments: [],
@@ -168,6 +172,9 @@ export class WorkboardStore {
     try {
       const raw = await readFile(this.dbPath, "utf8");
       this.data = JSON.parse(raw);
+      if (this.migrateData()) {
+        await this.save();
+      }
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw error;
@@ -243,6 +250,62 @@ export class WorkboardStore {
 
   statuses() {
     return STATUSES;
+  }
+
+  completionTypes() {
+    return COMPLETION_TYPES;
+  }
+
+  migrateData() {
+    let migrated = false;
+    if (!Array.isArray(this.data.events)) {
+      this.data.events = [];
+      migrated = true;
+    }
+
+    for (const task of this.data.tasks || []) {
+      if (!Array.isArray(task.comments)) {
+        task.comments = [];
+        migrated = true;
+      }
+      if (!Array.isArray(task.attachments)) {
+        task.attachments = [];
+        migrated = true;
+      }
+      if (!Array.isArray(task.activity)) {
+        task.activity = [];
+        migrated = true;
+      }
+      if (!Array.isArray(task.labels)) {
+        task.labels = [];
+        migrated = true;
+      }
+
+      if (task.status === "done" && !task.completion) {
+        const completedAt = normalizeText(task.updatedAt) || now();
+        task.completion = {
+          completionType: "legacy-needs-audit",
+          completedBy: "legacy",
+          completedAt,
+          notes: "Marked done before completion records existed. Audit required."
+        };
+        task.activity.unshift({
+          id: id("event"),
+          actor: "system",
+          type: "completion.backfilled",
+          message: "Backfilled legacy done task as needing audit.",
+          createdAt: completedAt
+        });
+        migrated = true;
+      }
+
+      if (task.status !== "done" && task.completion === undefined) {
+        task.completion = null;
+        migrated = true;
+      }
+    }
+
+    return migrated;
   }
 
   listProjects({ includeArchived = false } = {}) {
@@ -333,6 +396,7 @@ export class WorkboardStore {
       role,
       assignee: normalizeText(input.assignee),
       labels: normalizeLabels(input.labels),
+      completion: null,
       createdAt,
       updatedAt: createdAt,
       comments: [],
@@ -363,6 +427,20 @@ export class WorkboardStore {
   async updateTask(taskId, patch, actor = "operator") {
     const task = this.getTask(taskId);
     const changes = [];
+    const actorId = normalizeText(actor) || "operator";
+    const hasCompletionPatch =
+      Object.prototype.hasOwnProperty.call(patch, "completion") || Object.prototype.hasOwnProperty.call(patch, "completionRecord");
+    const completionPatch = Object.prototype.hasOwnProperty.call(patch, "completion") ? patch.completion : patch.completionRecord;
+    let completionAppliedDuringStatusChange = false;
+    const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status") ? validOr(patch.status, STATUS_IDS, task.status) : task.status;
+
+    if (task.status !== requestedStatus && requestedStatus === "done" && !hasCompletionPatch) {
+      throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
+    }
+
+    if (hasCompletionPatch && requestedStatus !== "done" && task.status !== "done") {
+      throw Object.assign(new Error("Completion records can only be saved on done tasks."), { status: 400 });
+    }
 
     for (const field of ["title", "description", "assignee"]) {
       if (field in patch) {
@@ -375,10 +453,26 @@ export class WorkboardStore {
     }
 
     if ("status" in patch) {
-      const next = validOr(patch.status, STATUS_IDS, task.status);
+      const next = requestedStatus;
       if (task.status !== next) {
         changes.push(`status:${task.status}->${next}`);
         task.status = next;
+        if (next === "done") {
+          task.completion = normalizeCompletionRecord(completionPatch, { actor: actorId });
+          changes.push(`completion:${task.completion.completionType}`);
+          completionAppliedDuringStatusChange = true;
+        } else if (task.completion) {
+          task.completion = null;
+          changes.push("completion:cleared");
+        }
+      }
+    }
+
+    if (hasCompletionPatch && task.status === "done" && !completionAppliedDuringStatusChange) {
+      const nextCompletion = normalizeCompletionRecord(completionPatch, { actor: actorId });
+      if (JSON.stringify(task.completion) !== JSON.stringify(nextCompletion)) {
+        task.completion = nextCompletion;
+        changes.push(`completion:${nextCompletion.completionType}`);
       }
     }
 
@@ -413,9 +507,12 @@ export class WorkboardStore {
     task.updatedAt = now();
     task.activity.unshift({
       id: id("event"),
-      actor: normalizeText(actor) || "operator",
-      type: "updated",
-      message: `Updated ${changes.join(", ")}.`,
+      actor: actorId,
+      type: changes.some((change) => change.startsWith("completion:")) && task.status === "done" ? "completed" : "updated",
+      message:
+        changes.some((change) => change.startsWith("completion:")) && task.status === "done"
+          ? `Completed task with ${task.completion.completionType} evidence.`
+          : `Updated ${changes.join(", ")}.`,
       createdAt: task.updatedAt
     });
     await this.save();
@@ -560,6 +657,68 @@ function validOr(value, allowed, fallback) {
 function normalizeLabels(value) {
   const list = Array.isArray(value) ? value : normalizeText(value).split(",");
   return [...new Set(list.map((label) => normalizeText(label).toLowerCase()).filter(Boolean))].slice(0, 12);
+}
+
+function normalizeStringList(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map(normalizeText).filter(Boolean))];
+  }
+  return normalizeText(value)
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeCompletionRecord(value, { actor } = {}) {
+  const input = value && typeof value === "object" ? value : {};
+  const completionType = normalizeText(input.completionType || input.type);
+
+  if (!COMPLETION_TYPE_IDS.has(completionType)) {
+    throw Object.assign(new Error("Completion type is required and must be valid."), { status: 400 });
+  }
+
+  if (completionType === "legacy-needs-audit") {
+    throw Object.assign(new Error("Legacy completion records are created only by migration."), { status: 400 });
+  }
+
+  const record = {
+    completionType,
+    completedBy: normalizeText(input.completedBy) || normalizeText(actor) || "operator",
+    completedAt: normalizeText(input.completedAt) || now()
+  };
+
+  const branch = normalizeText(input.branch);
+  const commitSha = normalizeText(input.commitSha || input.sha);
+  const mergedTo = normalizeText(input.mergedTo);
+  const reviewTaskId = normalizeText(input.reviewTaskId);
+  const supersededByTaskId = normalizeText(input.supersededByTaskId);
+  const notes = normalizeText(input.notes);
+  const tests = normalizeStringList(input.tests);
+
+  if (branch) record.branch = branch;
+  if (commitSha) record.commitSha = commitSha;
+  if (mergedTo) record.mergedTo = mergedTo;
+  if (reviewTaskId) record.reviewTaskId = reviewTaskId;
+  if (supersededByTaskId) record.supersededByTaskId = supersededByTaskId;
+  if (notes) record.notes = notes;
+  if (tests.length > 0) record.tests = tests;
+
+  if (completionType === "merged") {
+    if (!record.commitSha) {
+      throw Object.assign(new Error("Merged completion requires a commit SHA."), { status: 400 });
+    }
+    record.mergedTo = record.mergedTo || "main";
+  }
+
+  if ((completionType === "no-code" || completionType === "audit-only") && !record.notes) {
+    throw Object.assign(new Error(`${completionType} completion requires notes.`), { status: 400 });
+  }
+
+  if (completionType === "superseded" && !record.supersededByTaskId && !record.notes) {
+    throw Object.assign(new Error("Superseded completion requires supersededByTaskId or notes."), { status: 400 });
+  }
+
+  return record;
 }
 
 function statusRank(status) {

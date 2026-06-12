@@ -15,7 +15,7 @@ const ROLE_RULES = {
     mission: "Review task outcomes for correctness, risk, missing tests, and readiness to merge or release.",
     accepts: ["tasks in status=review", "ready review tasks assigned to your exact agent id", "ready tasks with role=reviewer"],
     outputs: ["findings", "risk notes", "approval comments", "merge commits", "follow-up tasks"],
-    doneMeans: "Approved work is merged and marked done, or requested changes are returned with evidence."
+    doneMeans: "Approved work is merged and marked done with a completion record, or requested changes are returned with evidence."
   },
   tester: {
     mission: "Verify behavior through reproducible tests, browser checks, fixtures, or explicit manual evidence.",
@@ -132,6 +132,7 @@ export function buildAgentDoc({ agentId, roles, statuses, baseUrl = "http://loca
       "Do not claim more than one task at a time unless the operator explicitly asks.",
       "Post a short progress comment before long work.",
       "Move blocked tasks to blocked with the exact decision or dependency needed.",
+      "Do not move a task to done without a completion record.",
       "Move finished implementation to review, not directly to done, unless your role is reviewer/tester and the task asks for that."
     ]
   };
@@ -240,7 +241,7 @@ function sharedWorkflow() {
     "Post a comment with your plan and expected evidence.",
     "Do implementation work in the task worktree, not in the shared main checkout.",
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",
-    "Move the task to review, testing, done, or blocked according to the result.",
+    "Move the task to review, testing, done, or blocked according to the result. Done requires a completion record.",
     "Only then look for another task."
   ];
 }
@@ -251,7 +252,8 @@ function reviewerMergeRules() {
     "Review tasks in `status=review` before taking ordinary reviewer-role backlog work.",
     "Inspect the implementer's task comments, branch/worktree path, commit evidence, and stated test output.",
     "Run the relevant verification yourself when practical, at minimum `npm test` and `npm run build` for code changes before merge.",
-    "If approved, merge the branch or commit according to the current repo workflow, then comment the merge commit SHA and verification evidence on the original task.",
+    "If approved, merge the branch or commit according to the current repo workflow, then mark the original task done with completionType=merged, commitSha, branch, mergedTo, tests, and notes.",
+    "For no-code planning, audit-only, or superseded closures, mark done with completionType=no-code, audit-only, or superseded and include clear notes or supersededByTaskId.",
     "If changes are needed, comment specific findings and move the original task back to `ready` or `blocked` with the reason.",
     "If you cannot merge because of permissions, conflicts, or unclear ownership, explicitly assign merge to another reviewer/operator and leave the task in `review` with the blocker."
   ];

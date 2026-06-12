@@ -26,7 +26,8 @@ export function createApp({ store }) {
   app.get("/api/meta", (_req, res) => {
     res.json({
       roles: store.roles(),
-      statuses: store.statuses()
+      statuses: store.statuses(),
+      completionTypes: store.completionTypes()
     });
   });
 

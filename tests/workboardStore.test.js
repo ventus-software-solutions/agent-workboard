@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -49,6 +49,114 @@ describe("WorkboardStore", () => {
     expect(savedTask.assignee).toBe("review-agent");
     expect(savedTask.comments[0]).toMatchObject({ author: "review-agent" });
     expect(savedTask.activity[0].type).toBe("commented");
+  });
+
+  it("requires a completion record before moving a task to done", async () => {
+    const project = await store.createProject({ name: "Done Gate Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Ship audited code",
+      role: "implementer",
+      status: "review",
+      assignee: "implementer-01"
+    });
+
+    await expect(
+      store.updateTask(task.id, { status: "done", title: "Should not mutate" }, "reviewer-01")
+    ).rejects.toMatchObject({ status: 400 });
+    expect(store.getTask(task.id)).toMatchObject({
+      status: "review",
+      title: "Ship audited code"
+    });
+  });
+
+  it("records merged completion evidence when a task moves to done", async () => {
+    const project = await store.createProject({ name: "Completion Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Merge feature branch",
+      role: "implementer",
+      status: "review",
+      assignee: "implementer-01"
+    });
+
+    const completed = await store.updateTask(
+      task.id,
+      {
+        status: "done",
+        completion: {
+          completionType: "merged",
+          branch: "implementer-01/feature",
+          commitSha: "abc1234",
+          mergedTo: "main",
+          tests: ["npm test", "npm run build"],
+          reviewTaskId: "task_review_123",
+          notes: "Approved by reviewer-01."
+        }
+      },
+      "reviewer-01"
+    );
+
+    expect(completed.completion).toMatchObject({
+      completionType: "merged",
+      completedBy: "reviewer-01",
+      branch: "implementer-01/feature",
+      commitSha: "abc1234",
+      mergedTo: "main",
+      tests: ["npm test", "npm run build"],
+      reviewTaskId: "task_review_123"
+    });
+    expect(completed.activity[0]).toMatchObject({
+      actor: "reviewer-01",
+      type: "completed"
+    });
+  });
+
+  it("allows explicit no-code completion for planning work", async () => {
+    const project = await store.createProject({ name: "Planning Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Define rollout plan",
+      role: "pm",
+      status: "review",
+      assignee: "pm-agent"
+    });
+
+    const completed = await store.updateTask(
+      task.id,
+      {
+        status: "done",
+        completion: {
+          completionType: "no-code",
+          notes: "Acceptance criteria and follow-up tasks posted in comments."
+        }
+      },
+      "reviewer-01"
+    );
+
+    expect(completed.completion).toMatchObject({
+      completionType: "no-code",
+      completedBy: "reviewer-01",
+      notes: "Acceptance criteria and follow-up tasks posted in comments."
+    });
+  });
+
+  it("backfills legacy done tasks as needing audit", async () => {
+    const raw = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    raw.tasks[0].status = "done";
+    raw.tasks[0].updatedAt = "2026-06-12T12:00:00.000Z";
+    delete raw.tasks[0].completion;
+    await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
+
+    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    await reloaded.init();
+
+    const task = reloaded.getTask(raw.tasks[0].id);
+    expect(task.completion).toMatchObject({
+      completionType: "legacy-needs-audit",
+      completedBy: "legacy"
+    });
+    expect(task.completion.notes).toContain("Marked done before completion records existed");
   });
 
   it("claims a ready task with expected status and assignee preconditions", async () => {

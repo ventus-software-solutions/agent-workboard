@@ -40,7 +40,7 @@ const priorityClass = {
 };
 
 export function App() {
-  const [meta, setMeta] = useState({ roles: [], statuses: [] });
+  const [meta, setMeta] = useState({ roles: [], statuses: [], completionTypes: [] });
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
@@ -218,9 +218,14 @@ export function App() {
             tasks={tasks}
             selectedTaskId={selectedTaskId}
             onSelectTask={setSelectedTaskId}
-            onMoveTask={(task, status) =>
-              mutate(() => api.updateTask(task.id, { status, actor: "operator-ui" }))
-            }
+            onMoveTask={(task, status) => {
+              if (status === "done" && task.status !== "done") {
+                setSelectedTaskId(task.id);
+                setError("Add a completion record in the task details before marking done.");
+                return;
+              }
+              mutate(() => api.updateTask(task.id, { status, actor: "operator-ui" }));
+            }}
           />
         )}
       </section>
@@ -230,6 +235,7 @@ export function App() {
           task={selectedTask}
           statuses={meta.statuses}
           roles={meta.roles}
+          completionTypes={meta.completionTypes}
           onClose={() => setSelectedTaskId("")}
           onMutate={mutate}
         />
@@ -317,6 +323,11 @@ function TaskCard({ task, roles, statuses, selected, onSelect, onMove }) {
     <article className={`taskCard ${selected ? "selected" : ""}`} onClick={onSelect}>
       <div className="taskCardTop">
         <span className={`priorityPill ${priorityClass[task.priority]}`}>{task.priority}</span>
+        {task.status === "done" && task.completion && (
+          <span className={`completionPill ${task.completion.completionType === "legacy-needs-audit" ? "needsAudit" : ""}`}>
+            {task.completion.completionType}
+          </span>
+        )}
         {task.attachments.length > 0 && (
           <span className="attachmentPill">
             <Paperclip size={13} />
@@ -350,7 +361,7 @@ function TaskCard({ task, roles, statuses, selected, onSelect, onMove }) {
   );
 }
 
-function TaskDrawer({ task, statuses, roles, onClose, onMutate }) {
+function TaskDrawer({ task, statuses, roles, completionTypes, onClose, onMutate }) {
   const [comment, setComment] = useState("");
   const [draft, setDraft] = useState({
     title: task.title,
@@ -360,6 +371,8 @@ function TaskDrawer({ task, statuses, roles, onClose, onMutate }) {
     priority: task.priority,
     labels: task.labels.join(", ")
   });
+  const [showCompletionForm, setShowCompletionForm] = useState(false);
+  const [completionDraft, setCompletionDraft] = useState(() => defaultCompletionDraft(task));
 
   useEffect(() => {
     setDraft({
@@ -370,7 +383,18 @@ function TaskDrawer({ task, statuses, roles, onClose, onMutate }) {
       priority: task.priority,
       labels: task.labels.join(", ")
     });
-  }, [task.id]);
+    setCompletionDraft(defaultCompletionDraft(task));
+    setShowCompletionForm(false);
+  }, [task.id, task.status]);
+
+  const saveCompletion = () =>
+    onMutate(() =>
+      api.updateTask(task.id, {
+        status: "done",
+        actor: "operator-ui",
+        completion: completionPayload(completionDraft)
+      })
+    );
 
   return (
     <aside className="drawer">
@@ -389,12 +413,28 @@ function TaskDrawer({ task, statuses, roles, onClose, onMutate }) {
           <button
             key={status.id}
             className={task.status === status.id ? "selected" : ""}
-            onClick={() => onMutate(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }))}
+            onClick={() => {
+              if (status.id === "done" && task.status !== "done") {
+                setShowCompletionForm(true);
+                return;
+              }
+              onMutate(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }));
+            }}
           >
             {status.label}
           </button>
         ))}
       </div>
+
+      <CompletionPanel
+        task={task}
+        completionTypes={completionTypes}
+        draft={completionDraft}
+        setDraft={setCompletionDraft}
+        showForm={showCompletionForm}
+        setShowForm={setShowCompletionForm}
+        onComplete={saveCompletion}
+      />
 
       <div className="drawerSection formGrid">
         <label>
@@ -538,6 +578,141 @@ function TaskDrawer({ task, statuses, roles, onClose, onMutate }) {
         </div>
       </div>
     </aside>
+  );
+}
+
+function defaultCompletionDraft(task) {
+  const completion = task.completion || {};
+  return {
+    completionType: completion.completionType === "legacy-needs-audit" ? "audit-only" : completion.completionType || defaultCompletionType(task),
+    branch: completion.branch || "",
+    commitSha: completion.commitSha || "",
+    mergedTo: completion.mergedTo || "main",
+    tests: (completion.tests || []).join("\n"),
+    reviewTaskId: completion.reviewTaskId || "",
+    supersededByTaskId: completion.supersededByTaskId || "",
+    notes: completion.notes || ""
+  };
+}
+
+function defaultCompletionType(task) {
+  return task.role === "implementer" ? "merged" : "no-code";
+}
+
+function completionPayload(draft) {
+  return {
+    ...draft,
+    tests: draft.tests
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  };
+}
+
+function CompletionPanel({ task, completionTypes, draft, setDraft, showForm, setShowForm, onComplete }) {
+  const completion = task.completion;
+  const editableTypes = (completionTypes || []).filter((type) => type !== "legacy-needs-audit");
+  const type = draft.completionType;
+  const canComplete =
+    type === "merged"
+      ? draft.commitSha.trim()
+      : type === "superseded"
+        ? draft.supersededByTaskId.trim() || draft.notes.trim()
+        : draft.notes.trim();
+
+  return (
+    <div className="drawerSection completionSection">
+      <div className="sectionTitle">
+        <CheckCircle2 size={17} />
+        <span>Completion Record</span>
+      </div>
+
+      {task.status === "done" && completion ? (
+        <div className={`completionRecord ${completion.completionType === "legacy-needs-audit" ? "needsAudit" : ""}`}>
+          <div>
+            <strong>{completion.completionType}</strong>
+            <span>{completion.completedBy || "unknown"} - {completion.completedAt ? new Date(completion.completedAt).toLocaleString() : "no date"}</span>
+          </div>
+          {completion.commitSha && <code>{completion.commitSha}</code>}
+          {completion.branch && <p>Branch: {completion.branch}</p>}
+          {completion.mergedTo && <p>Merged to: {completion.mergedTo}</p>}
+          {completion.tests?.length > 0 && <p>Tests: {completion.tests.join(", ")}</p>}
+          {completion.reviewTaskId && <p>Review task: {completion.reviewTaskId}</p>}
+          {completion.supersededByTaskId && <p>Superseded by: {completion.supersededByTaskId}</p>}
+          {completion.notes && <p>{completion.notes}</p>}
+        </div>
+      ) : (
+        <>
+          {!showForm && (
+            <button className="primaryButton wide" onClick={() => setShowForm(true)}>
+              <CheckCircle2 size={17} />
+              <span>Complete With Record</span>
+            </button>
+          )}
+          {showForm && (
+            <div className="formGrid completionForm">
+              <label>
+                Type
+                <select
+                  value={draft.completionType}
+                  onChange={(event) => setDraft({ ...draft, completionType: event.target.value })}
+                >
+                  {(editableTypes.length ? editableTypes : ["merged", "no-code", "audit-only", "superseded"]).map((completionType) => (
+                    <option key={completionType} value={completionType}>
+                      {completionType}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {type === "merged" && (
+                <>
+                  <label>
+                    Branch
+                    <input value={draft.branch} onChange={(event) => setDraft({ ...draft, branch: event.target.value })} />
+                  </label>
+                  <label>
+                    Commit SHA
+                    <input value={draft.commitSha} onChange={(event) => setDraft({ ...draft, commitSha: event.target.value })} />
+                  </label>
+                  <label>
+                    Merged To
+                    <input value={draft.mergedTo} onChange={(event) => setDraft({ ...draft, mergedTo: event.target.value })} />
+                  </label>
+                  <label className="wide">
+                    Tests
+                    <textarea value={draft.tests} onChange={(event) => setDraft({ ...draft, tests: event.target.value })} />
+                  </label>
+                </>
+              )}
+
+              {type === "superseded" && (
+                <label className="wide">
+                  Superseded By Task
+                  <input
+                    value={draft.supersededByTaskId}
+                    onChange={(event) => setDraft({ ...draft, supersededByTaskId: event.target.value })}
+                  />
+                </label>
+              )}
+
+              <label className="wide">
+                Review Task
+                <input value={draft.reviewTaskId} onChange={(event) => setDraft({ ...draft, reviewTaskId: event.target.value })} />
+              </label>
+              <label className="wide">
+                Notes
+                <textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} />
+              </label>
+              <button className="primaryButton wide" onClick={onComplete} disabled={!canComplete}>
+                <CheckCircle2 size={17} />
+                <span>Mark Done</span>
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -80,6 +80,15 @@ Agents should claim work through MCP `claim_task` or `POST /api/tasks/:taskId/cl
 
 Reviewer agents are the default merge owners. They should scan `status=review`, verify the branch or worktree evidence, merge approved work, comment the merge SHA and verification, and move the original task to `done`. Requested changes go back to `ready` or `blocked` with findings.
 
+`done` is evidence-gated. A task can only move to `done` with a completion record:
+
+- `completionType=merged` for code/docs implementation, with `commitSha`, optional `branch`, `mergedTo`, tests, and notes.
+- `completionType=no-code` for PM/planning outputs, with notes.
+- `completionType=audit-only` for reviews or investigations that did not merge code, with notes.
+- `completionType=superseded` for duplicates, with `supersededByTaskId` or notes.
+
+Older tasks that were already marked done before this rule are backfilled as `legacy-needs-audit` so the board does not pretend they were certified.
+
 Example:
 
 ```bash

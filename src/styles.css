@@ -359,7 +359,8 @@ button {
 }
 
 .priorityPill,
-.attachmentPill {
+.attachmentPill,
+.completionPill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -393,6 +394,16 @@ button {
 .attachmentPill {
   background: #2f3842;
   color: #ccd5df;
+}
+
+.completionPill {
+  background: #203b31;
+  color: #bdf2d1;
+}
+
+.completionPill.needsAudit {
+  background: #4a242b;
+  color: #ffb1bf;
 }
 
 .taskMeta {
@@ -535,6 +546,55 @@ button {
   align-items: center;
   gap: 8px;
   font-weight: 700;
+}
+
+.completionSection {
+  background: #151a20;
+}
+
+.completionRecord {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #335146;
+  border-radius: 8px;
+  background: #1c2a25;
+}
+
+.completionRecord.needsAudit {
+  border-color: #6f3944;
+  background: #2b1c21;
+}
+
+.completionRecord div {
+  display: grid;
+  gap: 3px;
+}
+
+.completionRecord strong {
+  color: #eaf8ed;
+}
+
+.completionRecord span,
+.completionRecord p {
+  margin: 0;
+  color: #b7c3ce;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.completionRecord code {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+  border-radius: 6px;
+  background: #11161b;
+  color: #d8edf2;
+}
+
+.completionForm {
+  padding-top: 2px;
 }
 
 .uploadButton {
