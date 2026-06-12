@@ -22,6 +22,28 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("serves role-aware agent bootstrap docs as JSON and Markdown", async () => {
+    const overview = await request(app).get("/api/agent-docs").expect(200);
+    expect(overview.body.suggestedAgents).toContain("pm-agent");
+    expect(overview.body.usage.promptTemplate).toContain("/api/agent-docs/{agentId}");
+
+    const pmDoc = await request(app).get("/api/agent-docs/pm-agent").expect(200);
+    expect(pmDoc.body.agent).toMatchObject({
+      agentId: "pm-agent",
+      role: "pm"
+    });
+    expect(pmDoc.body.agent.workflow).toContain("Only then look for another task.");
+
+    const mcpDoc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
+    expect(mcpDoc.body.agent.role).toBe("implementer");
+    expect(mcpDoc.body.agent.specialties).toContain("mcp");
+
+    const markdown = await request(app).get("/api/agent-docs/test-agent?format=md").expect(200);
+    expect(markdown.headers["content-type"]).toContain("text/markdown");
+    expect(markdown.text).toContain("You are **test-agent**");
+    expect(markdown.text).toContain("Claim exactly one task");
+  });
+
   it("creates a project and a task, then moves the task", async () => {
     const projectResponse = await request(app)
       .post("/api/projects")

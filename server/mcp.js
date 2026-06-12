@@ -2,6 +2,7 @@ import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { buildAgentDoc, renderAgentDocMarkdown } from "./agentDocs.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
 
 const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");
@@ -23,6 +24,27 @@ function asText(value) {
     ]
   };
 }
+
+server.registerTool(
+  "get_agent_instructions",
+  {
+    title: "Get agent instructions",
+    description: "Return role-aware bootstrap instructions for an agent id.",
+    inputSchema: {
+      agentId: z.string(),
+      format: z.enum(["json", "markdown"]).optional()
+    }
+  },
+  async (input) => {
+    const doc = buildAgentDoc({
+      agentId: input.agentId,
+      roles: store.roles(),
+      statuses: store.statuses(),
+      baseUrl: "http://localhost:8088"
+    });
+    return asText(input.format === "json" ? doc : renderAgentDocMarkdown(doc));
+  }
+);
 
 server.registerTool(
   "list_projects",

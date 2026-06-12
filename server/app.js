@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,6 +28,27 @@ export function createApp({ store }) {
       roles: store.roles(),
       statuses: store.statuses()
     });
+  });
+
+  app.get("/api/agent-docs", (_req, res) => {
+    res.json(listAgentDocs({ roles: store.roles(), statuses: store.statuses() }));
+  });
+
+  app.get("/api/agent-docs/:agentId", (req, res) => {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const doc = buildAgentDoc({
+      agentId: req.params.agentId,
+      roles: store.roles(),
+      statuses: store.statuses(),
+      baseUrl
+    });
+
+    if (req.query.format === "md" || req.query.format === "markdown" || req.accepts(["json", "text"]) === "text") {
+      res.type("text/markdown").send(renderAgentDocMarkdown(doc));
+      return;
+    }
+
+    res.json({ agent: doc });
   });
 
   app.get("/api/projects", (req, res, next) => {
@@ -115,7 +137,8 @@ export function createApp({ store }) {
         "create_task",
         "claim_task",
         "update_task_status",
-        "add_comment"
+        "add_comment",
+        "get_agent_instructions"
       ]
     });
   });

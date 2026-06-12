@@ -48,6 +48,24 @@ npm run mcp
 
 The MCP server exposes project/task listing, task creation, claiming, status updates, and comments over stdio.
 
+## Agent Bootstrap
+
+Every agent can get its operating instructions from the board itself.
+
+For a PM agent:
+
+```text
+You are pm-agent. Read http://localhost:8088/api/agent-docs/pm-agent?format=md and do what it tells you.
+```
+
+Useful endpoints:
+
+- `GET /api/agent-docs`
+- `GET /api/agent-docs/pm-agent`
+- `GET /api/agent-docs/pm-agent?format=md`
+
+The same contract is available over MCP through `get_agent_instructions`.
+
 Example local MCP command:
 
 ```json
@@ -75,6 +93,8 @@ Example local MCP command:
 - `POST /api/tasks/:taskId/comments`
 - `POST /api/tasks/:taskId/attachments`
 - `GET /api/tasks/:taskId/attachments/:attachmentId/download`
+- `GET /api/agent-docs`
+- `GET /api/agent-docs/:agentId`
 
 ## Open Source Status
 
