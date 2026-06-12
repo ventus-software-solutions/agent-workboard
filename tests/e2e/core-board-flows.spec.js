@@ -94,7 +94,7 @@ test("covers core board flows in the browser", async ({ page }) => {
   await expect(taskCard(page, testerTaskTitle)).toBeVisible();
   await expect(taskCard(page, implementerTaskTitle)).toHaveCount(0);
 
-  await taskCard(page, testerTaskTitle).getByRole("button", { name: "Ready" }).click();
+  await taskCard(page, testerTaskTitle).getByRole("button", { name: "Move to Ready" }).click();
   await expect(page.locator(".kanbanColumn", { hasText: "Ready" }).locator(".taskCard", { hasText: testerTaskTitle })).toBeVisible();
 
   await taskCard(page, testerTaskTitle).click();
@@ -144,6 +144,61 @@ test("keeps wrapped task-card content inside the card at responsive widths", asy
     await expect(taskCard(page, longTitle)).toBeVisible();
     await expectCardContentInsideCard(page, longTitle);
   }
+});
+
+test("labels task status controls as actions", async ({ page }) => {
+  const projectName = uniqueName("E2E Action Label Project");
+  const projectKey = uniqueKey("ACT");
+  const backlogTitle = uniqueName("Clarify backlog card action");
+  const reviewerTitle = uniqueName("Review audit-ready copy");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  for (const payload of [
+    {
+      projectId: project.id,
+      title: backlogTitle,
+      status: "backlog",
+      role: "implementer",
+      priority: "normal",
+      description: "Card action should say Move to Ready."
+    },
+    {
+      projectId: project.id,
+      title: reviewerTitle,
+      status: "ready",
+      role: "reviewer",
+      priority: "high",
+      labels: ["audit"],
+      description: "Reviewer work in Ready should be visually distinct."
+    }
+  ]) {
+    const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, { data: payload });
+    expect(taskResponse.ok()).toBe(true);
+  }
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await expect(taskCard(page, backlogTitle).getByRole("button", { name: "Move to Ready" })).toBeVisible();
+  const reviewerCard = taskCard(page, reviewerTitle);
+  await expect(reviewerCard).toContainText("Current: Ready");
+  await expect(reviewerCard).toContainText("Reviewer work");
+  await expect(reviewerCard.getByRole("button", { name: "Start" })).toBeVisible();
+
+  await reviewerCard.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.getByRole("button", { name: "Current: Ready" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Start" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Send to Review" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Move to Testing" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Block" })).toBeVisible();
+  await expect(drawer.locator(".statusRow").getByRole("button", { name: "Complete", exact: true })).toBeVisible();
 });
 
 test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {

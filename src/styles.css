@@ -695,6 +695,11 @@ button {
   gap: 8px;
 }
 
+.taskCardTop {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
 .taskCard h4 {
   margin: 0;
   font-size: 15px;
@@ -861,6 +866,8 @@ button {
 }
 
 .priorityPill,
+.statusPill,
+.workflowPill,
 .attachmentPill,
 .completionPill {
   display: inline-flex;
@@ -906,6 +913,16 @@ button {
 .completionPill.needsAudit {
   background: #4a242b;
   color: #ffb1bf;
+}
+
+.statusPill {
+  background: #26303a;
+  color: #d7e0ea;
+}
+
+.workflowPill {
+  background: #312e4a;
+  color: #d8d1ff;
 }
 
 .taskMeta {

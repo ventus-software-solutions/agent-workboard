@@ -28,6 +28,7 @@ import {
 import { api } from "./lib/api.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
+import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
 
 const DRAG_START_THRESHOLD = 8;
 
@@ -1002,7 +1003,10 @@ function TaskCard({
 }) {
   const role = roles.find((candidate) => candidate.id === task.role);
   const Icon = roleIcons[task.role] || Bot;
-  const nextStatus = statuses[Math.min(statuses.findIndex((status) => status.id === task.status) + 1, statuses.length - 1)];
+  const statusIndex = statuses.findIndex((status) => status.id === task.status);
+  const currentStatus = statuses[statusIndex];
+  const nextStatus = statusIndex >= 0 ? statuses[Math.min(statusIndex + 1, statuses.length - 1)] : null;
+  const workflowCue = taskWorkflowCue(task);
 
   return (
     <article
@@ -1012,6 +1016,8 @@ function TaskCard({
     >
       <div className="taskCardTop">
         <span className={`priorityPill ${priorityClass[task.priority]}`}>{task.priority}</span>
+        {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
+        {workflowCue && <span className="workflowPill">{workflowCue}</span>}
         {task.status === "done" && task.completion && (
           <span className={`completionPill ${task.completion.completionType === "legacy-needs-audit" ? "needsAudit" : ""}`}>
             {task.completion.completionType}
@@ -1036,13 +1042,14 @@ function TaskCard({
       <div className="taskActions">
         {nextStatus?.id !== task.status && (
           <button
+            aria-label={statusActionLabel(nextStatus)}
             onClick={(event) => {
               event.stopPropagation();
               onMove(nextStatus.id);
             }}
           >
             <ChevronRight size={14} />
-            <span>{nextStatus.label}</span>
+            <span>{statusActionLabel(nextStatus)}</span>
           </button>
         )}
       </div>
@@ -1148,6 +1155,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
           <button
             key={status.id}
             className={task.status === status.id ? "selected" : ""}
+            disabled={task.status === status.id}
             onClick={() => {
               if (status.id === "done" && task.status !== "done") {
                 setShowCompletionForm(true);
@@ -1156,7 +1164,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
               runDrawerMutation(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }));
             }}
           >
-            {status.label}
+            {statusControlLabel(task.status, status)}
           </button>
         ))}
       </div>
