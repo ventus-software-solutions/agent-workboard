@@ -146,6 +146,7 @@ test("preserves an unsaved drawer edit when another browser context updates the 
       producerPage.request.patch(`${baseURL}/api/tasks/${task.id}`, {
         data: {
           actor: "producer-context",
+          expectedRevision: task.revision,
           description: "Updated from a separate browser context while the watcher draft is dirty."
         }
       })

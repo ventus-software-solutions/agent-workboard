@@ -138,7 +138,12 @@ describe("Agent Workboard API", () => {
 
     const movedResponse = await request(app)
       .patch(`/api/tasks/${taskResponse.body.task.id}`)
-      .send({ status: "in_progress", assignee: "codex-agent", actor: "pm-agent" })
+      .send({
+        status: "in_progress",
+        assignee: "codex-agent",
+        actor: "pm-agent",
+        expectedRevision: taskResponse.body.task.revision
+      })
       .expect(200);
 
     expect(movedResponse.body.task).toMatchObject({
@@ -432,6 +437,58 @@ describe("Agent Workboard API", () => {
       .expect(409);
 
     expect(staleClaim.body.error.message).toMatch(/already claimed|expected/i);
+  });
+
+  it("rejects stale full task saves with 409 and keeps the first client change", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Revision API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API original title",
+          status: "ready",
+          role: "implementer"
+        })
+        .expect(201)
+    ).body.task;
+
+    const firstSave = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Client A API title",
+        actor: "operator-a",
+        expectedRevision: task.revision
+      })
+      .expect(200);
+
+    const staleSave = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Client B API title",
+        actor: "operator-b",
+        expectedRevision: task.revision
+      })
+      .expect(409);
+
+    expect(staleSave.body.error).toMatchObject({
+      details: {
+        taskId: task.id,
+        expectedRevision: task.revision,
+        currentRevision: firstSave.body.task.revision
+      }
+    });
+    expect(staleSave.body.error.message).toMatch(/changed by another client/i);
+
+    const current = (await request(app).get(`/api/tasks/${task.id}`).expect(200)).body.task;
+    expect(current).toMatchObject({
+      title: "Client A API title",
+      revision: firstSave.body.task.revision
+    });
+    expect(current.activity[0]).toMatchObject({
+      actor: "operator-b",
+      type: "update.rejected"
+    });
   });
 
   it("rejects role-type task claims that bypass concrete agent slots", async () => {
@@ -1214,6 +1271,7 @@ describe("Agent Workboard API", () => {
         title: "Mutated through failed API completion",
         status: "done",
         actor: "reviewer-01",
+        expectedRevision: task.revision,
         completion: {
           completionType: "merged"
         }
