@@ -1870,6 +1870,22 @@ export class WorkboardStore {
       ]
     };
     this.data.tasks.push(task);
+    if (Array.isArray(relationships.childTaskIds) && relationships.childTaskIds.length > 0) {
+      for (const childTaskId of relationships.childTaskIds) {
+        const child = this.data.tasks.find((candidate) => candidate.id === childTaskId);
+        if (child.parentTaskId === task.id) continue;
+        child.parentTaskId = task.id;
+        child.revision = nextTaskRevision(child);
+        child.updatedAt = createdAt;
+        child.activity.unshift({
+          id: id("event"),
+          actor,
+          type: "updated",
+          message: `Updated parentTaskId:${task.id}.`,
+          createdAt
+        });
+      }
+    }
     this.rebuildTaskRelationshipDerivatives();
     if (completion) {
       this.applyCompletionCapabilityLinks(task);
