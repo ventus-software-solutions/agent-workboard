@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -1363,6 +1364,111 @@ export class WorkboardStore {
 
     await this.save();
     return task;
+  }
+
+  exportProjectBackup(projectIdInput) {
+    const project = this.getProject(normalizeText(projectIdInput));
+    const tasks = this.data.tasks
+      .filter((task) => task.projectId === project.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    const events = this.data.events
+      .filter((event) => event.projectId === project.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+
+    return buildProjectBackup({ project, tasks, events, exportedAt: now() });
+  }
+
+  async importProjectBackup(input, { actor = "operator" } = {}) {
+    const backup = normalizeProjectBackup(input, {
+      statusIds: STATUS_IDS,
+      priorityIds: PRIORITY_IDS,
+      roleIds: ROLE_IDS,
+      completionTypeIds: COMPLETION_TYPE_IDS,
+      now,
+      id
+    });
+    const existingProject = this.data.projects.find((candidate) => candidate.id === backup.project.id);
+    const keyCollision = this.data.projects.find(
+      (candidate) => candidate.id !== backup.project.id && candidate.key === backup.project.key
+    );
+    if (keyCollision) {
+      throw httpError(`Project backup key ${backup.project.key} already belongs to another project.`, 409, {
+        reason: "project_key_collision",
+        projectId: backup.project.id,
+        existingProjectId: keyCollision.id
+      });
+    }
+
+    for (const task of backup.tasks) {
+      if (task.projectId !== backup.project.id) {
+        throw httpError("Project backup tasks must belong to the exported project.", 400, {
+          reason: "task_project_mismatch",
+          projectId: backup.project.id,
+          taskId: task.id,
+          taskProjectId: task.projectId
+        });
+      }
+
+      const taskCollision = this.data.tasks.find((candidate) => candidate.id === task.id && candidate.projectId !== backup.project.id);
+      if (taskCollision) {
+        throw httpError(`Task backup id ${task.id} already belongs to another project.`, 409, {
+          reason: "task_id_collision",
+          projectId: backup.project.id,
+          taskId: task.id,
+          existingProjectId: taskCollision.projectId
+        });
+      }
+    }
+
+    if (existingProject) {
+      Object.assign(existingProject, backup.project);
+    } else {
+      this.data.projects.push(backup.project);
+    }
+
+    for (const task of backup.tasks) {
+      const existingTaskIndex = this.data.tasks.findIndex((candidate) => candidate.id === task.id);
+      if (existingTaskIndex === -1) {
+        this.data.tasks.push(task);
+      } else {
+        this.data.tasks[existingTaskIndex] = task;
+      }
+    }
+
+    for (const event of backup.events) {
+      const existingEventIndex = this.data.events.findIndex((candidate) => candidate.id === event.id);
+      if (existingEventIndex === -1) {
+        this.data.events.push(event);
+      } else {
+        const existingEvent = this.data.events[existingEventIndex];
+        if (existingEvent.projectId !== backup.project.id) {
+          throw httpError(`Project event backup id ${event.id} already belongs to another project.`, 409, {
+            reason: "event_id_collision",
+            projectId: backup.project.id,
+            eventId: event.id,
+            existingProjectId: existingEvent.projectId
+          });
+        }
+        this.data.events[existingEventIndex] = event;
+      }
+    }
+
+    this.data.events.push({
+      id: id("event"),
+      projectId: backup.project.id,
+      actor: normalizeText(actor) || "operator",
+      type: existingProject ? "project.imported.updated" : "project.imported.created",
+      message: `Imported project backup for ${backup.project.name}.`,
+      createdAt: now()
+    });
+
+    await this.save();
+    return {
+      created: !existingProject,
+      projectId: backup.project.id,
+      taskCount: backup.tasks.length,
+      eventCount: backup.events.length
+    };
   }
 
   async createTask(input) {

@@ -153,6 +153,148 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("exports and imports a project backup package without losing task evidence", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Backup API Project", key: "BKP" }).expect(201)).body
+      .project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Back up this task",
+          description: "Needs comments, activity, and attachment metadata.",
+          status: "ready",
+          role: "implementer",
+          labels: ["backup"]
+        })
+        .expect(201)
+    ).body.task;
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "review", actor: "implementer-backend-2", expectedRevision: task.revision })
+      .expect(200);
+    await request(app)
+      .post(`/api/tasks/${task.id}/comments`)
+      .send({ author: "reviewer-agent", body: "Keep this review note." })
+      .expect(201);
+    await request(app)
+      .post(`/api/tasks/${task.id}/attachments`)
+      .field("author", "tester-agent")
+      .attach("file", Buffer.from("backup evidence"), "backup.txt")
+      .expect(201);
+
+    const exported = await request(app).get(`/api/projects/${project.id}/export`).expect(200);
+
+    expect(exported.headers["content-type"]).toContain("application/json");
+    expect(exported.headers["content-disposition"]).toContain("attachment");
+    expect(exported.body).toMatchObject({
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: project.id,
+        key: "BKP",
+        name: "Backup API Project"
+      }
+    });
+    expect(exported.body.tasks).toHaveLength(1);
+    expect(exported.body.tasks[0]).toMatchObject({
+      id: task.id,
+      projectId: project.id,
+      title: "Back up this task",
+      comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
+      attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
+    });
+    expect(exported.body.tasks[0].activity.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
+    );
+
+    const importDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-import-api-"));
+    const importStore = new WorkboardStore({ dataDir: importDir });
+    await importStore.init();
+    const importApp = createApp({ store: importStore });
+    try {
+      const imported = await request(importApp).post("/api/projects/import").send(exported.body).expect(201);
+      expect(imported.body.import).toMatchObject({
+        created: true,
+        projectId: project.id,
+        taskCount: 1
+      });
+
+      const importedTask = (await request(importApp).get(`/api/tasks/${task.id}`).expect(200)).body.task;
+      expect(importedTask).toMatchObject({
+        id: task.id,
+        projectId: project.id,
+        title: "Back up this task",
+        comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
+        attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
+      });
+      expect(importedTask.activity.map((event) => event.type)).toEqual(
+        expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
+      );
+
+      const updatedEventMessage = "API restored project event was updated.";
+      const renamedPackage = {
+        ...exported.body,
+        project: {
+          ...exported.body.project,
+          name: "Restored Backup API Project"
+        },
+        events: exported.body.events.map((event, index) => (index === 0 ? { ...event, message: updatedEventMessage } : event))
+      };
+      const updated = await request(importApp).post("/api/projects/import").send(renamedPackage).expect(200);
+      expect(updated.body.import).toMatchObject({
+        created: false,
+        projectId: project.id,
+        taskCount: 1
+      });
+      expect((await request(importApp).get("/api/projects").expect(200)).body.projects).toContainEqual(
+        expect.objectContaining({ id: project.id, name: "Restored Backup API Project" })
+      );
+      expect(importStore.data.events.filter((event) => event.id === exported.body.events[0].id)).toHaveLength(1);
+      expect(importStore.data.events.find((event) => event.id === exported.body.events[0].id)).toMatchObject({
+        projectId: project.id,
+        message: updatedEventMessage
+      });
+    } finally {
+      await rm(importDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects project backup imports with cross-project event id collisions", async () => {
+    const existing = (await request(app).post("/api/projects").send({ name: "Existing Event API", key: "EEAPI" }).expect(201)).body
+      .project;
+    const existingEvent = store.data.events.find((event) => event.projectId === existing.id && event.type === "project.created");
+    const backup = {
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: "project_api_restore_events",
+        key: "API-RESTORE-EVENTS",
+        name: "API Restore Events Project"
+      },
+      tasks: [],
+      events: [
+        {
+          ...existingEvent,
+          projectId: "project_api_restore_events",
+          message: "Unsafe API imported event"
+        }
+      ]
+    };
+
+    const rejected = await request(app).post("/api/projects/import").send(backup).expect(409);
+    expect(rejected.body.error.details).toMatchObject({
+      reason: "event_id_collision",
+      eventId: existingEvent.id,
+      existingProjectId: existing.id
+    });
+    expect(store.data.events.find((event) => event.id === existingEvent.id)).toMatchObject({
+      projectId: existing.id,
+      message: existingEvent.message
+    });
+  });
+
   it("rejects invalid task create and update payloads with readable 400 errors", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Task Validation API", key: "TVAPI" }).expect(201)).body
       .project;
