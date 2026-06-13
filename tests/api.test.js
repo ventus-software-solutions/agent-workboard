@@ -386,6 +386,38 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("runs guarded worktree cleanup through the API", async () => {
+    const cleanupApp = createApp({
+      store,
+      worktreeCleanupAction: async ({ taskId, branch, worktreePath, actor }) => ({
+        cleaned: true,
+        taskId,
+        branch,
+        worktreePath,
+        actor,
+        actions: ["worktree.remove", "branch.delete"]
+      })
+    });
+
+    const response = await request(cleanupApp)
+      .post("/api/worktree-cleanup/cleanup")
+      .send({
+        taskId: "task_clean",
+        branch: "implementer/clean",
+        worktreePath: "C:/tmp/wt-clean",
+        actor: "operator-ui"
+      })
+      .expect(200);
+
+    expect(response.body.cleanup).toMatchObject({
+      cleaned: true,
+      taskId: "task_clean",
+      branch: "implementer/clean",
+      worktreePath: "C:/tmp/wt-clean",
+      actions: ["worktree.remove", "branch.delete"]
+    });
+  });
+
   it("exposes capability CRUD, filtering, and task completion links", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Capability API", key: "CAPAPI" }).expect(201)).body
       .project;

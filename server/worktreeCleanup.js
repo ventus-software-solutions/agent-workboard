@@ -11,17 +11,84 @@ const DEFAULT_REPO_ROOT = path.resolve(__dirname, "..");
 
 export async function createWorktreeCleanupReport({
   store,
-  repoRoot = DEFAULT_REPO_ROOT,
-  mainRef = "main",
+  repoRoot,
+  mainRef,
   git = runGit
 } = {}) {
-  const snapshot = await collectWorktreeSnapshot({ repoRoot, mainRef, git });
+  const config = readWorktreeCleanupConfig();
+  const resolvedRepoRoot = repoRoot || config.repoRoot;
+  const resolvedMainRef = mainRef || config.mainRef;
+  const snapshot = await collectWorktreeSnapshot({ repoRoot: resolvedRepoRoot, mainRef: resolvedMainRef, git });
   return buildWorktreeCleanupReport({
     tasks: store.listTasks(),
     worktrees: snapshot.worktrees,
-    mainRef,
+    mainRef: resolvedMainRef,
     generatedAt: new Date().toISOString()
   });
+}
+
+export function readWorktreeCleanupConfig(env = runtimeEnv(), fallbackRepoRoot = DEFAULT_REPO_ROOT) {
+  return {
+    repoRoot: normalizeText(env.WORKBOARD_REPO_DIR) || fallbackRepoRoot,
+    mainRef: normalizeText(env.WORKBOARD_CLEANUP_MAIN_REF) || "main"
+  };
+}
+
+export async function cleanupWorktree({
+  store,
+  taskId,
+  branch,
+  worktreePath,
+  actor = "operator",
+  repoRoot,
+  mainRef,
+  git = runGit
+} = {}) {
+  const config = readWorktreeCleanupConfig();
+  const resolvedRepoRoot = repoRoot || config.repoRoot;
+  const resolvedMainRef = mainRef || config.mainRef;
+  const report = await createWorktreeCleanupReport({
+    store,
+    repoRoot: resolvedRepoRoot,
+    mainRef: resolvedMainRef,
+    git
+  });
+  const item = report.items.find(
+    (candidate) =>
+      (!taskId || candidate.task?.id === taskId) &&
+      (!branch || candidate.branch === normalizeText(branch)) &&
+      (!worktreePath || candidate.worktreePath === normalizeText(worktreePath))
+  );
+
+  if (!item) {
+    throw Object.assign(new Error("Cleanup candidate not found."), { status: 404 });
+  }
+
+  if (!item.cleanupEligible || !item.task) {
+    throw Object.assign(new Error(`Worktree is not cleanup-ready: ${item.reason}`), { status: 409 });
+  }
+
+  await git(["-C", resolvedRepoRoot, "worktree", "remove", item.worktreePath]);
+  const actions = ["worktree.remove"];
+  if (item.branch && !PROTECTED_BRANCHES.has(item.branch)) {
+    await git(["-C", resolvedRepoRoot, "branch", "-d", item.branch]);
+    actions.push("branch.delete");
+  }
+
+  const comment = await store.addComment(item.task.id, {
+    author: normalizeText(actor) || "operator",
+    body: cleanupEvidenceComment(item, actions)
+  });
+
+  return {
+    cleaned: true,
+    taskId: item.task.id,
+    branch: item.branch,
+    worktreePath: item.worktreePath,
+    mainRef: resolvedMainRef,
+    actions,
+    comment
+  };
 }
 
 export function buildWorktreeCleanupReport({
@@ -372,4 +439,17 @@ function normalizeText(value) {
 function toNumber(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function cleanupEvidenceComment(item, actions) {
+  return [
+    `Removed cleanup-ready worktree ${item.worktreePath}.`,
+    `Branch: ${item.branch}.`,
+    `Completion commit: ${item.completion?.commitSha || item.head || "unknown"}.`,
+    `Actions: ${actions.join(", ")}.`
+  ].join("\n");
+}
+
+function runtimeEnv() {
+  return typeof process === "undefined" ? {} : process.env;
 }

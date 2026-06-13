@@ -67,7 +67,9 @@ function emptyWorktreeCleanup(error = "") {
       unknown: 0
     },
     items: [],
-    error
+    error,
+    loaded: false,
+    loading: false
   };
 }
 
@@ -112,6 +114,7 @@ export function App() {
   const [staleWork, setStaleWork] = useState([]);
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
   const [worktreeCleanup, setWorktreeCleanup] = useState(() => emptyWorktreeCleanup());
+  const [cleanupActionKey, setCleanupActionKey] = useState("");
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
   const [view, setView] = useState("board");
   const [workspaceTab, setWorkspaceTab] = useState("tasks");
@@ -187,9 +190,9 @@ export function App() {
   async function fetchWorktreeCleanup() {
     try {
       const result = await api.worktreeCleanup();
-      return { ...emptyWorktreeCleanup(), ...result.report, error: "" };
+      return { ...emptyWorktreeCleanup(), ...result.report, error: "", loaded: true, loading: false };
     } catch (nextError) {
-      return emptyWorktreeCleanup(nextError.message);
+      return { ...emptyWorktreeCleanup(nextError.message), loaded: true };
     }
   }
 
@@ -198,7 +201,7 @@ export function App() {
     const [metaResult, projectsResult, agentSlotsResult] = await Promise.all([api.meta(), api.projects(), api.agentSlots()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, cleanupResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -209,10 +212,9 @@ export function App() {
           api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
           api.staleInProgressTasks({ projectId: nextProjectId }),
-          api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
-          fetchWorktreeCleanup()
+          api.capabilities({ projectId: nextProjectId, ...capabilityFilters })
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, emptyWorktreeCleanup()];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
@@ -221,7 +223,7 @@ export function App() {
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
-    setWorktreeCleanup(cleanupResult);
+    setWorktreeCleanup(emptyWorktreeCleanup());
     setAgentSlots(agentSlotsResult);
     setLoading(false);
   }
@@ -302,6 +304,7 @@ export function App() {
   }
 
   async function refreshWorktreeCleanup() {
+    setWorktreeCleanup((current) => ({ ...current, loading: true, error: "" }));
     const result = await fetchWorktreeCleanup();
     setWorktreeCleanup(result);
     return result;
@@ -372,10 +375,14 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots(), refreshWorktreeCleanup()]).catch((nextError) =>
-      setError(nextError.message)
-    );
+    setWorktreeCleanup(emptyWorktreeCleanup());
+    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (view !== "board" || workspaceTab !== "coordination" || loading || worktreeCleanup.loaded || worktreeCleanup.loading) return;
+    refreshWorktreeCleanup().catch((nextError) => setWorktreeCleanup({ ...emptyWorktreeCleanup(nextError.message), loaded: true }));
+  }, [view, workspaceTab, loading, worktreeCleanup.loaded, worktreeCleanup.loading]);
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
@@ -455,8 +462,26 @@ export function App() {
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots(), refreshWorktreeCleanup()]);
+    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]);
     return result;
+  }
+
+  async function runWorktreeCleanup(item) {
+    const actionKey = `${item.worktreePath}:${item.branch}`;
+    setCleanupActionKey(actionKey);
+    try {
+      await api.cleanupWorktree({
+        taskId: item.task?.id,
+        branch: item.branch,
+        worktreePath: item.worktreePath,
+        actor: "operator-ui"
+      });
+      await Promise.all([refreshWorktreeCleanup(), refreshTasks(), refreshTalks()]);
+    } catch (nextError) {
+      setError(nextError.message);
+    } finally {
+      setCleanupActionKey("");
+    }
   }
 
   async function mutate(action) {
@@ -741,6 +766,8 @@ export function App() {
             attention={coordinationAttention}
             worktreeCleanup={worktreeCleanup}
             onRefreshWorktreeCleanup={() => refreshWorktreeCleanup()}
+            onCleanupWorktree={runWorktreeCleanup}
+            cleanupActionKey={cleanupActionKey}
           />
         ) : (
           <TasksWorkspace
@@ -934,7 +961,9 @@ function CoordinationWorkspace({
   onRecoverStaleWork,
   attention,
   worktreeCleanup,
-  onRefreshWorktreeCleanup
+  onRefreshWorktreeCleanup,
+  onCleanupWorktree,
+  cleanupActionKey
 }) {
   return (
     <div className="coordinationWorkspace">
@@ -977,6 +1006,8 @@ function CoordinationWorkspace({
             report={worktreeCleanup}
             onRefresh={onRefreshWorktreeCleanup}
             onSelectTask={onSelectTask}
+            onCleanup={onCleanupWorktree}
+            cleanupActionKey={cleanupActionKey}
           />
           <CoordinationAttention attention={attention} onSelectTask={onSelectTask} />
         </div>
@@ -995,7 +1026,7 @@ function CoordinationStat({ icon: Icon, label, value }) {
   );
 }
 
-function WorktreeCleanupPanel({ report, onRefresh, onSelectTask }) {
+function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, cleanupActionKey }) {
   const items = (report.items || []).filter((item) => item.status !== "active-keep");
   const activeCount = report.counts?.active || 0;
 
@@ -1006,7 +1037,13 @@ function WorktreeCleanupPanel({ report, onRefresh, onSelectTask }) {
           <div className="sectionLabel">Repository</div>
           <h3>Worktree Cleanup</h3>
         </div>
-        <button className="iconButton" onClick={onRefresh} title="Refresh cleanup report" aria-label="Refresh cleanup report">
+        <button
+          className="iconButton"
+          onClick={onRefresh}
+          title="Refresh cleanup report"
+          aria-label="Refresh cleanup report"
+          disabled={report.loading}
+        >
           <RefreshCw size={15} />
         </button>
       </div>
@@ -1018,39 +1055,49 @@ function WorktreeCleanupPanel({ report, onRefresh, onSelectTask }) {
         {activeCount > 0 && <span>{activeCount} active</span>}
       </div>
 
-      {report.error ? (
+      {report.loading ? (
+        <p>Loading cleanup report...</p>
+      ) : report.error ? (
         <p className="cleanupError">{report.error}</p>
       ) : items.length > 0 ? (
         <div className="cleanupList">
-          {items.slice(0, 6).map((item) => (
-            <article className={`cleanupCard cleanupStatus-${item.status}`} key={`${item.worktreePath}:${item.branch}`}>
-              <div className="cleanupCardHeader">
-                <span>{cleanupStatusLabel(item.status)}</span>
-                <small>
-                  {item.aheadMain} ahead, {item.behindMain} behind
-                </small>
-              </div>
-              {item.task ? (
-                <button className="linkButton cleanupTaskLink" onClick={() => onSelectTask(item.task.id)}>
-                  {item.task.title}
-                </button>
-              ) : (
-                <strong className="cleanupTaskLink">{item.branch}</strong>
-              )}
-              <div className="cleanupMeta">
-                <span>{item.branch}</span>
-                <span>{item.task?.id || "No task"}</span>
-                <span>{item.completion?.commitSha || item.head || "No commit"}</span>
-              </div>
-              <p>{item.reason}</p>
-              {item.cleanupEligible && (
-                <div className="cleanupCommands">
-                  <code>{item.commands.removeWorktree}</code>
-                  <code>{item.commands.deleteBranch}</code>
+          {items.map((item) => {
+            const actionKey = `${item.worktreePath}:${item.branch}`;
+            const cleanupBusy = cleanupActionKey === actionKey;
+            return (
+              <article className={`cleanupCard cleanupStatus-${item.status}`} key={actionKey}>
+                <div className="cleanupCardHeader">
+                  <span>{cleanupStatusLabel(item.status)}</span>
+                  <small>
+                    {item.aheadMain} ahead, {item.behindMain} behind
+                  </small>
                 </div>
-              )}
-            </article>
-          ))}
+                {item.task ? (
+                  <button className="linkButton cleanupTaskLink" onClick={() => onSelectTask(item.task.id)}>
+                    {item.task.title}
+                  </button>
+                ) : (
+                  <strong className="cleanupTaskLink">{item.branch}</strong>
+                )}
+                <div className="cleanupMeta">
+                  <span>{item.branch}</span>
+                  <span>{item.task?.id || "No task"}</span>
+                  <span>{item.completion?.commitSha || item.head || "No commit"}</span>
+                </div>
+                <p>{item.reason}</p>
+                {item.cleanupEligible && (
+                  <div className="cleanupCommands">
+                    <code>{item.commands.removeWorktree}</code>
+                    <code>{item.commands.deleteBranch}</code>
+                    <button className="cleanupActionButton" onClick={() => onCleanup(item)} disabled={cleanupBusy}>
+                      <Archive size={14} />
+                      <span>{cleanupBusy ? "Cleaning" : "Clean"}</span>
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       ) : (
         <p>No cleanup candidates.</p>

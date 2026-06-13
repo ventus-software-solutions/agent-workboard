@@ -1,5 +1,22 @@
-import { describe, expect, it } from "vitest";
-import { buildWorktreeCleanupReport, parseWorktreePorcelain } from "../server/worktreeCleanup.js";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  buildWorktreeCleanupReport,
+  cleanupWorktree,
+  parseWorktreePorcelain,
+  readWorktreeCleanupConfig
+} from "../server/worktreeCleanup.js";
+import { WorkboardStore } from "../server/storage/workboardStore.js";
+
+let cleanupPaths = [];
+
+afterEach(async () => {
+  const paths = cleanupPaths;
+  cleanupPaths = [];
+  await Promise.all(paths.map((target) => rm(target, { recursive: true, force: true })));
+});
 
 const baseTask = {
   projectId: "project_dogfood",
@@ -207,5 +224,99 @@ prunable gitdir file points to non-existent location
         prunableReason: "gitdir file points to non-existent location"
       }
     ]);
+  });
+
+  it("uses WORKBOARD_REPO_DIR for deployed cleanup scans", () => {
+    expect(readWorktreeCleanupConfig({ WORKBOARD_REPO_DIR: "/workspace" }, "/app")).toMatchObject({
+      repoRoot: "/workspace",
+      mainRef: "main"
+    });
+  });
+
+  it("keeps the Docker deployment contract aligned with host worktree access", async () => {
+    const dockerfile = await readFile(path.resolve("Dockerfile"), "utf8");
+    const compose = await readFile(path.resolve("docker-compose.yml"), "utf8");
+
+    expect(dockerfile).toContain("apk add --no-cache git");
+    expect(dockerfile).toContain("WORKBOARD_REPO_DIR=/workspace");
+    expect(dockerfile).toContain("safe.directory /workspace");
+    expect(compose).toContain("WORKBOARD_REPO_DIR: /workspace");
+    expect(compose).toContain("./:/workspace:ro");
+  });
+
+  it("removes cleanup-ready worktrees and records task evidence", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-cleanup-"));
+    cleanupPaths.push(dataDir);
+    const store = new WorkboardStore({ dataDir });
+    await store.init();
+    const project = await store.createProject({ name: "Cleanup action project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Merged cleanup branch",
+      status: "done",
+      completion: {
+        completionType: "merged",
+        branch: "implementer/clean",
+        commitSha: "abc1234",
+        mergedTo: "main"
+      }
+    });
+    const calls = [];
+    const git = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      if (key === "-C C:/repo worktree list --porcelain") {
+        return {
+          ok: true,
+          stdout: "worktree C:/tmp/wt-clean\nHEAD abc1234\nbranch refs/heads/implementer/clean",
+          stderr: "",
+          exitCode: 0
+        };
+      }
+      if (key === "-C C:/tmp/wt-clean status --porcelain --untracked-files=normal") {
+        return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo rev-list --left-right --count main...implementer/clean") {
+        return { ok: true, stdout: "0\t0", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo merge-base --is-ancestor abc1234 main") {
+        return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo worktree remove C:/tmp/wt-clean") {
+        return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo branch -d implementer/clean") {
+        return { ok: true, stdout: "Deleted branch", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected git command: ${key}`);
+    };
+
+    const result = await cleanupWorktree({
+      store,
+      repoRoot: "C:/repo",
+      mainRef: "main",
+      taskId: task.id,
+      branch: "implementer/clean",
+      worktreePath: "C:/tmp/wt-clean",
+      actor: "operator-ui",
+      git
+    });
+
+    expect(result).toMatchObject({
+      cleaned: true,
+      taskId: task.id,
+      branch: "implementer/clean",
+      worktreePath: "C:/tmp/wt-clean"
+    });
+    expect(calls.map((args) => args.join(" "))).toEqual(
+      expect.arrayContaining([
+        "-C C:/repo worktree remove C:/tmp/wt-clean",
+        "-C C:/repo branch -d implementer/clean"
+      ])
+    );
+    expect(store.getTask(task.id).comments[0]).toMatchObject({
+      author: "operator-ui"
+    });
+    expect(store.getTask(task.id).comments[0].body).toContain("Removed cleanup-ready worktree");
   });
 });

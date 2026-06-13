@@ -992,6 +992,24 @@ button {
   overflow-wrap: anywhere;
 }
 
+.cleanupActionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #3e8c80;
+  border-radius: 8px;
+  color: #eef2f7;
+  background: #2e6f66;
+}
+
+.cleanupActionButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .agentsRegistry {
   display: grid;
   flex: 1 1 auto;
