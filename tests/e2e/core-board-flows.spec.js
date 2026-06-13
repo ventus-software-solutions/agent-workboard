@@ -393,8 +393,10 @@ test("splits tasks and coordination while preserving board state", async ({ page
 
   const tasksTab = page.getByRole("tab", { name: /Tasks/ });
   const coordinationTab = page.getByRole("tab", { name: /Coordination/ });
+  const activityTab = page.getByRole("tab", { name: /Activity/ });
   await expect(tasksTab).toHaveAttribute("aria-selected", "true");
   await expect(coordinationTab).toContainText(/Coordination/);
+  await expect(activityTab).toContainText(/Activity/);
   await expect(page.locator(".kanbanBoard")).toBeVisible();
   await expect(page.locator(".talksPanel")).toHaveCount(0);
 
@@ -449,6 +451,7 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tasksTab).toBeVisible();
   await expect(coordinationTab).toBeVisible();
+  await expect(activityTab).toBeVisible();
   const tabOverflow = await page.locator(".workspaceTabs").evaluate((tabs) => tabs.scrollWidth > tabs.clientWidth + 1);
   expect(tabOverflow).toBe(false);
 
@@ -456,6 +459,95 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await expect(page.locator(".talksControlDeck")).toBeVisible();
   const talksOverflow = await page.locator(".talksPanel").evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
   expect(talksOverflow).toBe(false);
+});
+
+test("shows project activity audit events without opening every task", async ({ page }) => {
+  const projectName = uniqueName("E2E Activity Audit Project");
+  const projectKey = uniqueKey("AUD");
+  const taskTitle = uniqueName("Trace project activity feed");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: taskTitle,
+      status: "ready",
+      assignee: "",
+      role: "implementer",
+      priority: "high",
+      actor: "pm-agent"
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const { task } = await taskResponse.json();
+
+  const claimResponse = await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/claim`, {
+    data: {
+      assignee: "implementer-backend-1",
+      expectedStatus: "ready",
+      expectedAssignee: "",
+      actor: "implementer-backend-1"
+    }
+  });
+  expect(claimResponse.ok()).toBe(true);
+
+  const staleResponse = await page.request.patch(`${apiBaseURL}/api/tasks/${task.id}`, {
+    data: {
+      title: "Outdated browser activity title",
+      expectedRevision: task.revision,
+      actor: "operator-stale"
+    }
+  });
+  expect(staleResponse.status()).toBe(409);
+
+  const commentResponse = await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/comments`, {
+    data: { author: "reviewer-agent", body: "Browser audit comment evidence." }
+  });
+  expect(commentResponse.ok()).toBe(true);
+
+  const approvalResponse = await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/operator-approval`, {
+    data: {
+      requestedBy: "implementer-backend-1",
+      reason: "Need approval before browser audit release.",
+      requestedAction: "Approve browser audit release",
+      nextStatus: "in_progress"
+    }
+  });
+  expect(approvalResponse.ok()).toBe(true);
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  const activityTab = page.getByRole("tab", { name: /Activity/ });
+  await activityTab.click();
+  await expect(activityTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".activityWorkspace")).toBeVisible();
+  await expect(page.locator(".activityWorkspace")).toContainText(taskTitle);
+  await expect(page.locator(".activityWorkspace")).toContainText("Created project");
+  await expect(page.locator(".activityWorkspace")).toContainText("Task created");
+  await expect(page.locator(".activityWorkspace")).toContainText("Claimed task");
+  await expect(page.locator(".activityWorkspace")).toContainText("Rejected stale full task update");
+  await expect(page.locator(".activityWorkspace")).toContainText("Added a comment");
+  await expect(page.locator(".activityWorkspace")).toContainText("Requested operator approval");
+
+  await page.getByLabel("Activity type filter").selectOption("update.rejected");
+  await expect(page.locator(".activityWorkspace")).toContainText("Rejected stale full task update");
+  await expect(page.locator(".activityWorkspace")).not.toContainText("Task created");
+
+  await page.getByLabel("Activity type filter").selectOption("");
+  await page.getByLabel("Search activity").fill("browser audit comment");
+  await expect(page.locator(".activityWorkspace")).toContainText("Added a comment");
+  await expect(page.locator(".activityWorkspace")).not.toContainText("Claimed task");
+
+  await page.locator(".activityEvent", { hasText: "Added a comment" }).getByRole("button", { name: new RegExp(taskTitle) }).click();
+  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".drawer")).toContainText(taskTitle);
 });
 
 test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {

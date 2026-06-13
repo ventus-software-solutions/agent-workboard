@@ -63,6 +63,10 @@ export const api = {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks${params.size ? `?${params}` : ""}`);
   },
+  projectActivity: (projectId, filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/projects/${projectId}/activity${params.size ? `?${params}` : ""}`);
+  },
   talks: (projectId, filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/projects/${projectId}/talks${params.size ? `?${params}` : ""}`);
