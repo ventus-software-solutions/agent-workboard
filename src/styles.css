@@ -234,7 +234,7 @@ button {
 
 .topBar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto auto;
   align-items: center;
   gap: 16px;
   margin-bottom: 16px;
@@ -294,6 +294,37 @@ button {
 
 .stat strong {
   color: #f3f6fa;
+}
+
+.integrationStatus {
+  display: inline-grid;
+  grid-template-columns: 15px auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  min-width: 132px;
+  padding: 5px 10px;
+  border: 1px solid #37444c;
+  border-radius: 8px;
+  background: #171f24;
+  color: #bdd5df;
+}
+
+.integrationStatus strong {
+  color: #eef6f8;
+  font-size: 12px;
+}
+
+.integrationStatus.pushDebt {
+  border-color: #8a7440;
+  background: #2a2418;
+  color: #f6dda0;
+}
+
+.integrationStatus.needsReconcile {
+  border-color: #6f3944;
+  background: #2b1c21;
+  color: #ffbfca;
 }
 
 .refreshStatus {

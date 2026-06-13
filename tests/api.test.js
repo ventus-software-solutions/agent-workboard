@@ -22,6 +22,51 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("surfaces integration source guidance in meta, bootstrap, and agent docs", async () => {
+    const integrationStatus = {
+      sourceOfTruth: "local-main",
+      baseRef: "main",
+      pushDebt: true,
+      ahead: 2,
+      behind: 0,
+      clean: true,
+      localHead: "localsha",
+      originHead: "originsha",
+      summary: "Local main is 2 commits ahead of origin/main; use local main for dogfood worktrees until push debt is cleared.",
+      worktreeCommand: "git worktree add C:/git/wt-agent-workboard-<agent-id>-<slug> -b <agent-id>/<slug> main",
+      recoveryActions: ["Run git push origin main when non-interactive credentials are available."]
+    };
+    app = createApp({ store, integrationStatusProvider: () => integrationStatus });
+
+    const meta = await request(app).get("/api/meta").expect(200);
+    expect(meta.body.integrationStatus).toMatchObject({
+      sourceOfTruth: "local-main",
+      baseRef: "main",
+      pushDebt: true
+    });
+
+    const bootstrap = await request(app)
+      .post("/api/bootstrap")
+      .send({ preferredType: "implementer-backend", runtimeId: "integration-guidance-test" })
+      .expect(200);
+    expect(bootstrap.body.integrationStatus).toMatchObject({
+      sourceOfTruth: "local-main",
+      baseRef: "main"
+    });
+
+    const doc = await request(app).get("/api/agent-docs/implementer-backend-1").expect(200);
+    expect(doc.body.agent.integrationStatus).toMatchObject({
+      sourceOfTruth: "local-main",
+      baseRef: "main"
+    });
+    expect(doc.body.agent.worktree.join("\n")).toContain(" main");
+
+    const markdown = await request(app).get("/api/agent-docs/implementer-backend-1?format=md").expect(200);
+    expect(markdown.text).toContain("Integration Source");
+    expect(markdown.text).toContain("local-main");
+    expect(markdown.text).toContain("Push debt");
+  });
+
   it("serves role-aware agent bootstrap docs as JSON and Markdown", async () => {
     const overview = await request(app).get("/api/agent-docs").expect(200);
     expect(overview.body.suggestedAgents).toContain("implementer");

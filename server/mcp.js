@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildAgentDoc, renderAgentDocMarkdown } from "./agentDocs.js";
+import { getIntegrationStatus } from "./integrationStatus.js";
 import { MCP_TOOL_NAMES, buildUpdateTaskStatusPatch } from "./mcpToolHandlers.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
 
@@ -37,6 +38,7 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         statuses: store.statuses(),
         agentSlots: agentSlotRegistry.slots,
         agentTypes: agentSlotRegistry.types,
+        integrationStatus: getIntegrationStatus(),
         baseUrl,
         projectContext: store.getAgentProjectContext(input.agentId)
       });

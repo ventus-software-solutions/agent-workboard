@@ -38,6 +38,7 @@ export async function request(path, options = {}) {
 
 export const api = {
   meta: () => request("/api/meta"),
+  integrationStatus: () => request("/api/integration-status"),
   agentSlots: () => request("/api/agent-slots"),
   bootstrap: (input) => request("/api/bootstrap", { method: "POST", body: JSON.stringify(input) }),
   updatePresence: (agentId, presence) =>
