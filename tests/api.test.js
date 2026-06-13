@@ -1349,6 +1349,45 @@ describe("Agent Workboard API", () => {
       });
   });
 
+  it("updates configured agent type capacity controls", async () => {
+    const update = await request(app)
+      .patch("/api/agent-types/mcp")
+      .send({
+        capacity: 3,
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+
+    expect(update.body.type).toMatchObject({
+      id: "mcp",
+      capacity: 3,
+      slotIds: ["mcp-agent", "mcp-agent-2", "mcp-agent-3"],
+      configured: 3,
+      active: 0,
+      available: 3,
+      updatedAt: "2026-06-12T15:00:00.000Z"
+    });
+
+    const listed = await request(app).get("/api/agent-slots").query({ now: "2026-06-12T15:01:00.000Z" }).expect(200);
+    expect(listed.body.types.find((type) => type.id === "mcp")).toMatchObject({
+      capacity: 3,
+      configured: 3,
+      available: 3
+    });
+    expect(listed.body.slots.find((slot) => slot.id === "mcp-agent-3")).toMatchObject({
+      typeId: "mcp",
+      withinCapacity: true
+    });
+
+    await request(app)
+      .patch("/api/agent-types/mcp")
+      .send({ capacity: "many" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toContain("capacity");
+      });
+  });
+
   it("reports in-progress work assigned to non-slot identities as slot warnings", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Slot Warning API Project" })).body.project;
     const task = (

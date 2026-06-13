@@ -749,6 +749,24 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Test Agent" })).toBeVisible();
   await expect(page.getByText("Historical assignees")).toBeVisible();
   await expect(page.getByText("Task-only identities, not configured capacity")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Implementer Frontend" })).toBeVisible();
+
+  const frontendType = page.locator(".agentTypeCard", { hasText: "Implementer Frontend" });
+  await expect(frontendType).toContainText("desired");
+  await expect(frontendType).toContainText("occupied");
+  await expect(frontendType).toContainText("free");
+  await expect(frontendType).toContainText("stale");
+  await expect(frontendType).toContainText("implementer-frontend-1");
+  await frontendType.getByRole("button", { name: "Increase implementer-frontend capacity" }).click();
+  await expect(frontendType.getByLabel("implementer-frontend desired slots")).toHaveValue("4");
+  let slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
+  expect(slotsResponse.ok()).toBe(true);
+  let slots = await slotsResponse.json();
+  expect(slots.types.find((type) => type.id === "implementer-frontend")).toMatchObject({
+    capacity: 4,
+    configured: 4
+  });
+  expect(slots.slots.find((slot) => slot.id === "implementer-frontend-4")).toBeTruthy();
 
   const backendCard = page.getByTestId("agent-card").filter({ hasText: "implementer-backend-1" });
   await expect(backendCard).toBeVisible();
@@ -759,9 +777,9 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(backendMode).toHaveValue("single-task");
   await backendMode.selectOption("watch-mode");
   await expect(backendMode).toHaveValue("watch-mode");
-  let slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
+  slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
   expect(slotsResponse.ok()).toBe(true);
-  let slots = await slotsResponse.json();
+  slots = await slotsResponse.json();
   expect(slots.slots.find((slot) => slot.id === "implementer-backend-1")).toMatchObject({
     workMode: "watch-mode",
     paused: false

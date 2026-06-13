@@ -2164,6 +2164,70 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("updates agent type capacity and uses the desired capacity during slot acquisition", async () => {
+    const increased = await store.updateAgentType("mcp", {
+      capacity: 3,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(increased).toMatchObject({
+      id: "mcp",
+      capacity: 3,
+      slotIds: ["mcp-agent", "mcp-agent-2", "mcp-agent-3"]
+    });
+    expect(store.listAgentSlots({ now: "2026-06-12T15:00:00.000Z" }).slots.map((slot) => slot.id)).toContain("mcp-agent-3");
+
+    const reduced = await store.updateAgentType("mcp", {
+      capacity: 1,
+      now: "2026-06-12T15:01:00.000Z"
+    });
+
+    expect(reduced).toMatchObject({
+      id: "mcp",
+      capacity: 1,
+      slotIds: ["mcp-agent", "mcp-agent-2", "mcp-agent-3"]
+    });
+
+    const first = await store.acquireAgentSlot({
+      preferredType: "mcp",
+      runtimeId: "runtime-mcp-1",
+      now: "2026-06-12T15:02:00.000Z"
+    });
+    expect(first.agentId).toBe("mcp-agent");
+
+    await expect(
+      store.acquireAgentSlot({
+        preferredType: "mcp",
+        runtimeId: "runtime-mcp-2",
+        now: "2026-06-12T15:02:00.000Z"
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        typeId: "mcp",
+        capacity: 1,
+        active: 1
+      }
+    });
+
+    const listed = store.listAgentSlots({ now: "2026-06-12T15:02:00.000Z" });
+    expect(listed.types.find((type) => type.id === "mcp")).toMatchObject({
+      capacity: 1,
+      active: 1,
+      available: 0,
+      configured: 3
+    });
+    expect(listed.slots.find((slot) => slot.id === "mcp-agent-2")).toMatchObject({
+      withinCapacity: false,
+      available: false
+    });
+
+    await expect(store.updateAgentType("mcp", { capacity: -1 })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("capacity")
+    });
+  });
+
   it("records agent presence and no-eligible-work reports", async () => {
     const dogfood = await store.createProject({ name: "Dogfood", key: "DOGFOOD" });
     const active = await store.updateAgentPresence("mcp-agent", {

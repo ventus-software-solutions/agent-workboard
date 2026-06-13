@@ -682,28 +682,47 @@ export class WorkboardStore {
     this.ensureAgentSlotSchema();
     const currentTime = parseTimestamp(nowInput);
     const stats = this.agentSlotTaskStats();
-    const slots = this.data.agentSlots.map((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id)));
+    const typeById = new Map(this.data.agentTypes.map((type) => [type.id, type]));
+    const slots = this.data.agentSlots.map((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id), typeById.get(slot.typeId)));
     const untrackedInProgressAssignees = this.untrackedInProgressAssignees();
-    const activeByType = new Map();
-
-    for (const slot of slots) {
-      if (slot.active) {
-        activeByType.set(slot.typeId, (activeByType.get(slot.typeId) || 0) + 1);
-      }
-    }
 
     return {
       leaseMs: SLOT_LEASE_MS,
-      types: this.data.agentTypes.map((type) => ({
-        ...type,
-        slotIds: [...type.slotIds],
-        specialties: [...type.specialties],
-        active: activeByType.get(type.id) || 0,
-        available: Math.max(0, type.capacity - (activeByType.get(type.id) || 0))
-      })),
+      types: this.data.agentTypes.map((type) => describeAgentType(type, slots)),
       slots,
       untrackedInProgressAssignees
     };
+  }
+
+  async updateAgentType(typeIdInput, input = {}) {
+    const typeId = normalizeAgentType(typeIdInput);
+    if (!typeId) {
+      throw httpError("Agent type id is required.", 400);
+    }
+    const currentTime = parseTimestamp(input.now);
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      const type = this.data.agentTypes.find((candidate) => candidate.id === typeId);
+      if (!type) {
+        throw httpError("Agent type not found.", 404, { typeId });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(input, "capacity")) {
+        type.capacity = normalizeAgentCapacity(input.capacity);
+        this.ensureAgentTypeSlotCapacity(type);
+      }
+
+      type.updatedAt = currentTime.toISOString();
+      await this.writeData(this.data);
+
+      const stats = this.agentSlotTaskStats();
+      const slots = this.data.agentSlots
+        .filter((slot) => slot.typeId === type.id)
+        .map((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type));
+      return describeAgentType(type, slots);
+    });
   }
 
   async updateAgentSlot(agentIdInput, input = {}) {
@@ -769,30 +788,33 @@ export class WorkboardStore {
       const typeSlots = this.data.agentSlots
         .filter((slot) => slot.typeId === type.id)
         .sort((a, b) => a.slotNumber - b.slotNumber);
+      const capacitySlots = typeSlots.filter((slot) => slot.slotNumber <= type.capacity);
+      const activeSlots = typeSlots.filter((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type).active);
       const existingRuntimeSlot = runtimeId
         ? typeSlots.find((slot) => slot.lease?.runtimeId === runtimeId && this.isLeaseFresh(slot.lease, currentTime))
         : null;
       const selected =
         requestedSlot ||
         existingRuntimeSlot ||
-        selectAvailableSlot(typeSlots, {
-          currentTime,
-          runtimeId,
-          stats,
-          isLeaseFresh: (lease) => this.isLeaseFresh(lease, currentTime)
-        });
+        (activeSlots.length >= type.capacity
+          ? null
+          : selectAvailableSlot(capacitySlots, {
+              currentTime,
+              runtimeId,
+              stats,
+              isLeaseFresh: (lease) => this.isLeaseFresh(lease, currentTime)
+            }));
 
       if (!selected) {
-        const active = typeSlots.filter((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id)).active);
-        throw httpError(`No available agent slot for ${type.id}; active capacity is ${active.length}/${type.capacity}.`, 409, {
+        throw httpError(`No available agent slot for ${type.id}; active capacity is ${activeSlots.length}/${type.capacity}.`, 409, {
           typeId: type.id,
           capacity: type.capacity,
-          active: active.length,
-          activeSlotIds: active.map((slot) => slot.id)
+          active: activeSlots.length,
+          activeSlotIds: activeSlots.map((slot) => slot.id)
         });
       }
 
-      const described = this.describeAgentSlot(selected, currentTime, stats.get(selected.id));
+      const described = this.describeAgentSlot(selected, currentTime, stats.get(selected.id), type);
       const sameRuntime = selected.lease?.runtimeId === runtimeId;
       if (selected.paused) {
         throw httpError(`Agent slot ${selected.id} is paused.`, 409, { agentId: selected.id, typeId: type.id });
@@ -2233,6 +2255,39 @@ export class WorkboardStore {
     return changed;
   }
 
+  ensureAgentTypeSlotCapacity(type) {
+    if (!Array.isArray(type.slotIds)) {
+      type.slotIds = [];
+    }
+
+    while (type.slotIds.length < type.capacity) {
+      const slotNumber = type.slotIds.length + 1;
+      const slotId = nextAgentSlotId(type, slotNumber);
+      type.slotIds.push(slotId);
+      if (!this.data.agentSlots.some((slot) => slot.id === slotId)) {
+        this.data.agentSlots.push(createAgentSlot(type, slotId, slotNumber));
+      }
+    }
+
+    for (const [index, slotId] of type.slotIds.entries()) {
+      let slot = this.data.agentSlots.find((candidate) => candidate.id === slotId);
+      if (!slot) {
+        slot = createAgentSlot(type, slotId, index + 1);
+        this.data.agentSlots.push(slot);
+        continue;
+      }
+      slot.slotNumber = index + 1;
+      slot.typeId = type.id;
+      slot.role = type.role;
+      if (!Array.isArray(slot.specialties) || slot.specialties.length === 0) {
+        slot.specialties = [...type.specialties];
+      }
+      if (!slot.workMode) {
+        slot.workMode = type.defaultWorkMode;
+      }
+    }
+  }
+
   ensureAgentPresenceSchema() {
     if (!this.data.agentPresence || typeof this.data.agentPresence !== "object" || Array.isArray(this.data.agentPresence)) {
       this.data.agentPresence = {};
@@ -2489,7 +2544,7 @@ export class WorkboardStore {
       .sort((a, b) => a.assignee.localeCompare(b.assignee));
   }
 
-  describeAgentSlot(slot, currentTime, taskStats = {}) {
+  describeAgentSlot(slot, currentTime, taskStats = {}, type = null) {
     const stats = {
       assignedTaskCount: 0,
       readyTaskCount: 0,
@@ -2499,6 +2554,7 @@ export class WorkboardStore {
     };
     const leaseFresh = this.isLeaseFresh(slot.lease, currentTime);
     const active = !slot.paused && (leaseFresh || stats.inProgressTaskCount > 0);
+    const withinCapacity = !type || slot.slotNumber <= type.capacity;
     const activeProject = this.findActiveProject(slot.activeProjectId);
     const projectContext = activeProject ? this.decorateProjectContext(activeProject) : { activeProjectId: "", activeProject: null };
     return {
@@ -2508,12 +2564,13 @@ export class WorkboardStore {
       lease: slot.lease ? { ...slot.lease } : null,
       leaseFresh,
       active,
+      withinCapacity,
       stale: Boolean(slot.lease && !leaseFresh && stats.inProgressTaskCount === 0),
       assignedTaskCount: stats.assignedTaskCount,
       readyTaskCount: stats.readyTaskCount,
       backlogTaskCount: stats.backlogTaskCount,
       inProgressTaskCount: stats.inProgressTaskCount,
-      available: !slot.paused && !active
+      available: withinCapacity && !slot.paused && !active
     };
   }
 
@@ -3587,6 +3644,38 @@ function createAgentSlot(type, slotId, slotNumber) {
   };
 }
 
+function describeAgentType(type, slots) {
+  const typeSlots = slots
+    .filter((slot) => slot.typeId === type.id)
+    .sort((a, b) => a.slotNumber - b.slotNumber || a.id.localeCompare(b.id));
+  const active = typeSlots.filter((slot) => slot.active).length;
+  const available = typeSlots.filter((slot) => slot.available).length;
+  return {
+    ...type,
+    slotIds: [...(type.slotIds || [])],
+    specialties: [...(type.specialties || [])],
+    configured: typeSlots.length,
+    active,
+    occupied: active,
+    available,
+    free: available,
+    stale: typeSlots.filter((slot) => slot.stale).length,
+    paused: typeSlots.filter((slot) => slot.paused).length,
+    slots: typeSlots.map((slot) => ({
+      id: slot.id,
+      slotNumber: slot.slotNumber,
+      active: slot.active,
+      available: slot.available,
+      stale: slot.stale,
+      paused: slot.paused,
+      withinCapacity: slot.withinCapacity,
+      inProgressTaskCount: slot.inProgressTaskCount,
+      readyTaskCount: slot.readyTaskCount,
+      backlogTaskCount: slot.backlogTaskCount
+    }))
+  };
+}
+
 function parseTimestamp(value) {
   if (!value) return new Date();
   const date = new Date(value);
@@ -3600,6 +3689,22 @@ function normalizeAgentType(value) {
   const normalized = normalizeText(value).toLowerCase();
   if (!normalized) return "";
   return AGENT_TYPE_ALIASES.get(normalized) || normalized;
+}
+
+function normalizeAgentCapacity(value) {
+  const capacity = Number(value);
+  if (!Number.isInteger(capacity) || capacity < 0 || capacity > 20) {
+    throw httpError("Agent type capacity must be an integer between 0 and 20.", 400, { capacity: value });
+  }
+  return capacity;
+}
+
+function nextAgentSlotId(type, slotNumber) {
+  const existing = type.slotIds?.[slotNumber - 1];
+  if (existing) return existing;
+  const firstSlotId = type.slotIds?.[0] || type.id;
+  const base = firstSlotId.replace(/-\d+$/, "");
+  return slotNumber === 1 ? base : `${base}-${slotNumber}`;
 }
 
 function normalizeWorkMode(value) {

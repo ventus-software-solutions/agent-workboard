@@ -14,6 +14,7 @@ import {
   Link2,
   Menu,
   MessageSquarePlus,
+  Minus,
   Paperclip,
   PauseCircle,
   PlayCircle,
@@ -343,6 +344,19 @@ export function App() {
     setAgentControlPending(agentId);
     try {
       await api.updateAgentSlot(agentId, patch);
+      await refreshAgentSlots();
+    } catch (nextError) {
+      setError(nextError.message);
+    } finally {
+      setAgentControlPending("");
+    }
+  }
+
+  async function updateAgentTypeCapacity(typeId, capacity) {
+    setError("");
+    setAgentControlPending(`type:${typeId}`);
+    try {
+      await api.updateAgentType(typeId, { capacity });
       await refreshAgentSlots();
     } catch (nextError) {
       setError(nextError.message);
@@ -820,6 +834,7 @@ export function App() {
             onOpenTask={openLinkedTask}
             onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
             onUpdateAgentSlot={updateAgentSlotControls}
+            onUpdateAgentTypeCapacity={updateAgentTypeCapacity}
             updatingAgentId={agentControlPending}
           />
         ) : workspaceTab === "coordination" ? (
@@ -1394,7 +1409,7 @@ function AttentionAgentList({ agents }) {
   );
 }
 
-function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, updatingAgentId }) {
+function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, onUpdateAgentTypeCapacity, updatingAgentId }) {
   const groups = registry.groups.filter((group) => group.agents.length > 0);
 
   if (groups.length === 0) {
@@ -1403,6 +1418,11 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
 
   return (
     <section className="agentsRegistry" aria-label="Agents">
+      <AgentTypeCapacityPanel
+        types={registry.typeSummaries}
+        onUpdateCapacity={onUpdateAgentTypeCapacity}
+        updatingAgentId={updatingAgentId}
+      />
       {groups.map((group) => (
         <section className="agentGroup" key={group.role}>
           <div className="agentGroupHeader">
@@ -1449,6 +1469,93 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
           )}
         </section>
       ))}
+    </section>
+  );
+}
+
+function AgentTypeCapacityPanel({ types, onUpdateCapacity, updatingAgentId }) {
+  if (!types?.length) return null;
+
+  return (
+    <section className="agentTypeCapacityPanel" aria-label="Agent type capacity">
+      {types.map((type) => {
+        const isUpdating = updatingAgentId === `type:${type.id}`;
+        const nextLower = Math.max(0, type.capacity - 1);
+        const nextHigher = type.capacity + 1;
+        return (
+          <article className="agentTypeCard" key={type.id}>
+            <div className="agentTypeHeader">
+              <div>
+                <div className="sectionLabel">{type.roleLabel}</div>
+                <h3>{type.label}</h3>
+              </div>
+              <div className="capacityStepper" aria-label={`${type.id} capacity controls`}>
+                <button
+                  className="iconButton"
+                  aria-label={`Decrease ${type.id} capacity`}
+                  disabled={isUpdating || type.capacity <= 0}
+                  onClick={() => onUpdateCapacity(type.id, nextLower)}
+                  title={`Decrease ${type.id} capacity`}
+                >
+                  <Minus size={16} />
+                </button>
+                <label>
+                  <span>Desired</span>
+                  <input
+                    aria-label={`${type.id} desired slots`}
+                    type="number"
+                    min="0"
+                    max="20"
+                    value={type.capacity}
+                    disabled={isUpdating}
+                    onChange={(event) => onUpdateCapacity(type.id, Number(event.target.value))}
+                  />
+                </label>
+                <button
+                  className="iconButton"
+                  aria-label={`Increase ${type.id} capacity`}
+                  disabled={isUpdating || type.capacity >= 20}
+                  onClick={() => onUpdateCapacity(type.id, nextHigher)}
+                  title={`Increase ${type.id} capacity`}
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+            </div>
+
+            <div className="agentTypeStats">
+              <span>{type.capacity} desired</span>
+              <span>{type.occupied} occupied</span>
+              <span>{type.free} free</span>
+              <span>{type.stale} stale</span>
+              <span>{type.configured} configured</span>
+            </div>
+
+            {type.specialties.length > 0 && (
+              <div className="tagRow agentSpecialties">
+                {type.specialties.slice(0, 5).map((specialty) => (
+                  <span key={specialty}>{specialty}</span>
+                ))}
+              </div>
+            )}
+
+            <div className="agentTypeSlots" aria-label={`${type.id} slots`}>
+              {type.slots.map((slot) => (
+                <span
+                  key={slot.id}
+                  className={`agentSlotChip ${slot.active ? "active" : ""} ${slot.available ? "free" : ""} ${slot.stale ? "stale" : ""} ${
+                    slot.withinCapacity ? "" : "outsideCapacity"
+                  }`}
+                  title={slot.currentTask ? slot.currentTask.title : slot.statusLabel}
+                >
+                  {slot.id}
+                  <small>{slot.currentTask ? "occupied" : slot.available ? "free" : slot.statusLabel.toLowerCase()}</small>
+                </span>
+              ))}
+            </div>
+          </article>
+        );
+      })}
     </section>
   );
 }

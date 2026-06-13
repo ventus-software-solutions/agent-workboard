@@ -317,4 +317,95 @@ describe("agent registry derivation", () => {
       statusLabel: "Paused"
     });
   });
+
+  it("summarizes agent type capacity and slot identity state", () => {
+    const registry = buildAgentRegistry({
+      roles,
+      agentSlots: {
+        types: [
+          {
+            id: "implementer-frontend",
+            role: "implementer",
+            capacity: 2,
+            configured: 3,
+            active: 1,
+            available: 1,
+            slotIds: ["implementer-frontend-1", "implementer-frontend-2", "implementer-frontend-3"],
+            specialties: ["frontend", "ui"],
+            defaultWorkMode: "single-task"
+          }
+        ],
+        slots: [
+          {
+            id: "implementer-frontend-1",
+            typeId: "implementer-frontend",
+            role: "implementer",
+            slotNumber: 1,
+            active: true,
+            stale: false,
+            available: false,
+            withinCapacity: true,
+            specialties: ["frontend"],
+            workMode: "single-task"
+          },
+          {
+            id: "implementer-frontend-2",
+            typeId: "implementer-frontend",
+            role: "implementer",
+            slotNumber: 2,
+            active: false,
+            stale: false,
+            available: true,
+            withinCapacity: true,
+            specialties: ["frontend"],
+            workMode: "single-task"
+          },
+          {
+            id: "implementer-frontend-3",
+            typeId: "implementer-frontend",
+            role: "implementer",
+            slotNumber: 3,
+            active: false,
+            stale: true,
+            available: false,
+            withinCapacity: false,
+            specialties: ["frontend"],
+            workMode: "single-task"
+          }
+        ]
+      },
+      tasks: [
+        {
+          id: "task-current",
+          title: "Build capacity controls",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-frontend-1",
+          labels: ["frontend"],
+          updatedAt: "2026-06-12T12:00:00.000Z"
+        }
+      ]
+    });
+
+    expect(registry.typeSummaries.find((type) => type.id === "implementer-frontend")).toMatchObject({
+      id: "implementer-frontend",
+      label: "Implementer Frontend",
+      capacity: 2,
+      configured: 3,
+      active: 1,
+      available: 1,
+      occupied: 1,
+      free: 1,
+      stale: 1,
+      slots: [
+        expect.objectContaining({
+          id: "implementer-frontend-1",
+          statusLabel: "Busy",
+          currentTask: expect.objectContaining({ id: "task-current" })
+        }),
+        expect.objectContaining({ id: "implementer-frontend-2", statusLabel: "Idle" }),
+        expect.objectContaining({ id: "implementer-frontend-3", withinCapacity: false, statusLabel: "Stale" })
+      ]
+    });
+  });
 });
