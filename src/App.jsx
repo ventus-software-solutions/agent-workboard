@@ -108,6 +108,7 @@ export function App() {
     roles: [],
     statuses: [],
     completionTypes: [],
+    workItemTypes: [],
     capabilityStatuses: [],
     integrationStatus: null,
     blockerTypes: [],
@@ -122,7 +123,7 @@ export function App() {
   const [agentSlots, setAgentSlots] = useState({ types: [], slots: [] });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
-  const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
+  const [filters, setFilters] = useState({ q: "", role: "", assignee: "", workItemType: "" });
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
   const [activityFilters, setActivityFilters] = useState({ q: "", type: "" });
   const [staleWork, setStaleWork] = useState([]);
@@ -221,7 +222,8 @@ export function App() {
             projectId: nextProjectId,
             q: filters.q,
             role: filters.role,
-            assignee: filters.assignee
+            assignee: filters.assignee,
+            workItemType: filters.workItemType
           }),
           api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
@@ -356,7 +358,7 @@ export function App() {
     setView("board");
     setWorkspaceTab("tasks");
     setSelectedTaskId("");
-    await refreshTasks({ q: "", role: "", assignee: agentId });
+    await refreshTasks({ q: "", role: "", assignee: agentId, workItemType: "" });
   }
 
   useEffect(() => {
@@ -832,6 +834,7 @@ export function App() {
             onFilterChange={refreshTasks}
             statuses={meta.statuses}
             roles={meta.roles}
+            workItemTypes={meta.workItemTypes}
             tasks={tasks}
             selectedTaskId={selectedTaskId}
             onSelectTask={setSelectedTaskId}
@@ -861,6 +864,7 @@ export function App() {
           task={selectedTask}
           statuses={meta.statuses}
           roles={meta.roles}
+          workItemTypes={meta.workItemTypes}
           completionTypes={meta.completionTypes}
           capabilities={capabilities}
           onClose={() => setSelectedTaskId("")}
@@ -873,6 +877,7 @@ export function App() {
         <CreateTaskDialog
           projectId={selectedProjectId}
           roles={meta.roles}
+          workItemTypes={meta.workItemTypes}
           onClose={() => setIsCreatingTask(false)}
           onCreate={(payload) =>
             mutate(async () => {
@@ -911,6 +916,10 @@ function Stat({ icon: Icon, label, value, sublabel = "", title = "" }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function workItemTypeLabel(workItemTypes, typeId) {
+  return workItemTypes.find((type) => type.id === typeId)?.label || typeId || "Task";
 }
 
 function IntegrationStatusPill({ status }) {
@@ -969,7 +978,7 @@ function WorkspaceTabs({ activeTab, taskCount, coordinationCount, activityCount,
   );
 }
 
-function TasksWorkspace({ filters, onFilterChange, statuses, roles, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+function TasksWorkspace({ filters, onFilterChange, statuses, roles, workItemTypes, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
   return (
     <div className="tasksWorkspace">
       <div className="filterBar">
@@ -989,10 +998,31 @@ function TasksWorkspace({ filters, onFilterChange, statuses, roles, tasks, selec
             onChange={(event) => onFilterChange({ assignee: event.target.value })}
           />
         </label>
+        <label className="agentFilter">
+          <Filter size={16} />
+          <select
+            aria-label="Work item type filter"
+            value={filters.workItemType}
+            onChange={(event) => onFilterChange({ workItemType: event.target.value })}
+          >
+            <option value="">All types</option>
+            {workItemTypes.map((type) => (
+              <option key={type.id} value={type.id}>
+                {type.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {filters.role && (
           <button className="ghostButton" onClick={() => onFilterChange({ role: "" })}>
             <X size={15} />
             <span>{filters.role}</span>
+          </button>
+        )}
+        {filters.workItemType && (
+          <button className="ghostButton" onClick={() => onFilterChange({ workItemType: "" })}>
+            <X size={15} />
+            <span>{workItemTypeLabel(workItemTypes, filters.workItemType)}</span>
           </button>
         )}
       </div>
@@ -1000,6 +1030,7 @@ function TasksWorkspace({ filters, onFilterChange, statuses, roles, tasks, selec
       <KanbanBoard
         statuses={statuses}
         roles={roles}
+        workItemTypes={workItemTypes}
         tasks={tasks}
         selectedTaskId={selectedTaskId}
         onSelectTask={onSelectTask}
@@ -1864,7 +1895,7 @@ function capabilityName(capabilities, capabilityId) {
   return capability?.name || capabilityId;
 }
 
-function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+function KanbanBoard({ statuses, roles, workItemTypes, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
   const [draggedTaskId, setDraggedTaskId] = useState("");
   const [dropStatusId, setDropStatusId] = useState("");
   const dragSession = useRef(null);
@@ -1959,6 +1990,7 @@ function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onM
                   key={task.id}
                   task={task}
                   roles={roles}
+                  workItemTypes={workItemTypes}
                   selected={task.id === selectedTaskId}
                   dragging={task.id === draggedTaskId}
                   onSelect={() => {
@@ -1985,6 +2017,7 @@ function KanbanBoard({ statuses, roles, tasks, selectedTaskId, onSelectTask, onM
 function TaskCard({
   task,
   roles,
+  workItemTypes,
   statuses,
   selected,
   dragging,
@@ -1993,6 +2026,7 @@ function TaskCard({
   onMove
 }) {
   const role = roles.find((candidate) => candidate.id === task.role);
+  const workItemType = workItemTypes.find((candidate) => candidate.id === task.workItemType) || workItemTypes.find((candidate) => candidate.id === "task");
   const Icon = roleIcons[task.role] || Bot;
   const statusIndex = statuses.findIndex((status) => status.id === task.status);
   const currentStatus = statuses[statusIndex];
@@ -2007,6 +2041,11 @@ function TaskCard({
     >
       <div className="taskCardTop">
         <span className={`priorityPill ${priorityClass[task.priority]}`}>{task.priority}</span>
+        {workItemType && (
+          <span className={`workItemTypePill ${workItemType.claimable ? "" : "container"}`}>
+            {workItemType.label}
+          </span>
+        )}
         {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
         {workflowCue && <span className="workflowPill">{workflowCue}</span>}
         {task.status === "done" && task.completion && (
@@ -2054,7 +2093,7 @@ function TaskCard({
   );
 }
 
-function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onClose, onMutate, onReload }) {
+function TaskDrawer({ task, statuses, roles, workItemTypes, completionTypes, capabilities, onClose, onMutate, onReload }) {
   const [comment, setComment] = useState("");
   const [drawerError, setDrawerError] = useState(null);
   const [retryAction, setRetryAction] = useState(null);
@@ -2224,6 +2263,20 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
             {roles.map((role) => (
               <option key={role.id} value={role.id}>
                 {role.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Type
+          <select
+            aria-label="Work item type"
+            value={draft.workItemType}
+            onChange={(event) => updateDraft({ workItemType: event.target.value })}
+          >
+            {workItemTypes.map((type) => (
+              <option key={type.id} value={type.id}>
+                {type.label}
               </option>
             ))}
           </select>
@@ -2466,6 +2519,7 @@ function taskDraftFromTask(task) {
     description: task.description,
     assignee: task.assignee,
     role: task.role,
+    workItemType: task.workItemType || "task",
     priority: task.priority,
     labels: task.labels.join(", ")
   };
@@ -2474,6 +2528,7 @@ function taskDraftFromTask(task) {
 function taskPayloadFromDraft(draft) {
   return {
     ...draft,
+    workItemType: draft.workItemType || "task",
     labels: labelsFromText(draft.labels)
   };
 }
@@ -2653,12 +2708,13 @@ function CompletionPanel({ task, completionTypes, capabilities, draft, setDraft,
   );
 }
 
-function CreateTaskDialog({ projectId, roles, onClose, onCreate }) {
+function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }) {
   const [draft, setDraft] = useState({
     projectId,
     title: "",
     description: "",
     role: "implementer",
+    workItemType: "task",
     priority: "normal",
     assignee: "",
     labels: ""
@@ -2677,6 +2733,20 @@ function CreateTaskDialog({ projectId, roles, onClose, onCreate }) {
             {roles.map((role) => (
               <option key={role.id} value={role.id}>
                 {role.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Type
+          <select
+            aria-label="Work item type"
+            value={draft.workItemType}
+            onChange={(event) => setDraft({ ...draft, workItemType: event.target.value })}
+          >
+            {workItemTypes.map((type) => (
+              <option key={type.id} value={type.id}>
+                {type.label}
               </option>
             ))}
           </select>
