@@ -164,4 +164,6 @@ Example local MCP command:
 
 This project is prepared for open-source release under the MIT license. Before publishing, the next useful pass is a security review for auth, project isolation, and hosted/team deployment assumptions.
 
+For the first source release process, use the [v0.1.0 release checklist](docs/release-v0.1.0.md).
+
 See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary, pre-OSS-launch requirements, and later hosted/team candidates.
