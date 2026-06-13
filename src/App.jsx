@@ -1308,6 +1308,7 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
     mentions: "",
     body: ""
   });
+  const activeFilterCount = [filters.kind, filters.agentId, filters.taskId].filter(Boolean).length;
 
   async function submitTalk() {
     await onPost(draft);
@@ -1321,66 +1322,108 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
           <div className="eyebrow">Agent Talks</div>
           <h3>Coordination</h3>
         </div>
-        <div className="talkFilters">
-          <select value={filters.kind} onChange={(event) => onFilterChange({ kind: event.target.value })}>
-            <option value="">All kinds</option>
-            {talkKinds.map((kind) => (
-              <option key={kind} value={kind}>
-                {kind}
-              </option>
-            ))}
-          </select>
-          <input
-            value={filters.agentId}
-            placeholder="Agent"
-            onChange={(event) => onFilterChange({ agentId: event.target.value })}
-          />
-          <select value={filters.taskId} onChange={(event) => onFilterChange({ taskId: event.target.value })}>
-            <option value="">All tasks</option>
-            {tasks.map((task) => (
-              <option key={task.id} value={task.id}>
-                {task.title}
-              </option>
-            ))}
-          </select>
+        <div className="talksHeaderMeta">
+          <span>{talks.length} shown</span>
+          {activeFilterCount > 0 && (
+            <button className="ghostButton" onClick={() => onFilterChange({ kind: "", agentId: "", taskId: "" })}>
+              <Filter size={15} />
+              <span>Clear</span>
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="talkComposer">
-        <input
-          value={draft.authorAgentId}
-          onChange={(event) => setDraft({ ...draft, authorAgentId: event.target.value })}
-          placeholder="Author"
-        />
-        <select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })}>
-          {talkKinds.map((kind) => (
-            <option key={kind} value={kind}>
-              {kind}
-            </option>
-          ))}
-        </select>
-        <select value={draft.relatedTaskId} onChange={(event) => setDraft({ ...draft, relatedTaskId: event.target.value })}>
-          <option value="">No task</option>
-          {tasks.map((task) => (
-            <option key={task.id} value={task.id}>
-              {task.title}
-            </option>
-          ))}
-        </select>
-        <input
-          value={draft.mentions}
-          onChange={(event) => setDraft({ ...draft, mentions: event.target.value })}
-          placeholder="Mentions"
-        />
-        <textarea
-          value={draft.body}
-          onChange={(event) => setDraft({ ...draft, body: event.target.value })}
-          placeholder="Message"
-        />
-        <button className="primaryButton" onClick={submitTalk} disabled={!draft.authorAgentId.trim() || !draft.body.trim()}>
-          <Send size={16} />
-          <span>Post</span>
-        </button>
+      <div className="talksControlDeck">
+        <div className="talkFilterPanel">
+          <div className="sectionLabel">Filters</div>
+          <div className="talkFilters">
+            <select
+              aria-label="Talk kind filter"
+              value={filters.kind}
+              onChange={(event) => onFilterChange({ kind: event.target.value })}
+            >
+              <option value="">All kinds</option>
+              {talkKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Talk agent filter"
+              value={filters.agentId}
+              placeholder="Agent"
+              onChange={(event) => onFilterChange({ agentId: event.target.value })}
+            />
+            <select
+              aria-label="Talk task filter"
+              value={filters.taskId}
+              onChange={(event) => onFilterChange({ taskId: event.target.value })}
+            >
+              <option value="">All tasks</option>
+              {tasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="talkComposerPanel">
+          <div className="talkComposerHeader">
+            <div className="sectionLabel">Message</div>
+          </div>
+          <div className="talkComposer">
+            <input
+              aria-label="Talk author"
+              value={draft.authorAgentId}
+              onChange={(event) => setDraft({ ...draft, authorAgentId: event.target.value })}
+              placeholder="Author"
+            />
+            <select aria-label="Talk kind" value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })}>
+              {talkKinds.map((kind) => (
+                <option key={kind} value={kind}>
+                  {kind}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Related talk task"
+              value={draft.relatedTaskId}
+              onChange={(event) => setDraft({ ...draft, relatedTaskId: event.target.value })}
+            >
+              <option value="">No task</option>
+              {tasks.map((task) => (
+                <option key={task.id} value={task.id}>
+                  {task.title}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Talk mentions"
+              value={draft.mentions}
+              onChange={(event) => setDraft({ ...draft, mentions: event.target.value })}
+              placeholder="Mentions"
+            />
+            <textarea
+              aria-label="Talk message"
+              value={draft.body}
+              onChange={(event) => setDraft({ ...draft, body: event.target.value })}
+              placeholder="Message"
+            />
+          </div>
+          <div className="talkComposerActions">
+            <button
+              className="primaryButton"
+              onClick={submitTalk}
+              disabled={!draft.authorAgentId.trim() || !draft.body.trim()}
+            >
+              <Send size={16} />
+              <span>Post</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="talkList">
