@@ -39,6 +39,18 @@ const ROLE_RULES = {
 
 const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
 
+const AUTONOMOUS_GO_AHEAD = {
+  status: "claimed-task-implicit-go-ahead",
+  ordinaryRule:
+    "For an ordinary ready task, a successful claim plus a visible plan is the go-ahead to implement, test, review, or groom without waiting for a separate human yes.",
+  safetyRule:
+    "Still verify assumptions first; wait for explicit approval before destructive changes, scope changes, ambiguous requirements, cross-project overrides, or tasks marked as needing operator approval.",
+  approvalQueueRule:
+    "When explicit approval is needed, use the operator approval queue or mark the task blocked with the exact decision needed instead of silently parking in progress.",
+  migrationGuidance:
+    "For active tasks already waiting only for ordinary go-ahead, post an acknowledgement citing this policy and continue; if the work is ambiguous or approval-marked, convert the wait into an operator approval request or blocked status."
+};
+
 const SPECIALTY_KEYWORDS = [
   ["frontend", ["frontend", "ui", "ux", "react", "browser", "design"]],
   ["backend", ["backend", "api", "server", "storage", "data"]],
@@ -84,6 +96,7 @@ export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
     statuses,
     integrationStatus,
     worktree: worktreeDiscipline(undefined, integrationStatus),
+    autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
     workflow: sharedWorkflow()
   };
 }
@@ -150,6 +163,7 @@ export function buildAgentDoc({
     ],
     integrationStatus,
     worktree: worktreeDiscipline(agentId, integrationStatus),
+    autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
     workflow,
     accepts: rule.accepts,
     outputs: rule.outputs,
@@ -177,6 +191,8 @@ export function buildAgentDoc({
       "Do not edit the main checkout directly for implementation work. Use a task branch/worktree first.",
       "Do not claim more than one task at a time unless the operator explicitly asks.",
       ...(isPlannerDecomposer ? ["Do not implement code from decomposition container tasks; create or propose child tasks and hand the parent off with evidence."] : []),
+      "Do not park an ordinary claimed task in progress waiting for a generic go-ahead; request operator approval or block the task when explicit approval is actually needed.",
+      "Wait for explicit approval before destructive changes, scope changes, ambiguous requirements, cross-project overrides, or tasks marked as needing operator approval.",
       "Post a short progress comment before long work.",
       "Move blocked tasks to blocked with the exact decision or dependency needed.",
       "Do not move a task to done without a completion record.",
@@ -229,6 +245,13 @@ export function renderAgentDocMarkdown(doc) {
       : []),
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
+    "",
+    "## Autonomous Go-Ahead",
+    `Status: \`${doc.autonomousGoAhead.status}\`.`,
+    doc.autonomousGoAhead.ordinaryRule,
+    doc.autonomousGoAhead.safetyRule,
+    doc.autonomousGoAhead.approvalQueueRule,
+    doc.autonomousGoAhead.migrationGuidance,
     "",
     "## Agent Talks",
     `Use project-scoped Agent Talks for coordination: ${doc.api.talks}.`,
@@ -404,6 +427,7 @@ function sharedWorkflow() {
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",
+    "For ordinary claimed tasks, that plan is your go-ahead to proceed; do not wait for a separate human yes unless the task needs explicit operator approval.",
     "Post an Agent Talks message for cross-task coordination, blocker broadcasts, review requests, handoffs, questions, or decisions.",
     "Do implementation work in the task worktree, not in the shared main checkout.",
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",

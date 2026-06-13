@@ -12,6 +12,14 @@ Default dogfood project: `DOGFOOD`.
 
 Core rule: claim exactly one task, post visible progress, attach or comment evidence, then move the task to the correct next status before taking another task.
 
+## Autonomous Go-Ahead
+
+For ordinary Agent Workboard tasks, a successful claim of a ready task plus a visible plan comment is the go-ahead to proceed. Do not leave a normal claimed task in `in_progress` waiting for a generic human "yes"; continue after the plan, keep progress visible, and post evidence.
+
+Safety still wins. Verify assumptions before acting, and wait for explicit operator approval before destructive changes, scope changes, ambiguous requirements, cross-project overrides, or tasks marked as needing approval. When explicit approval is needed, use the operator approval queue or move the task to `blocked` with the exact decision needed.
+
+For active tasks that are already waiting only for ordinary go-ahead, post an acknowledgement citing this policy and continue. If the work is ambiguous or approval-marked, convert the wait into an operator approval request or a blocked task instead.
+
 Preferred spawn language is an agent type such as `implementer`, `reviewer`, `tester`, or `pm`, not a hand-numbered worker name. Slot acquisition is the target workflow: a generic worker should claim the next available slot like `implementer-04` before doing implementation work. Until `/api/bootstrap` or `acquire_agent_slot` exists, the operator may still assign an explicit temporary id.
 
 ## Reviewer Merge Responsibility

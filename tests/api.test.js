@@ -90,6 +90,24 @@ describe("Agent Workboard API", () => {
     expect(pmDoc.body.agent.worktree.join("\n")).toContain("git worktree add");
     expect(pmDoc.body.agent.cautions.join("\n")).toContain("Do not edit the main checkout directly");
 
+    for (const agentId of ["implementer", "tester", "reviewer", "pm"]) {
+      const agentDoc = await request(app).get(`/api/agent-docs/${agentId}`).expect(200);
+      expect(agentDoc.body.agent.autonomousGoAhead).toMatchObject({
+        status: "claimed-task-implicit-go-ahead",
+        ordinaryRule: expect.stringContaining("successful claim plus a visible plan is the go-ahead"),
+        safetyRule: expect.stringContaining("destructive changes"),
+        approvalQueueRule: expect.stringContaining("operator approval queue"),
+        migrationGuidance: expect.stringContaining("already waiting only for ordinary go-ahead")
+      });
+
+      const agentMarkdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
+      expect(agentMarkdown.text).toContain("## Autonomous Go-Ahead");
+      expect(agentMarkdown.text).toContain("successful claim plus a visible plan is the go-ahead");
+      expect(agentMarkdown.text).toContain("destructive changes");
+      expect(agentMarkdown.text).toContain("operator approval queue");
+      expect(agentMarkdown.text).toContain("already waiting only for ordinary go-ahead");
+    }
+
     const mcpDoc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
     expect(mcpDoc.body.agent.role).toBe("implementer");
     expect(mcpDoc.body.agent.specialties).toContain("mcp");
