@@ -3,17 +3,26 @@ import { execFileSync } from "node:child_process";
 const DEFAULT_LOCAL_REF = "main";
 const DEFAULT_REMOTE_REF = "origin/main";
 
-export function getIntegrationStatus({ cwd = process.cwd(), localRef = DEFAULT_LOCAL_REF, remoteRef = DEFAULT_REMOTE_REF } = {}) {
+export function getIntegrationStatus({ cwd, localRef, remoteRef } = {}) {
+  const config = readIntegrationStatusConfig();
   return buildIntegrationStatus({
-    localRef,
-    remoteRef,
+    localRef: localRef || config.localRef,
+    remoteRef: remoteRef || config.remoteRef,
     runGit: (args) =>
       execFileSync("git", args, {
-        cwd,
+        cwd: cwd || config.cwd,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "pipe"]
       })
   });
+}
+
+export function readIntegrationStatusConfig(env = runtimeEnv(), fallbackCwd = runtimeCwd()) {
+  return {
+    cwd: normalizeText(env.WORKBOARD_REPO_DIR) || fallbackCwd,
+    localRef: normalizeText(env.WORKBOARD_LOCAL_REF) || DEFAULT_LOCAL_REF,
+    remoteRef: normalizeText(env.WORKBOARD_REMOTE_REF) || DEFAULT_REMOTE_REF
+  };
 }
 
 export function buildIntegrationStatus({
@@ -159,4 +168,16 @@ function recoveryActions({ pushDebt, sourceOfTruth, localRef, remoteRef }) {
 
 function shortSha(value) {
   return value ? value.slice(0, 12) : "";
+}
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function runtimeEnv() {
+  return typeof process === "undefined" ? {} : process.env;
+}
+
+function runtimeCwd() {
+  return typeof process === "undefined" ? "." : process.cwd();
 }

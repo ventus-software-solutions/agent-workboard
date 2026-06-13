@@ -11,13 +11,16 @@ FROM node:22-alpine
 ENV NODE_ENV=production
 ENV PORT=8080
 ENV WORKBOARD_DATA_DIR=/data
+ENV WORKBOARD_REPO_DIR=/workspace
 
 WORKDIR /app
 COPY package*.json ./
+RUN apk add --no-cache git \
+  && git config --system --add safe.directory /workspace
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 
-VOLUME ["/data"]
+VOLUME ["/data", "/workspace"]
 EXPOSE 8080
 CMD ["npm", "start"]
