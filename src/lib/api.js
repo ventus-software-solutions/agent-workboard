@@ -40,6 +40,8 @@ export const api = {
   meta: () => request("/api/meta"),
   integrationStatus: () => request("/api/integration-status"),
   agentSlots: () => request("/api/agent-slots"),
+  updateAgentType: (typeId, patch) =>
+    request(`/api/agent-types/${encodeURIComponent(typeId)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   updateAgentSlot: (agentId, patch) =>
     request(`/api/agent-slots/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   bootstrap: (input) => request("/api/bootstrap", { method: "POST", body: JSON.stringify(input) }),

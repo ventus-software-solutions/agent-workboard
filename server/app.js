@@ -88,6 +88,14 @@ export function createApp({
     }
   });
 
+  app.patch("/api/agent-types/:typeId", async (req, res, next) => {
+    try {
+      res.json({ type: await store.updateAgentType(req.params.typeId, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/integration-status", (_req, res, next) => {
     try {
       res.json({ integrationStatus: integrationStatus() });

@@ -77,6 +77,7 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
   const agents = [...agentsById.values()].map(finalizeAgent).sort(compareAgents);
   const configuredAgents = agents.filter(isConfiguredAgent);
   const historicalAgents = agents.filter(isHistoricalAssignee);
+  const typeSummaries = types.map((type) => summarizeAgentType(type, configuredAgents, roleById)).sort(compareTypeSummaries);
   const roleOrder = orderedRoles(roles, agents);
   const groups = roleOrder.map((role) => {
     const groupAgents = agents.filter((agent) => agent.role === role);
@@ -99,6 +100,7 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
 
   return {
     agents,
+    typeSummaries,
     groups,
     totalAgents: agents.length,
     configuredAgentCount: configuredAgents.length,
@@ -107,6 +109,35 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     blockedAgents: agents.filter((agent) => agent.status === "blocked").length,
     idleAgents: agents.filter((agent) => agent.status === "idle").length
   };
+}
+
+function summarizeAgentType(type, agents, roleById) {
+  const slots = agents.filter((agent) => agent.source === "slot" && agent.typeId === type.id).sort((a, b) => a.slotNumber - b.slotNumber);
+  const active = Number.isInteger(type.active) ? type.active : slots.filter((agent) => agent.active).length;
+  const available = Number.isInteger(type.available) ? type.available : slots.filter((agent) => agent.available).length;
+  const configured = Number.isInteger(type.configured) ? type.configured : slots.length;
+  return {
+    id: type.id,
+    label: titleize(type.id),
+    role: type.role,
+    roleLabel: roleById.get(type.role)?.label || titleize(type.role),
+    capacity: Number.isInteger(type.capacity) ? type.capacity : configured,
+    configured,
+    active,
+    occupied: Number.isInteger(type.occupied) ? type.occupied : active,
+    available,
+    free: Number.isInteger(type.free) ? type.free : available,
+    stale: Number.isInteger(type.stale) ? type.stale : slots.filter((agent) => agent.stale).length,
+    paused: Number.isInteger(type.paused) ? type.paused : slots.filter((agent) => agent.paused).length,
+    specialties: normalizeList(type.specialties),
+    defaultWorkMode: type.defaultWorkMode || "",
+    slotIds: normalizeList(type.slotIds),
+    slots
+  };
+}
+
+function compareTypeSummaries(left, right) {
+  return left.role.localeCompare(right.role) || left.id.localeCompare(right.id);
 }
 
 function isConfiguredAgent(agent) {
@@ -141,6 +172,7 @@ function finalizeAgent(agent) {
     paused: Boolean(agent.slot?.paused),
     stale: Boolean(agent.slot?.stale),
     available: Boolean(agent.slot?.available),
+    withinCapacity: agent.slot?.withinCapacity !== false,
     currentTask,
     assignedTasks: openTasks,
     assignedTaskCount: assignedTasks.length,
