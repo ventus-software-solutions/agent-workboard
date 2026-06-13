@@ -508,6 +508,7 @@ test("refreshes an open board after external task changes without discarding dra
   const patchResponse = await page.request.patch(`${baseURL}/api/tasks/${created.id}`, {
     data: {
       actor: "external-client",
+      expectedRevision: created.revision,
       description: "Changed by a second client while the drawer draft is dirty."
     }
   });

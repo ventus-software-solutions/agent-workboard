@@ -427,15 +427,17 @@ export function App() {
     try {
       await runMutation(async () => {
         const body = note || defaultNotes[action];
+        let currentTask = item.task;
         if (body) {
-          await api.addComment(item.task.id, { author: "operator-ui", body });
+          const response = await api.addComment(item.task.id, { author: "operator-ui", body });
+          currentTask = response.task || currentTask;
         }
         if (action === "requeue") {
           await api.updateTask(item.task.id, {
             status: "ready",
             assignee: "",
             actor: "operator-ui",
-            expectedRevision: item.task.revision
+            expectedRevision: currentTask.revision
           });
         } else if (action === "block") {
           await api.updateTask(item.task.id, { status: "blocked", actor: "operator-ui" });

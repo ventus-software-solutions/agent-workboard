@@ -1255,6 +1255,19 @@ export class WorkboardStore {
       : task.status;
     let nextCompletion = null;
 
+    if ("title" in patch) {
+      normalizeTaskTitle(patch.title);
+    }
+    if ("priority" in patch) {
+      readTaskEnumField(patch, "priority", PRIORITY_IDS, task.priority);
+    }
+    if ("role" in patch) {
+      readTaskEnumField(patch, "role", ROLE_IDS, task.role);
+    }
+    if ("labels" in patch) {
+      normalizeTaskLabels(patch.labels, { defaultValue: task.labels });
+    }
+
     if (requiresRevision) {
       if (!expectedRevision.provided) {
         throw httpError("Task full edits require expectedRevision.", 400, {
