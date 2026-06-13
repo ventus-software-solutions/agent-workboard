@@ -282,7 +282,7 @@ describe("WorkboardStore", () => {
     const project = await store.createProject({ name: "Release Train" });
     const task = await store.createTask({ projectId: project.id, title: "Ship notes", role: "pm" });
 
-    await store.updateTask(task.id, { status: "review", assignee: "review-agent" }, "pm-agent");
+    await store.updateTask(task.id, { status: "review", assignee: "review-agent", expectedRevision: task.revision }, "pm-agent");
     await store.addComment(task.id, { author: "review-agent", body: "Needs one acceptance check." });
 
     const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
@@ -292,6 +292,61 @@ describe("WorkboardStore", () => {
     expect(savedTask.assignee).toBe("review-agent");
     expect(savedTask.comments[0]).toMatchObject({ author: "review-agent" });
     expect(savedTask.activity[0].type).toBe("commented");
+  });
+
+  it("rejects stale full task edits and records the rejection reason", async () => {
+    const project = await store.createProject({ name: "Revision Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Original title",
+      role: "implementer",
+      status: "ready",
+      assignee: "implementer-backend-1"
+    });
+    const startingRevision = task.revision;
+
+    const firstSave = await store.updateTask(
+      task.id,
+      { title: "Client A title", expectedRevision: startingRevision },
+      "operator-a"
+    );
+
+    expect(firstSave.revision).toBe(startingRevision + 1);
+
+    await expect(
+      store.updateTask(task.id, { title: "Client B title", expectedRevision: startingRevision }, "operator-b")
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        taskId: task.id,
+        expectedRevision: startingRevision,
+        currentRevision: firstSave.revision
+      }
+    });
+
+    const current = store.getTask(task.id);
+    expect(current).toMatchObject({
+      title: "Client A title",
+      revision: firstSave.revision
+    });
+    expect(current.activity[0]).toMatchObject({
+      actor: "operator-b",
+      type: "update.rejected"
+    });
+    expect(current.activity[0].message).toMatch(/expected revision 1, found 2/i);
+  });
+
+  it("requires an expected revision for full task edits", async () => {
+    const project = await store.createProject({ name: "Revision Required Project" });
+    const task = await store.createTask({ projectId: project.id, title: "Needs guarded edits" });
+
+    await expect(store.updateTask(task.id, { description: "Unguarded drawer save" }, "operator-a")).rejects.toMatchObject({
+      status: 400,
+      details: {
+        taskId: task.id,
+        currentRevision: task.revision
+      }
+    });
   });
 
   it("posts and filters project-scoped Agent Talks messages", async () => {
@@ -367,7 +422,7 @@ describe("WorkboardStore", () => {
     });
 
     await expect(
-      store.updateTask(task.id, { status: "done", title: "Should not mutate" }, "reviewer-01")
+      store.updateTask(task.id, { status: "done", title: "Should not mutate", expectedRevision: task.revision }, "reviewer-01")
     ).rejects.toMatchObject({ status: 400 });
     expect(store.getTask(task.id)).toMatchObject({
       status: "review",
@@ -412,6 +467,7 @@ describe("WorkboardStore", () => {
         {
           title: "Mutated through failed completion",
           status: "done",
+          expectedRevision: task.revision,
           completion: {
             completionType: "merged"
           }

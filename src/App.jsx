@@ -431,7 +431,12 @@ export function App() {
           await api.addComment(item.task.id, { author: "operator-ui", body });
         }
         if (action === "requeue") {
-          await api.updateTask(item.task.id, { status: "ready", assignee: "", actor: "operator-ui" });
+          await api.updateTask(item.task.id, {
+            status: "ready",
+            assignee: "",
+            actor: "operator-ui",
+            expectedRevision: item.task.revision
+          });
         } else if (action === "block") {
           await api.updateTask(item.task.id, { status: "blocked", actor: "operator-ui" });
         } else if (action === "acknowledge") {
@@ -1572,15 +1577,15 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
   const [liveUpdateNotice, setLiveUpdateNotice] = useState(false);
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completionDraft, setCompletionDraft] = useState(() => defaultCompletionDraft(task));
-  const taskVersionRef = useRef({ id: task.id, updatedAt: task.updatedAt });
+  const taskVersionRef = useRef({ id: task.id, revision: task.revision, updatedAt: task.updatedAt });
 
   useEffect(() => {
     const previous = taskVersionRef.current;
     const isNewTask = previous.id !== task.id;
-    const changedElsewhere = previous.updatedAt !== task.updatedAt;
+    const changedElsewhere = previous.revision !== task.revision || previous.updatedAt !== task.updatedAt;
     if (!isNewTask && !changedElsewhere) return;
 
-    taskVersionRef.current = { id: task.id, updatedAt: task.updatedAt };
+    taskVersionRef.current = { id: task.id, revision: task.revision, updatedAt: task.updatedAt };
     if (!isNewTask && hasDraftEdits) {
       setLiveUpdateNotice(true);
       return;
@@ -1593,7 +1598,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
     setRetryAction(null);
     setHasDraftEdits(false);
     setLiveUpdateNotice(false);
-  }, [task.id, task.updatedAt, hasDraftEdits]);
+  }, [task.id, task.revision, task.updatedAt, hasDraftEdits]);
 
   function updateDraft(patch) {
     setHasDraftEdits(true);
@@ -1638,6 +1643,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
       await api.updateTask(task.id, {
         status: "done",
         actor: "operator-ui",
+        expectedRevision: task.revision,
         completion: completionPayload(completionDraft)
       });
       setHasDraftEdits(false);
@@ -1757,7 +1763,8 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
             runDrawerMutation(async () => {
               await api.updateTask(task.id, {
                 ...taskPayloadFromDraft(draft),
-                actor: "operator-ui"
+                actor: "operator-ui",
+                expectedRevision: task.revision
               });
               setHasDraftEdits(false);
               setLiveUpdateNotice(false);

@@ -62,6 +62,7 @@ const ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const PRIORITY_IDS = new Set(PRIORITIES);
 const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
 const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
+const FULL_TASK_EDIT_FIELDS = ["title", "description", "assignee", "priority", "role", "labels"];
 
 const DEFAULT_CAPABILITY_SEEDS = [
   {
@@ -347,6 +348,7 @@ function defaultData() {
         completion: null,
         createdAt,
         updatedAt: createdAt,
+        revision: 1,
         comments: [],
         attachments: [],
         activity: [
@@ -373,6 +375,7 @@ function defaultData() {
         completion: null,
         createdAt,
         updatedAt: createdAt,
+        revision: 1,
         comments: [],
         attachments: [],
         activity: [
@@ -532,6 +535,10 @@ export class WorkboardStore {
       }
       if (!Array.isArray(task.labels)) {
         task.labels = [];
+        migrated = true;
+      }
+      if (!isValidTaskRevision(task.revision)) {
+        task.revision = 1;
         migrated = true;
       }
 
@@ -1142,6 +1149,7 @@ export class WorkboardStore {
         attachments: task.attachments,
         completion: task.completion,
         activity: task.activity,
+        revision: task.revision,
         updatedAt: task.updatedAt
       }))
     };
@@ -1196,6 +1204,7 @@ export class WorkboardStore {
       completion,
       createdAt,
       updatedAt: createdAt,
+      revision: 1,
       comments: [],
       attachments: [],
       activity: [
@@ -1233,15 +1242,37 @@ export class WorkboardStore {
   }
 
   async updateTask(taskId, patch, actor = "operator") {
+    patch = normalizeObject(patch);
     const task = this.getTask(taskId);
     const changes = [];
     const actorId = normalizeText(actor) || "operator";
+    const expectedRevision = readExpectedTaskRevision(patch);
+    const requiresRevision = isFullTaskEditPatch(patch) || expectedRevision.provided;
     const { hasCompletion: hasCompletionPatch, completionInput: completionPatch } = readCompletionInput(patch);
     let completionAppliedDuringStatusChange = false;
     const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status")
       ? readTaskEnumField(patch, "status", STATUS_IDS, task.status)
       : task.status;
     let nextCompletion = null;
+
+    if (requiresRevision) {
+      if (!expectedRevision.provided) {
+        throw httpError("Task full edits require expectedRevision.", 400, {
+          taskId: task.id,
+          currentRevision: task.revision
+        });
+      }
+      if (!isValidTaskRevision(expectedRevision.value)) {
+        throw httpError("Task expectedRevision must be a positive integer.", 400, {
+          taskId: task.id,
+          currentRevision: task.revision
+        });
+      }
+      if (expectedRevision.value !== task.revision) {
+        await this.recordStaleTaskUpdateRejection(task, actorId, expectedRevision.value);
+        throw staleTaskRevisionError(task, expectedRevision.value);
+      }
+    }
 
     if (task.status !== requestedStatus && requestedStatus === "done" && !hasCompletionPatch) {
       throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
@@ -1325,6 +1356,7 @@ export class WorkboardStore {
       return task;
     }
 
+    task.revision = nextTaskRevision(task);
     task.updatedAt = now();
     task.activity.unshift({
       id: id("event"),
@@ -1341,6 +1373,20 @@ export class WorkboardStore {
     }
     await this.save();
     return task;
+  }
+
+  async recordStaleTaskUpdateRejection(task, actorId, expectedRevision) {
+    const currentRevision = task.revision;
+    const rejectedAt = now();
+    task.updatedAt = rejectedAt;
+    task.activity.unshift({
+      id: id("event"),
+      actor: actorId,
+      type: "update.rejected",
+      message: `Rejected stale full task update: expected revision ${expectedRevision}, found ${currentRevision}.`,
+      createdAt: rejectedAt
+    });
+    await this.save();
   }
 
   async claimTask(taskId, input) {
@@ -1430,6 +1476,7 @@ export class WorkboardStore {
       const previousAssignee = task.assignee;
       task.status = "in_progress";
       task.assignee = assignee;
+      task.revision = nextTaskRevision(task);
       task.updatedAt = claimedAt;
       task.activity.unshift({
         id: id("event"),
@@ -1467,6 +1514,7 @@ export class WorkboardStore {
       message: "Added a comment.",
       createdAt
     });
+    task.revision = nextTaskRevision(task);
     task.updatedAt = createdAt;
     await this.save();
     return comment;
@@ -1504,6 +1552,7 @@ export class WorkboardStore {
       message: `Attached ${filename}.`,
       createdAt
     });
+    task.revision = nextTaskRevision(task);
     task.updatedAt = createdAt;
     await this.save();
     return attachment;
@@ -2467,6 +2516,46 @@ function activeTaskClaimError(agentId, activeTask, workMode) {
       }
     }
   );
+}
+
+function isFullTaskEditPatch(patch) {
+  return FULL_TASK_EDIT_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+}
+
+function readExpectedTaskRevision(patch) {
+  if (Object.prototype.hasOwnProperty.call(patch, "expectedRevision")) {
+    return { provided: true, value: normalizeTaskRevisionInput(patch.expectedRevision) };
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, "revision")) {
+    return { provided: true, value: normalizeTaskRevisionInput(patch.revision) };
+  }
+  return { provided: false, value: null };
+}
+
+function normalizeTaskRevisionInput(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return Number(value.trim());
+  }
+  return NaN;
+}
+
+function isValidTaskRevision(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+function nextTaskRevision(task) {
+  return (isValidTaskRevision(task.revision) ? task.revision : 1) + 1;
+}
+
+function staleTaskRevisionError(task, expectedRevision) {
+  return httpError("Task was changed by another client. Reload before saving full edits.", 409, {
+    taskId: task.id,
+    expectedRevision,
+    currentRevision: task.revision,
+    actualRevision: task.revision,
+    reason: "stale_task_revision"
+  });
 }
 
 function buildSelection(reason, task, agentId) {
