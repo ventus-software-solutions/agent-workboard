@@ -102,6 +102,97 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("rejects invalid task create and update payloads with readable 400 errors", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Task Validation API", key: "TVAPI" }).expect(201)).body
+      .project;
+
+    const invalidCreate = await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Invalid API task",
+        status: "nearly_ready"
+      })
+      .expect(400);
+    expect(invalidCreate.body.error.message).toMatch(/status/i);
+
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Invalid API labels",
+        labels: "backend"
+      })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/labels/i);
+      });
+
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Too many API labels",
+        labels: Array.from({ length: 13 }, (_item, index) => `label-${index}`)
+      })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/labels/i);
+      });
+
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Valid API task",
+          status: "ready",
+          priority: "normal",
+          role: "implementer",
+          labels: ["backend"]
+        })
+        .expect(201)
+    ).body.task;
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "invalid", actor: "tester" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/status/i);
+      });
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ priority: "eventually", actor: "tester" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/priority/i);
+      });
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ role: "wizard", actor: "tester" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/role/i);
+      });
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ title: "", actor: "tester" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toMatch(/title/i);
+      });
+
+    const unchanged = await request(app).get(`/api/tasks/${task.id}`).expect(200);
+    expect(unchanged.body.task).toMatchObject({
+      title: "Valid API task",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      labels: ["backend"]
+    });
+  });
+
   it("posts and lists project Agent Talks through the API", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Talks API Project" }).expect(201)).body.project;
     const task = (

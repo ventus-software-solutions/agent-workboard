@@ -728,7 +728,7 @@ export function App() {
           onClose={() => setIsCreatingTask(false)}
           onCreate={(payload) =>
             mutate(async () => {
-              const result = await api.createTask(payload);
+              const result = await api.createTask(taskPayloadFromDraft(payload));
               setSelectedTaskId(result.task.id);
               setIsCreatingTask(false);
             })
@@ -1756,8 +1756,7 @@ function TaskDrawer({ task, statuses, roles, completionTypes, capabilities, onCl
           onClick={() =>
             runDrawerMutation(async () => {
               await api.updateTask(task.id, {
-                ...draft,
-                labels: draft.labels,
+                ...taskPayloadFromDraft(draft),
                 actor: "operator-ui"
               });
               setHasDraftEdits(false);
@@ -1889,6 +1888,20 @@ function taskDraftFromTask(task) {
     priority: task.priority,
     labels: task.labels.join(", ")
   };
+}
+
+function taskPayloadFromDraft(draft) {
+  return {
+    ...draft,
+    labels: labelsFromText(draft.labels)
+  };
+}
+
+function labelsFromText(value) {
+  return String(value || "")
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean);
 }
 
 function defaultCompletionDraft(task) {

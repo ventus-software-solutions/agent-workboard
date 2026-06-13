@@ -214,6 +214,50 @@ test("labels task status controls as actions", async ({ page }) => {
   await expect(drawer.locator(".statusRow").getByRole("button", { name: "Complete", exact: true })).toBeVisible();
 });
 
+test("saves comma-separated drawer labels as task label arrays", async ({ page }) => {
+  const projectName = uniqueName("E2E Drawer Labels Project");
+  const projectKey = uniqueKey("LBL");
+  const taskTitle = uniqueName("Normalize drawer labels");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: taskTitle,
+      status: "ready",
+      role: "implementer",
+      priority: "normal",
+      labels: ["initial"]
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const { task } = await taskResponse.json();
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await taskCard(page, taskTitle).click();
+  const drawer = page.locator(".drawer");
+  await drawer.getByLabel("Labels").fill("alpha, beta, , gamma");
+  await drawer.getByRole("button", { name: "Save" }).click();
+  await expect(drawer.locator(".saveErrorPanel")).toHaveCount(0);
+
+  await expect
+    .poll(async () => {
+      const updatedResponse = await page.request.get(`${apiBaseURL}/api/tasks/${task.id}`);
+      expect(updatedResponse.ok()).toBe(true);
+      const updated = await updatedResponse.json();
+      return updated.task.labels;
+    })
+    .toEqual(["alpha", "beta", "gamma"]);
+});
+
 test("collapses the desktop sidebar without resetting board context", async ({ page }) => {
   const projectName = uniqueName("E2E Sidebar Project");
   const projectKey = uniqueKey("NAV");
