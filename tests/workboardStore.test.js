@@ -59,6 +59,114 @@ describe("WorkboardStore", () => {
     expect(store.listTasks({ projectId: project.id, role: "tester" })).toEqual([]);
   });
 
+  it("rejects invalid task creation fields instead of silently falling back", async () => {
+    const project = await store.createProject({ name: "Task Validation Project", key: "TVP" });
+
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Invalid status task",
+        status: "almost_ready"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("status")
+    });
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Invalid priority task",
+        priority: "eventually"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("priority")
+    });
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Invalid role task",
+        role: "wizard"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("role")
+    });
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Malformed labels task",
+        labels: "backend"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("labels")
+    });
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Too many labels task",
+        labels: Array.from({ length: 13 }, (_item, index) => `label-${index}`)
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("labels")
+    });
+  });
+
+  it("rejects invalid task updates without mutating the task", async () => {
+    const project = await store.createProject({ name: "Task Update Validation Project", key: "TUV" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Valid update target",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      labels: ["backend"]
+    });
+
+    await expect(store.updateTask(task.id, { status: "finished" }, "tester")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("status")
+    });
+    await expect(store.updateTask(task.id, { priority: "sometime" }, "tester")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("priority")
+    });
+    await expect(store.updateTask(task.id, { role: "dragon" }, "tester")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("role")
+    });
+    await expect(store.updateTask(task.id, { title: "   " }, "tester")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("title")
+    });
+    await expect(store.updateTask(task.id, { labels: ["backend", ""] }, "tester")).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("labels")
+    });
+    await expect(
+      store.updateTask(
+        task.id,
+        {
+          labels: Array.from({ length: 13 }, (_item, index) => `label-${index}`)
+        },
+        "tester"
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("labels")
+    });
+
+    expect(store.getTask(task.id)).toMatchObject({
+      title: "Valid update target",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      labels: ["backend"]
+    });
+  });
+
   it("seeds searchable product capabilities", () => {
     const capabilities = store.listCapabilities({ q: "MCP" });
 

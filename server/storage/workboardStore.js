@@ -22,6 +22,7 @@ const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
 const DOGFOOD_PROJECT_KEY = "DOGFOOD";
+const MAX_TASK_LABELS = 12;
 
 export const ROLES = [
   {
@@ -1162,14 +1163,10 @@ export class WorkboardStore {
       throw Object.assign(new Error("Project not found."), { status: 404 });
     }
 
-    const title = normalizeText(input.title);
-    if (!title) {
-      throw Object.assign(new Error("Task title is required."), { status: 400 });
-    }
-
-    const status = validOr(input.status, STATUS_IDS, "backlog");
-    const priority = validOr(input.priority, PRIORITY_IDS, "normal");
-    const role = validOr(input.role, ROLE_IDS, "implementer");
+    const title = normalizeTaskTitle(input.title);
+    const status = readTaskEnumField(input, "status", STATUS_IDS, "backlog");
+    const priority = readTaskEnumField(input, "priority", PRIORITY_IDS, "normal");
+    const role = readTaskEnumField(input, "role", ROLE_IDS, "implementer");
     const createdAt = now();
     const actor = normalizeText(input.actor) || "operator";
     const { hasCompletion, completionInput } = readCompletionInput(input);
@@ -1195,7 +1192,7 @@ export class WorkboardStore {
       priority,
       role,
       assignee: normalizeText(input.assignee),
-      labels: normalizeLabels(input.labels),
+      labels: normalizeTaskLabels(input.labels),
       completion,
       createdAt,
       updatedAt: createdAt,
@@ -1241,7 +1238,9 @@ export class WorkboardStore {
     const actorId = normalizeText(actor) || "operator";
     const { hasCompletion: hasCompletionPatch, completionInput: completionPatch } = readCompletionInput(patch);
     let completionAppliedDuringStatusChange = false;
-    const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status") ? validOr(patch.status, STATUS_IDS, task.status) : task.status;
+    const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status")
+      ? readTaskEnumField(patch, "status", STATUS_IDS, task.status)
+      : task.status;
     let nextCompletion = null;
 
     if (task.status !== requestedStatus && requestedStatus === "done" && !hasCompletionPatch) {
@@ -1257,7 +1256,15 @@ export class WorkboardStore {
       this.validateCompletionCapabilityLinks(nextCompletion, task.projectId);
     }
 
-    for (const field of ["title", "description", "assignee"]) {
+    if ("title" in patch) {
+      const next = normalizeTaskTitle(patch.title);
+      if (task.title !== next) {
+        task.title = next;
+        changes.push("title");
+      }
+    }
+
+    for (const field of ["description", "assignee"]) {
       if (field in patch) {
         const next = normalizeText(patch[field]);
         if (task[field] !== next) {
@@ -1291,7 +1298,7 @@ export class WorkboardStore {
     }
 
     if ("priority" in patch) {
-      const next = validOr(patch.priority, PRIORITY_IDS, task.priority);
+      const next = readTaskEnumField(patch, "priority", PRIORITY_IDS, task.priority);
       if (task.priority !== next) {
         task.priority = next;
         changes.push("priority");
@@ -1299,7 +1306,7 @@ export class WorkboardStore {
     }
 
     if ("role" in patch) {
-      const next = validOr(patch.role, ROLE_IDS, task.role);
+      const next = readTaskEnumField(patch, "role", ROLE_IDS, task.role);
       if (task.role !== next) {
         task.role = next;
         changes.push("role");
@@ -1307,7 +1314,7 @@ export class WorkboardStore {
     }
 
     if ("labels" in patch) {
-      const labels = normalizeLabels(patch.labels);
+      const labels = normalizeTaskLabels(patch.labels, { defaultValue: task.labels });
       if (JSON.stringify(task.labels) !== JSON.stringify(labels)) {
         task.labels = labels;
         changes.push("labels");
@@ -2221,6 +2228,59 @@ export class WorkboardStore {
 
 function validOr(value, allowed, fallback) {
   return allowed.has(value) ? value : fallback;
+}
+
+function normalizeTaskTitle(value) {
+  const title = normalizeText(value);
+  if (!title) {
+    throw httpError("Task title is required.", 400, { field: "title" });
+  }
+  return title;
+}
+
+function readTaskEnumField(source, field, allowed, fallback) {
+  if (!Object.prototype.hasOwnProperty.call(source, field) || source[field] === undefined) {
+    return fallback;
+  }
+
+  const value = normalizeText(source[field]);
+  if (!allowed.has(value)) {
+    throw httpError(`Task ${field} must be one of: ${[...allowed].join(", ")}.`, 400, {
+      field,
+      allowed: [...allowed],
+      value
+    });
+  }
+  return value;
+}
+
+function normalizeTaskLabels(value, { defaultValue = [] } = {}) {
+  if (value === undefined) {
+    return [...defaultValue];
+  }
+  if (!Array.isArray(value)) {
+    throw httpError("Task labels must be an array of non-empty strings.", 400, { field: "labels" });
+  }
+  if (value.length > MAX_TASK_LABELS) {
+    throw httpError(`Task labels cannot contain more than ${MAX_TASK_LABELS} labels.`, 400, {
+      field: "labels",
+      max: MAX_TASK_LABELS,
+      count: value.length
+    });
+  }
+
+  const labels = [];
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string") {
+      throw httpError("Task labels must be an array of non-empty strings.", 400, { field: "labels", index });
+    }
+    const label = normalizeText(item).toLowerCase();
+    if (!label) {
+      throw httpError("Task labels must be non-empty strings.", 400, { field: "labels", index });
+    }
+    labels.push(label);
+  }
+  return [...new Set(labels)];
 }
 
 function normalizeLabels(value) {
