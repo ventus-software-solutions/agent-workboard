@@ -48,6 +48,10 @@ The API runs on `http://localhost:8080` and the Vite UI runs on `http://localhos
 npm test
 ```
 
+## Architecture For Contributors
+
+See [Architecture Overview](docs/architecture.md) for how the Express API, JSON store, React UI, MCP server, Docker data mount, upload storage, and future auth/SQLite/agent registry work fit together.
+
 ## MCP
 
 ```bash
