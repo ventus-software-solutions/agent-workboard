@@ -572,9 +572,13 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
 
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
+  await expect(page.locator(".topStats")).toContainText("Configured slots");
+  await expect(page.locator(".topStats")).toContainText("1 historical listed");
   await expect(page.getByRole("heading", { name: "Implementer Agent" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Reviewer Agent" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Test Agent" })).toBeVisible();
+  await expect(page.getByText("Historical assignees")).toBeVisible();
+  await expect(page.getByText("Task-only identities, not configured capacity")).toBeVisible();
 
   const backendCard = page.getByTestId("agent-card").filter({ hasText: "implementer-backend-1" });
   await expect(backendCard).toBeVisible();
@@ -585,6 +589,7 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   const adHocCard = page.getByTestId("agent-card").filter({ hasText: "implementer-adhoc-ui" });
   await expect(adHocCard).toBeVisible();
   await expect(adHocCard).toContainText("Task Assignee");
+  await expect(adHocCard).toContainText("historical assignee");
   await expect(adHocCard).toContainText("Blocked");
   await expect(adHocCard).toContainText(blockedTaskTitle);
 
