@@ -79,7 +79,19 @@ const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
 const WORK_ITEM_TYPE_IDS = new Set(WORK_ITEM_TYPES.map((type) => type.id));
 const CLAIMABLE_WORK_ITEM_TYPE_IDS = new Set(WORK_ITEM_TYPES.filter((type) => type.claimable).map((type) => type.id));
 const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
-const FULL_TASK_EDIT_FIELDS = ["title", "description", "assignee", "priority", "role", "labels", "workItemType"];
+const FULL_TASK_EDIT_FIELDS = [
+  "title",
+  "description",
+  "assignee",
+  "priority",
+  "role",
+  "labels",
+  "workItemType",
+  "dependsOn",
+  "blockedBy",
+  "parentTaskId",
+  "childTaskIds"
+];
 const BLOCKER_TYPE_IDS = new Set(BLOCKER_TYPES);
 const OPERATOR_APPROVAL_DECISION_IDS = new Set(OPERATOR_APPROVAL_DECISIONS);
 
@@ -493,6 +505,7 @@ export class WorkboardStore {
         throw error;
       }
       this.data = defaultData();
+      this.rebuildTaskRelationshipDerivatives();
       await this.save();
     }
   }
@@ -626,6 +639,13 @@ export class WorkboardStore {
         task.workItemType = workItemType;
         migrated = true;
       }
+      const relationships = normalizeTaskRelationshipsForMigration(task);
+      for (const [field, value] of Object.entries(relationships)) {
+        if (JSON.stringify(task[field]) !== JSON.stringify(value)) {
+          task[field] = value;
+          migrated = true;
+        }
+      }
       if (!isValidTaskRevision(task.revision)) {
         task.revision = 1;
         migrated = true;
@@ -675,7 +695,81 @@ export class WorkboardStore {
       migrated = true;
     }
 
+    if (this.rebuildTaskRelationshipDerivatives()) {
+      migrated = true;
+    }
+
     return migrated;
+  }
+
+  rebuildTaskRelationshipDerivatives() {
+    const tasks = Array.isArray(this.data.tasks) ? this.data.tasks : [];
+    const tasksById = new Map(tasks.map((task) => [task.id, task]));
+    let changed = false;
+
+    for (const task of tasks) {
+      const normalized = normalizeTaskRelationshipsForMigration(task);
+      for (const [field, value] of Object.entries(normalized)) {
+        if (JSON.stringify(task[field]) !== JSON.stringify(value)) {
+          task[field] = value;
+          changed = true;
+        }
+      }
+    }
+
+    for (const task of tasks) {
+      const blocks = tasks
+        .filter((candidate) => candidate.projectId === task.projectId)
+        .filter((candidate) => [...candidate.dependsOn, ...candidate.blockedBy].includes(task.id))
+        .map((candidate) => candidate.id)
+        .sort();
+      const childTaskIds = tasks
+        .filter((candidate) => candidate.projectId === task.projectId && candidate.parentTaskId === task.id)
+        .map((candidate) => candidate.id)
+        .sort();
+      const dependencyStatus = deriveTaskDependencyStatus(task, tasksById);
+
+      for (const [field, value] of Object.entries({ blocks, childTaskIds, dependencyStatus })) {
+        if (JSON.stringify(task[field]) !== JSON.stringify(value)) {
+          task[field] = value;
+          changed = true;
+        }
+      }
+    }
+
+    return changed;
+  }
+
+  normalizeTaskRelationships(task, patch = {}) {
+    const projectId = task.projectId;
+    const relationships = {
+      dependsOn: Object.prototype.hasOwnProperty.call(patch, "dependsOn")
+        ? normalizeRelationshipIdList(patch.dependsOn, "dependsOn")
+        : normalizeRelationshipIdList(task.dependsOn || [], "dependsOn"),
+      blockedBy: Object.prototype.hasOwnProperty.call(patch, "blockedBy")
+        ? normalizeRelationshipIdList(patch.blockedBy, "blockedBy")
+        : normalizeRelationshipIdList(task.blockedBy || [], "blockedBy"),
+      parentTaskId: Object.prototype.hasOwnProperty.call(patch, "parentTaskId")
+        ? normalizeOptionalTaskId(patch.parentTaskId)
+        : normalizeOptionalTaskId(task.parentTaskId)
+    };
+
+    if (Object.prototype.hasOwnProperty.call(patch, "childTaskIds")) {
+      relationships.childTaskIds = normalizeRelationshipIdList(patch.childTaskIds, "childTaskIds");
+    }
+
+    validateTaskRelationshipTargets({ task, projectId, relationships, tasks: this.data.tasks });
+    validateDependencyAcyclic({ task, relationships, tasks: this.data.tasks });
+    validateParentAcyclic({ task, parentTaskId: relationships.parentTaskId, tasks: this.data.tasks });
+
+    if (relationships.childTaskIds) {
+      for (const childTaskId of relationships.childTaskIds) {
+        const child = this.data.tasks.find((candidate) => candidate.id === childTaskId);
+        validateParentAcyclic({ task: child, parentTaskId: task.id, tasks: this.data.tasks });
+      }
+    }
+
+    return relationships;
   }
 
   listAgentSlots({ now: nowInput } = {}) {
@@ -986,7 +1080,11 @@ export class WorkboardStore {
     }
 
     const scopedInput = allProjects ? input : { ...input, projectId: projectContext.activeProjectId };
-    const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, scopedInput));
+    const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, { ...scopedInput, tasks: this.data.tasks }));
+    const relationshipBlockedCandidates = scopedTasks
+      .filter((task) => taskIsEligibleForProfile(task, profile))
+      .filter((task) => !taskRelationshipsAllowClaim(task))
+      .map((task) => relationshipBlockedCandidate(task));
     const buckets = profile.role === "reviewer"
       ? reviewerCandidateBuckets(scopedTasks, agentId, profile)
       : workerCandidateBuckets(scopedTasks, agentId, profile);
@@ -1000,7 +1098,8 @@ export class WorkboardStore {
         agent,
         task,
         selection: withProjectScope(buildSelection(bucket.reason, task, agentId), projectContext, allProjects),
-        candidates
+        candidates,
+        blockedCandidates: relationshipBlockedCandidates
       };
     }
 
@@ -1011,7 +1110,8 @@ export class WorkboardStore {
         reason: "no_eligible_work",
         ...selectionProjectScope(projectContext, allProjects)
       },
-      candidates: []
+      candidates: [],
+      blockedCandidates: relationshipBlockedCandidates
     };
   }
 
@@ -1067,7 +1167,16 @@ export class WorkboardStore {
       .filter((task) => labels.every((label) => task.labels.includes(label)))
       .filter((task) => {
         if (!q) return true;
-        return [task.title, task.description, task.assignee, task.role, task.priority, task.workItemType, ...task.labels]
+        return [
+          task.title,
+          task.description,
+          task.assignee,
+          task.role,
+          task.priority,
+          task.workItemType,
+          relationshipSearchText(task, this.data.tasks),
+          ...task.labels
+        ]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -1331,6 +1440,12 @@ export class WorkboardStore {
         workItemType: task.workItemType,
         assignee: task.assignee,
         labels: task.labels,
+        dependsOn: task.dependsOn,
+        blockedBy: task.blockedBy,
+        parentTaskId: task.parentTaskId,
+        blocks: task.blocks,
+        childTaskIds: task.childTaskIds,
+        dependencyStatus: task.dependencyStatus,
         comments: task.comments,
         attachments: task.attachments,
         completion: task.completion,
@@ -1627,6 +1742,17 @@ export class WorkboardStore {
     const priority = readTaskEnumField(input, "priority", PRIORITY_IDS, "normal");
     const role = readTaskEnumField(input, "role", ROLE_IDS, "implementer");
     const workItemType = normalizeWorkItemType(input.workItemType);
+    const taskId = id("task");
+    const relationships = this.normalizeTaskRelationships(
+      {
+        id: taskId,
+        projectId,
+        dependsOn: [],
+        blockedBy: [],
+        parentTaskId: ""
+      },
+      input
+    );
     const createdAt = now();
     const actor = normalizeText(input.actor) || "operator";
     const { hasCompletion, completionInput } = readCompletionInput(input);
@@ -1648,7 +1774,7 @@ export class WorkboardStore {
     }
     const blocker = status === "blocked" && input.blocker ? normalizeTaskBlocker(input.blocker, { actor }) : null;
     const task = {
-      id: id("task"),
+      id: taskId,
       projectId,
       title,
       description: normalizeText(input.description),
@@ -1658,6 +1784,12 @@ export class WorkboardStore {
       workItemType,
       assignee: normalizeText(input.assignee),
       labels: normalizeTaskLabels(input.labels),
+      dependsOn: relationships.dependsOn,
+      blockedBy: relationships.blockedBy,
+      parentTaskId: relationships.parentTaskId,
+      blocks: [],
+      childTaskIds: [],
+      dependencyStatus: emptyDependencyStatus(),
       completion,
       blocker,
       approvalHistory: [],
@@ -1677,6 +1809,7 @@ export class WorkboardStore {
       ]
     };
     this.data.tasks.push(task);
+    this.rebuildTaskRelationshipDerivatives();
     if (completion) {
       this.applyCompletionCapabilityLinks(task);
     }
@@ -1707,6 +1840,7 @@ export class WorkboardStore {
         priority: child.priority,
         role: child.role,
         workItemType: child.workItemType,
+        parentTaskId: parent.id,
         assignee: child.assignee,
         labels: child.labels,
         actor
@@ -1761,6 +1895,10 @@ export class WorkboardStore {
       : task.status;
     let nextCompletion = null;
     const hasBlockerPatch = Object.prototype.hasOwnProperty.call(patch, "blocker");
+    const hasRelationshipPatch = ["dependsOn", "blockedBy", "parentTaskId", "childTaskIds"].some((field) =>
+      Object.prototype.hasOwnProperty.call(patch, field)
+    );
+    const nextRelationships = hasRelationshipPatch ? this.normalizeTaskRelationships(task, patch) : null;
     const nextBlocker =
       hasBlockerPatch && patch.blocker
         ? normalizeTaskBlocker(patch.blocker, { actor: actorId })
@@ -1897,6 +2035,34 @@ export class WorkboardStore {
       }
     }
 
+    if (nextRelationships) {
+      for (const field of ["dependsOn", "blockedBy", "parentTaskId"]) {
+        if (JSON.stringify(task[field]) !== JSON.stringify(nextRelationships[field])) {
+          task[field] = nextRelationships[field];
+          changes.push(field);
+        }
+      }
+
+      if (Array.isArray(nextRelationships.childTaskIds)) {
+        for (const child of this.data.tasks.filter((candidate) => candidate.projectId === task.projectId && candidate.id !== task.id)) {
+          const nextParentTaskId = nextRelationships.childTaskIds.includes(child.id) ? task.id : child.parentTaskId === task.id ? "" : child.parentTaskId;
+          if (child.parentTaskId !== nextParentTaskId) {
+            child.parentTaskId = nextParentTaskId;
+            child.revision = nextTaskRevision(child);
+            child.updatedAt = now();
+            child.activity.unshift({
+              id: id("event"),
+              actor: actorId,
+              type: "updated",
+              message: nextParentTaskId ? `Updated parentTaskId:${task.id}.` : `Updated parentTaskId:cleared from ${task.id}.`,
+              createdAt: child.updatedAt
+            });
+            changes.push(`childTaskIds:${child.id}`);
+          }
+        }
+      }
+    }
+
     if (requestedStatus === "blocked" && hasBlockerPatch) {
       if (JSON.stringify(task.blocker) !== JSON.stringify(nextBlocker)) {
         task.blocker = nextBlocker;
@@ -1908,6 +2074,7 @@ export class WorkboardStore {
       return task;
     }
 
+    this.rebuildTaskRelationshipDerivatives();
     task.revision = nextTaskRevision(task);
     task.updatedAt = now();
     task.activity.unshift({
@@ -2007,6 +2174,14 @@ export class WorkboardStore {
             claimableTypes: [...CLAIMABLE_WORK_ITEM_TYPE_IDS]
           }
         );
+      }
+
+      if (!taskRelationshipsAllowClaim(task)) {
+        throw httpError(`Task ${task.id} is waiting on dependency or blocker relationships.`, 409, {
+          reason: "task_relationships_not_satisfied",
+          taskId: task.id,
+          dependencyStatus: task.dependencyStatus || emptyDependencyStatus()
+        });
       }
 
       const expectedProjectId = normalizeText(input.projectId);
@@ -2884,6 +3059,212 @@ function normalizeOptionalWorkItemType(value) {
   return normalizeWorkItemType(value);
 }
 
+function normalizeTaskRelationshipsForMigration(task) {
+  return {
+    dependsOn: normalizeRelationshipIdListForMigration(task.dependsOn),
+    blockedBy: normalizeRelationshipIdListForMigration(task.blockedBy),
+    parentTaskId: normalizeOptionalTaskId(task.parentTaskId)
+  };
+}
+
+function normalizeRelationshipIdList(value, field) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw httpError(`Task ${field} must be an array of task ids.`, 400, { field });
+  }
+  const ids = value.map((item) => normalizeText(item)).filter(Boolean);
+  return [...new Set(ids)].sort();
+}
+
+function normalizeRelationshipIdListForMigration(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => normalizeText(item)).filter(Boolean))].sort();
+}
+
+function normalizeOptionalTaskId(value) {
+  return normalizeText(value);
+}
+
+function emptyDependencyStatus() {
+  return {
+    state: "clear",
+    satisfiedTaskIds: [],
+    waitingTaskIds: [],
+    blockedTaskIds: [],
+    invalidTaskIds: [],
+    total: 0
+  };
+}
+
+function validateTaskRelationshipTargets({ task, projectId, relationships, tasks }) {
+  for (const field of ["dependsOn", "blockedBy", "childTaskIds"]) {
+    for (const taskId of relationships[field] || []) {
+      validateRelatedTaskTarget({ task, projectId, field, taskId, tasks });
+    }
+  }
+  if (relationships.parentTaskId) {
+    validateRelatedTaskTarget({ task, projectId, field: "parentTaskId", taskId: relationships.parentTaskId, tasks });
+  }
+}
+
+function validateRelatedTaskTarget({ task, projectId, field, taskId, tasks }) {
+  if (taskId === task.id) {
+    throw httpError("Task relationships cannot link a task to itself.", 400, {
+      field,
+      reason: "self_link",
+      taskId
+    });
+  }
+  const target = tasks.find((candidate) => candidate.id === taskId);
+  if (!target) {
+    throw httpError(`Related task ${taskId} does not exist.`, 400, {
+      field,
+      reason: "missing_task",
+      taskId
+    });
+  }
+  if (target.projectId !== projectId) {
+    throw httpError(`Related task ${taskId} belongs to a different project.`, 400, {
+      field,
+      reason: "cross_project",
+      taskId,
+      taskProjectId: target.projectId,
+      expectedProjectId: projectId
+    });
+  }
+}
+
+function validateDependencyAcyclic({ task, relationships, tasks }) {
+  const graph = new Map();
+  for (const candidate of tasks) {
+    graph.set(candidate.id, [...normalizeRelationshipIdListForMigration(candidate.dependsOn), ...normalizeRelationshipIdListForMigration(candidate.blockedBy)]);
+  }
+  graph.set(task.id, [...relationships.dependsOn, ...relationships.blockedBy]);
+
+  for (const field of ["dependsOn", "blockedBy"]) {
+    for (const taskId of relationships[field]) {
+      if (dependencyPathExists(taskId, task.id, graph, new Set())) {
+        throw httpError("Task dependency relationships cannot form a cycle.", 400, {
+          field,
+          reason: "cycle",
+          taskId
+        });
+      }
+    }
+  }
+}
+
+function dependencyPathExists(currentId, targetId, graph, seen) {
+  if (currentId === targetId) return true;
+  if (seen.has(currentId)) return false;
+  seen.add(currentId);
+  for (const nextId of graph.get(currentId) || []) {
+    if (dependencyPathExists(nextId, targetId, graph, seen)) return true;
+  }
+  return false;
+}
+
+function validateParentAcyclic({ task, parentTaskId, tasks }) {
+  let currentId = parentTaskId;
+  const seen = new Set();
+  while (currentId) {
+    if (currentId === task.id) {
+      throw httpError("Task parent relationships cannot form a cycle.", 400, {
+        field: "parentTaskId",
+        reason: "cycle",
+        taskId: currentId
+      });
+    }
+    if (seen.has(currentId)) return;
+    seen.add(currentId);
+    const current = tasks.find((candidate) => candidate.id === currentId);
+    currentId = normalizeText(current?.parentTaskId);
+  }
+}
+
+function deriveTaskDependencyStatus(task, tasksById) {
+  const status = emptyDependencyStatus();
+  const addSatisfied = (taskId) => {
+    if (!status.satisfiedTaskIds.includes(taskId)) status.satisfiedTaskIds.push(taskId);
+  };
+  const addWaiting = (taskId) => {
+    if (!status.waitingTaskIds.includes(taskId)) status.waitingTaskIds.push(taskId);
+  };
+  const addBlocked = (taskId) => {
+    if (!status.blockedTaskIds.includes(taskId)) status.blockedTaskIds.push(taskId);
+  };
+  const addInvalid = (taskId) => {
+    if (!status.invalidTaskIds.includes(taskId)) status.invalidTaskIds.push(taskId);
+  };
+
+  for (const taskId of task.dependsOn || []) {
+    const target = tasksById.get(taskId);
+    if (!target || target.projectId !== task.projectId) {
+      addInvalid(taskId);
+    } else if (relationshipTargetSatisfied(target)) {
+      addSatisfied(taskId);
+    } else {
+      addWaiting(taskId);
+    }
+  }
+
+  for (const taskId of task.blockedBy || []) {
+    const target = tasksById.get(taskId);
+    if (!target || target.projectId !== task.projectId) {
+      addInvalid(taskId);
+    } else if (relationshipTargetSatisfied(target)) {
+      addSatisfied(taskId);
+    } else {
+      addBlocked(taskId);
+    }
+  }
+
+  for (const key of ["satisfiedTaskIds", "waitingTaskIds", "blockedTaskIds", "invalidTaskIds"]) {
+    status[key].sort();
+  }
+  status.total =
+    status.satisfiedTaskIds.length + status.waitingTaskIds.length + status.blockedTaskIds.length + status.invalidTaskIds.length;
+  status.state =
+    status.invalidTaskIds.length > 0
+      ? "invalid"
+      : status.blockedTaskIds.length > 0
+        ? "blocked"
+        : status.waitingTaskIds.length > 0
+          ? "waiting"
+          : "clear";
+  return status;
+}
+
+function relationshipTargetSatisfied(task) {
+  return ["review", "done"].includes(task.status);
+}
+
+function taskRelationshipsAllowClaim(task) {
+  const state = task.dependencyStatus?.state || "clear";
+  return state === "clear" || task.status === "review";
+}
+
+function relationshipBlockedCandidate(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    assignee: task.assignee,
+    dependencyStatus: task.dependencyStatus || emptyDependencyStatus()
+  };
+}
+
+function relationshipSearchText(task, tasks) {
+  const ids = [...(task.dependsOn || []), ...(task.blockedBy || []), task.parentTaskId, ...(task.blocks || []), ...(task.childTaskIds || [])].filter(Boolean);
+  const byId = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+  return ids
+    .map((taskId) => {
+      const target = byId.get(taskId);
+      return target ? `${taskId} ${target.title} ${target.status} ${target.assignee}` : taskId;
+    })
+    .join(" ");
+}
+
 function normalizeTaskLabels(value, { defaultValue = [] } = {}) {
   if (value === undefined) {
     return [...defaultValue];
@@ -3058,7 +3439,7 @@ function taskMatchesNextTaskScope(task, input = {}) {
   if (workItemType && task.workItemType !== workItemType) return false;
   if (labels.length > 0 && !labels.every((label) => task.labels.includes(label))) return false;
   if (q) {
-    const haystack = [task.title, task.description, task.assignee, task.role, task.priority, task.workItemType, ...task.labels]
+    const haystack = [task.title, task.description, task.assignee, task.role, task.priority, task.workItemType, relationshipSearchText(task, input.tasks || []), ...task.labels]
       .join(" ")
       .toLowerCase();
     if (!haystack.includes(q)) return false;
@@ -3111,7 +3492,7 @@ function reviewerCandidateBuckets(tasks, agentId, profile) {
 }
 
 function workerCandidateBuckets(tasks, agentId, profile) {
-  const eligibleTasks = tasks.filter((task) => taskIsEligibleForProfile(task, profile));
+  const eligibleTasks = tasks.filter((task) => taskIsEligibleForProfile(task, profile) && taskRelationshipsAllowClaim(task));
   const specialtyTasks = isPlannerDecomposerProfile(profile)
     ? eligibleTasks.filter((task) => ["ready", "backlog"].includes(task.status) && isUnassignedOrMine(task, agentId))
     : eligibleTasks.filter(

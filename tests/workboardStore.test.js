@@ -290,6 +290,139 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("stores, validates, derives, and gates task relationships", async () => {
+    const project = await store.createProject({ name: "Relationship Project" });
+    const otherProject = await store.createProject({ name: "Other Relationship Project" });
+    const foundation = await store.createTask({
+      projectId: project.id,
+      title: "Ship foundation",
+      status: "review",
+      role: "implementer",
+      labels: ["backend"]
+    });
+    const parent = await store.createTask({
+      projectId: project.id,
+      title: "Parent story",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"]
+    });
+    const otherTask = await store.createTask({ projectId: otherProject.id, title: "Other project task" });
+
+    const child = await store.createTask({
+      projectId: project.id,
+      title: "Build child task",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"],
+      parentTaskId: parent.id,
+      dependsOn: [foundation.id]
+    });
+
+    expect(child).toMatchObject({
+      parentTaskId: parent.id,
+      dependsOn: [foundation.id],
+      blockedBy: [],
+      childTaskIds: [],
+      blocks: [],
+      dependencyStatus: {
+        state: "clear",
+        satisfiedTaskIds: [foundation.id],
+        waitingTaskIds: [],
+        blockedTaskIds: [],
+        invalidTaskIds: []
+      }
+    });
+    expect(store.getTask(parent.id).childTaskIds).toContain(child.id);
+    expect(store.getTask(foundation.id).blocks).toContain(child.id);
+
+    const waiting = await store.createTask({
+      projectId: project.id,
+      title: "Wait for parent",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"],
+      dependsOn: [parent.id]
+    });
+    expect(waiting.dependencyStatus).toMatchObject({
+      state: "waiting",
+      waitingTaskIds: [parent.id]
+    });
+    expect(
+      store.getNextTaskForAgent("implementer-backend-2", {
+        projectId: project.id,
+        labels: "backend",
+        now: "2026-06-13T21:00:00.000Z"
+      }).candidates.map((task) => task.id)
+    ).not.toContain(waiting.id);
+
+    const reviewedParent = await store.updateTask(parent.id, { status: "review" }, "operator-ui");
+    expect(reviewedParent.blocks).toContain(waiting.id);
+    expect(store.getTask(waiting.id).dependencyStatus).toMatchObject({
+      state: "clear",
+      satisfiedTaskIds: [parent.id]
+    });
+    expect(
+      store.getNextTaskForAgent("implementer-backend-2", {
+        projectId: project.id,
+        labels: "backend",
+        now: "2026-06-13T21:00:00.000Z"
+      }).candidates.map((task) => task.id)
+    ).toContain(waiting.id);
+
+    const blocked = await store.createTask({
+      projectId: project.id,
+      title: "Blocked by child",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"],
+      blockedBy: [child.id]
+    });
+    expect(blocked.dependencyStatus).toMatchObject({
+      state: "blocked",
+      blockedTaskIds: [child.id]
+    });
+
+    await expect(
+      store.updateTask(child.id, { dependsOn: [child.id], expectedRevision: child.revision }, "operator-ui")
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "dependsOn", reason: "self_link" }
+    });
+    await expect(
+      store.updateTask(child.id, { dependsOn: [otherTask.id], expectedRevision: child.revision }, "operator-ui")
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "dependsOn", reason: "cross_project" }
+    });
+    await expect(
+      store.updateTask(parent.id, { parentTaskId: child.id, expectedRevision: reviewedParent.revision }, "operator-ui")
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "parentTaskId", reason: "cycle" }
+    });
+    await expect(
+      store.updateTask(parent.id, { dependsOn: [waiting.id], expectedRevision: reviewedParent.revision }, "operator-ui")
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "dependsOn", reason: "cycle" }
+    });
+
+    const raw = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    delete raw.tasks.find((item) => item.id === parent.id).dependsOn;
+    delete raw.tasks.find((item) => item.id === parent.id).blockedBy;
+    delete raw.tasks.find((item) => item.id === parent.id).parentTaskId;
+    await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
+
+    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    await reloaded.init();
+    expect(reloaded.getTask(parent.id)).toMatchObject({
+      dependsOn: [],
+      blockedBy: [],
+      parentTaskId: ""
+    });
+  });
+
   it("seeds searchable product capabilities", () => {
     const capabilities = store.listCapabilities({ q: "MCP" });
 

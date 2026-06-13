@@ -113,6 +113,12 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     priority: readEnumField(source, "priority", helpers.priorityIds, "normal", "Task"),
     role: readEnumField(source, "role", helpers.roleIds, "implementer", "Task"),
     workItemType: readEnumField(source, "workItemType", helpers.workItemTypeIds, "task", "Task"),
+    dependsOn: normalizeTaskIdList(source.dependsOn),
+    blockedBy: normalizeTaskIdList(source.blockedBy),
+    parentTaskId: normalizeText(source.parentTaskId),
+    blocks: normalizeTaskIdList(source.blocks),
+    childTaskIds: normalizeTaskIdList(source.childTaskIds),
+    dependencyStatus: normalizeDependencyStatus(source.dependencyStatus),
     assignee: normalizeText(source.assignee),
     labels: normalizeTaskLabels(source.labels),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,
@@ -122,6 +128,24 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     comments: normalizeBackupComments(source.comments, { index, taskId }, helpers),
     attachments: normalizeBackupAttachments(source.attachments, { index, taskId }, helpers),
     activity: normalizeBackupActivity(source.activity, { index, taskId }, helpers)
+  };
+}
+
+function normalizeTaskIdList(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => normalizeText(item)).filter(Boolean))].sort();
+}
+
+function normalizeDependencyStatus(value) {
+  const source = normalizeObject(value);
+  const state = ["clear", "waiting", "blocked", "invalid"].includes(normalizeText(source.state)) ? normalizeText(source.state) : "clear";
+  return {
+    state,
+    satisfiedTaskIds: normalizeTaskIdList(source.satisfiedTaskIds),
+    waitingTaskIds: normalizeTaskIdList(source.waitingTaskIds),
+    blockedTaskIds: normalizeTaskIdList(source.blockedTaskIds),
+    invalidTaskIds: normalizeTaskIdList(source.invalidTaskIds),
+    total: Number.isInteger(source.total) && source.total >= 0 ? source.total : 0
   };
 }
 

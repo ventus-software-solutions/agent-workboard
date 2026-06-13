@@ -862,6 +862,7 @@ export function App() {
       {selectedTask && (
         <TaskDrawer
           task={selectedTask}
+          tasks={tasks}
           statuses={meta.statuses}
           roles={meta.roles}
           workItemTypes={meta.workItemTypes}
@@ -920,6 +921,17 @@ function Stat({ icon: Icon, label, value, sublabel = "", title = "" }) {
 
 function workItemTypeLabel(workItemTypes, typeId) {
   return workItemTypes.find((type) => type.id === typeId)?.label || typeId || "Task";
+}
+
+function relationshipStateLabel(state) {
+  if (state === "blocked") return "Blocked";
+  if (state === "waiting") return "Waiting";
+  if (state === "invalid") return "Invalid link";
+  return "Clear";
+}
+
+function selectedOptionValues(event) {
+  return Array.from(event.target.selectedOptions).map((option) => option.value).filter(Boolean);
 }
 
 function IntegrationStatusPill({ status }) {
@@ -2027,6 +2039,7 @@ function TaskCard({
 }) {
   const role = roles.find((candidate) => candidate.id === task.role);
   const workItemType = workItemTypes.find((candidate) => candidate.id === task.workItemType) || workItemTypes.find((candidate) => candidate.id === "task");
+  const dependencyState = task.dependencyStatus?.state || "clear";
   const Icon = roleIcons[task.role] || Bot;
   const statusIndex = statuses.findIndex((status) => status.id === task.status);
   const currentStatus = statuses[statusIndex];
@@ -2048,6 +2061,8 @@ function TaskCard({
         )}
         {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
         {workflowCue && <span className="workflowPill">{workflowCue}</span>}
+        {dependencyState !== "clear" && <span className={`relationshipPill ${dependencyState}`}>{relationshipStateLabel(dependencyState)}</span>}
+        {task.childTaskIds?.length > 0 && <span className="relationshipPill clear">{task.childTaskIds.length} child</span>}
         {task.status === "done" && task.completion && (
           <span className={`completionPill ${task.completion.completionType === "legacy-needs-audit" ? "needsAudit" : ""}`}>
             {task.completion.completionType}
@@ -2093,7 +2108,7 @@ function TaskCard({
   );
 }
 
-function TaskDrawer({ task, statuses, roles, workItemTypes, completionTypes, capabilities, onClose, onMutate, onReload }) {
+function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTypes, capabilities, onClose, onMutate, onReload }) {
   const [comment, setComment] = useState("");
   const [drawerError, setDrawerError] = useState(null);
   const [retryAction, setRetryAction] = useState(null);
@@ -2103,6 +2118,7 @@ function TaskDrawer({ task, statuses, roles, workItemTypes, completionTypes, cap
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completionDraft, setCompletionDraft] = useState(() => defaultCompletionDraft(task));
   const taskVersionRef = useRef({ id: task.id, revision: task.revision, updatedAt: task.updatedAt });
+  const relationshipOptions = tasks.filter((candidate) => candidate.projectId === task.projectId && candidate.id !== task.id);
 
   useEffect(() => {
     const previous = taskVersionRef.current;
@@ -2127,7 +2143,7 @@ function TaskDrawer({ task, statuses, roles, workItemTypes, completionTypes, cap
 
   function updateDraft(patch) {
     setHasDraftEdits(true);
-    setDraft({ ...draft, ...patch });
+    setDraft((current) => ({ ...current, ...patch }));
   }
 
   function updateCompletionDraft(nextDraft) {
@@ -2301,6 +2317,66 @@ function TaskDrawer({ task, statuses, roles, workItemTypes, completionTypes, cap
             value={draft.description}
             onChange={(event) => updateDraft({ description: event.target.value })}
           />
+        </label>
+        <label className="wide">
+          Parent task
+          <select
+            aria-label="Parent task"
+            value={draft.parentTaskId}
+            onChange={(event) => updateDraft({ parentTaskId: event.target.value })}
+          >
+            <option value="">No parent</option>
+            {relationshipOptions.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Depends on
+          <select
+            aria-label="Depends on"
+            multiple
+            value={draft.dependsOn}
+            onChange={(event) => updateDraft({ dependsOn: selectedOptionValues(event) })}
+          >
+            {relationshipOptions.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Blocked by
+          <select
+            aria-label="Blocked by"
+            multiple
+            value={draft.blockedBy}
+            onChange={(event) => updateDraft({ blockedBy: selectedOptionValues(event) })}
+          >
+            {relationshipOptions.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="wide">
+          Child tasks
+          <select
+            aria-label="Child tasks"
+            multiple
+            value={draft.childTaskIds}
+            onChange={(event) => updateDraft({ childTaskIds: selectedOptionValues(event) })}
+          >
+            {relationshipOptions.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>
+                {candidate.title}
+              </option>
+            ))}
+          </select>
         </label>
         <button
           className="primaryButton wide"
@@ -2521,7 +2597,11 @@ function taskDraftFromTask(task) {
     role: task.role,
     workItemType: task.workItemType || "task",
     priority: task.priority,
-    labels: task.labels.join(", ")
+    labels: task.labels.join(", "),
+    dependsOn: task.dependsOn || [],
+    blockedBy: task.blockedBy || [],
+    parentTaskId: task.parentTaskId || "",
+    childTaskIds: task.childTaskIds || []
   };
 }
 
@@ -2529,6 +2609,9 @@ function taskPayloadFromDraft(draft) {
   return {
     ...draft,
     workItemType: draft.workItemType || "task",
+    dependsOn: draft.dependsOn || [],
+    blockedBy: draft.blockedBy || [],
+    parentTaskId: draft.parentTaskId || "",
     labels: labelsFromText(draft.labels)
   };
 }
