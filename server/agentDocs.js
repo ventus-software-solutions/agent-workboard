@@ -37,12 +37,16 @@ const ROLE_RULES = {
   }
 };
 
+const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
+
 const SPECIALTY_KEYWORDS = [
   ["frontend", ["frontend", "ui", "ux", "react", "browser", "design"]],
   ["backend", ["backend", "api", "server", "storage", "data"]],
   ["mcp", ["mcp", "tool", "agent-tools"]],
   ["tests", ["test", "tester", "qa", "e2e", "coverage"]],
   ["docs", ["doc", "docs", "readme", "onboarding"]],
+  ["planner", ["planner", "plan"]],
+  ["decomposition", ["decomposer", "decomposition", "epic", "story"]],
   ["security", ["security", "auth", "permission", "role"]]
 ];
 
@@ -60,6 +64,8 @@ export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
       "implementer",
       "reviewer",
       "tester",
+      "planner",
+      "decomposer",
       "researcher",
       "security",
       "docs",
@@ -92,14 +98,31 @@ export function buildAgentDoc({
   integrationStatus = null,
   projectContext = null
 }) {
-  const profile = resolveAgentProfile(agentId);
+  const normalizedAgentId = String(agentId || "").toLowerCase();
+  const configuredSlot = agentSlots.find((slot) => slot.id === normalizedAgentId);
+  const configuredType = configuredSlot ? agentTypes.find((type) => type.id === configuredSlot.typeId) : null;
+  const profile = resolveAgentProfile(agentId, { slot: configuredSlot, type: configuredType });
   const role = roles.find((candidate) => candidate.id === profile.role) || roles.find((candidate) => candidate.id === "implementer");
-  const rule = ROLE_RULES[profile.role] || ROLE_RULES.implementer;
+  const isPlannerDecomposer = profile.typeId === PLANNER_DECOMPOSER_TYPE_ID;
+  const rule = isPlannerDecomposer ? plannerDecomposerRule() : ROLE_RULES[profile.role] || ROLE_RULES.implementer;
   const activeProject = projectContext?.activeProject || null;
   const activeProjectId = projectContext?.activeProjectId || activeProject?.id || "";
   const activeProjectLabel = activeProject ? `${activeProject.key || activeProject.name} (${activeProject.id})` : "No active project assigned";
   const filters = taskFilters(profile, activeProjectId);
   const isReviewer = profile.role === "reviewer";
+  const workflow = isPlannerDecomposer ? plannerDecomposerWorkflow() : sharedWorkflow();
+  const mcpTools = [
+    "acquire_agent_slot",
+    "get_next_task",
+    "claim_task",
+    ...(isPlannerDecomposer ? ["decompose_task"] : []),
+    "update_presence",
+    "post_talk_message",
+    "list_talk_messages",
+    "add_comment",
+    "update_task_status",
+    "report_no_eligible_work"
+  ];
 
   return {
     agentId,
@@ -127,7 +150,7 @@ export function buildAgentDoc({
     ],
     integrationStatus,
     worktree: worktreeDiscipline(agentId, integrationStatus),
-    workflow: sharedWorkflow(),
+    workflow,
     accepts: rule.accepts,
     outputs: rule.outputs,
     doneMeans: rule.doneMeans,
@@ -145,17 +168,7 @@ export function buildAgentDoc({
     reviewerMerge: isReviewer ? reviewerMergeRules() : [],
     mcp: {
       firstTool: "get_agent_instructions",
-      then: [
-        "acquire_agent_slot",
-        "get_next_task",
-        "claim_task",
-        "update_presence",
-        "post_talk_message",
-        "list_talk_messages",
-        "add_comment",
-        "update_task_status",
-        "report_no_eligible_work"
-      ]
+      then: mcpTools
     },
     statuses: statuses.map((status) => status.id),
     cautions: [
@@ -163,6 +176,7 @@ export function buildAgentDoc({
       "Do not claim tasks by PATCHing assignee/status directly; use the claim endpoint or MCP `claim_task`.",
       "Do not edit the main checkout directly for implementation work. Use a task branch/worktree first.",
       "Do not claim more than one task at a time unless the operator explicitly asks.",
+      ...(isPlannerDecomposer ? ["Do not implement code from decomposition container tasks; create or propose child tasks and hand the parent off with evidence."] : []),
       "Post a short progress comment before long work.",
       "Move blocked tasks to blocked with the exact decision or dependency needed.",
       "Do not move a task to done without a completion record.",
@@ -298,6 +312,9 @@ function slotTypeForAgentDoc(agentId, agentTypes, agentSlots) {
     test: "tester",
     tests: "tester",
     security: "implementer-security",
+    planner: PLANNER_DECOMPOSER_TYPE_ID,
+    decomposer: PLANNER_DECOMPOSER_TYPE_ID,
+    decomposition: PLANNER_DECOMPOSER_TYPE_ID,
     docs: "docs",
     documentation: "docs"
   };
@@ -305,20 +322,29 @@ function slotTypeForAgentDoc(agentId, agentTypes, agentSlots) {
   return aliasedTypeId ? agentTypes.find((type) => type.id === aliasedTypeId) || null : null;
 }
 
-function resolveAgentProfile(agentId) {
+function resolveAgentProfile(agentId, { slot = null, type = null } = {}) {
   const normalized = String(agentId || "").toLowerCase();
+  if (slot || type) {
+    return {
+      role: slot?.role || type?.role || inferRole(normalized),
+      specialties: [...new Set(slot?.specialties?.length ? slot.specialties : type?.specialties || [])],
+      typeId: type?.id || slot?.typeId || ""
+    };
+  }
   const role = inferRole(normalized);
   const specialties = SPECIALTY_KEYWORDS.filter(([, keywords]) => keywords.some((keyword) => normalized.includes(keyword))).map(
     ([specialty]) => specialty
   );
   return {
     role,
-    specialties: [...new Set(specialties)]
+    specialties: [...new Set(specialties)],
+    typeId: ""
   };
 }
 
 function inferRole(agentId) {
   if (agentId.includes("operator")) return "operator";
+  if (agentId.includes("planner") || agentId.includes("decomposer")) return "pm";
   if (agentId.includes("pm") || agentId.includes("dispatcher") || agentId.includes("manager")) return "pm";
   if (agentId.includes("review") || agentId.includes("security")) return "reviewer";
   if (agentId.includes("test") || agentId.includes("qa")) return "tester";
@@ -333,10 +359,42 @@ function taskFilters(profile, activeProjectId = "") {
   if (activeProjectId) {
     filters.projectId = activeProjectId;
   }
+  if (profile.typeId === PLANNER_DECOMPOSER_TYPE_ID) {
+    delete filters.role;
+    return filters;
+  }
   if (profile.specialties.length > 0) {
     filters.labels = profile.specialties.join(",");
   }
   return filters;
+}
+
+function plannerDecomposerRule() {
+  return {
+    mission: "Break large epics, stories, and decomposition-needed containers into clear claimable tasks without implementing the code yourself.",
+    accepts: [
+      "ready or backlog tasks labeled decomposition-needed, ready-for-decomposition, epic, story, or spike",
+      "container work assigned to your exact planner/decomposer slot"
+    ],
+    outputs: [
+      "child tasks with owner role, priority, labels, acceptance criteria, evidence expectations, and sequencing notes",
+      "parent decomposition summary comments that list created child task ids",
+      "ready/backlog sequencing recommendations for the next agents"
+    ],
+    doneMeans: "The parent has a visible decomposition summary and the next agents can claim child tasks without guessing scope or evidence."
+  };
+}
+
+function plannerDecomposerWorkflow() {
+  return [
+    "Use your assigned active project from bootstrap/docs; list projects only when you need to confirm names or operator overrides.",
+    "Find only decomposition container work labeled `decomposition-needed`, `ready-for-decomposition`, `epic`, `story`, or `spike`.",
+    "Claim exactly one decomposition container before creating child work.",
+    "Do not implement code from the parent item.",
+    "Use `decompose_task` or the task decomposition API to create child tasks with role, priority, labels, acceptance criteria, evidence expectations, and sequencing notes.",
+    "Post or verify the parent summary comment lists every child task id clearly until typed hierarchy support lands.",
+    "Move the parent to review with evidence, or blocked if a PM/operator decision is needed."
+  ];
 }
 
 function sharedWorkflow() {

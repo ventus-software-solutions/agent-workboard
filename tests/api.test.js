@@ -1003,6 +1003,70 @@ describe("Agent Workboard API", () => {
     );
   });
 
+  it("documents planner decomposer agents and creates child tasks through the API", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Planner API Project" }).expect(201)).body.project;
+
+    const doc = await request(app).get("/api/agent-docs/planner-agent").expect(200);
+    expect(doc.body.agent).toMatchObject({
+      role: "pm",
+      specialties: expect.arrayContaining(["planner", "decomposition"])
+    });
+    expect(doc.body.agent.workflow.join("\n")).toContain("Do not implement code");
+    expect(doc.body.agent.mcp.then).toContain("decompose_task");
+
+    const parent = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Plan the approvals epic",
+          status: "in_progress",
+          priority: "high",
+          role: "pm",
+          assignee: "planner-agent",
+          labels: ["decomposition-needed", "epic"]
+        })
+        .expect(201)
+    ).body.task;
+
+    const decomposition = await request(app)
+      .post(`/api/tasks/${parent.id}/decompose`)
+      .send({
+        actor: "planner-agent",
+        summary: "Approval epic split into API and UI slices.",
+        children: [
+          {
+            title: "Approval API persistence",
+            role: "implementer",
+            priority: "high",
+            labels: ["backend", "approvals"],
+            acceptanceCriteria: ["Store approval decisions durably."],
+            evidence: "Focused API tests."
+          },
+          {
+            title: "Approval UI review list",
+            role: "implementer",
+            priority: "normal",
+            labels: ["frontend", "approvals"],
+            acceptanceCriteria: ["Render pending approvals by action type."]
+          }
+        ]
+      })
+      .expect(201);
+
+    expect(decomposition.body.childTasks).toHaveLength(2);
+    expect(decomposition.body.childTasks[0]).toMatchObject({
+      projectId: project.id,
+      title: "Approval API persistence",
+      labels: expect.arrayContaining(["backend", "approvals"])
+    });
+    expect(decomposition.body.comment.body).toContain(decomposition.body.childTasks[0].id);
+
+    const refreshedParent = await request(app).get(`/api/tasks/${parent.id}`).expect(200);
+    expect(refreshedParent.body.task.comments[0].body).toContain("Approval epic split into API and UI slices.");
+    expect(refreshedParent.body.task.comments[0].body).toContain(decomposition.body.childTasks[1].id);
+  });
+
   it("bootstraps an explicit agent id and refreshes the same runtime heartbeat", async () => {
     const first = await request(app)
       .post("/api/bootstrap")

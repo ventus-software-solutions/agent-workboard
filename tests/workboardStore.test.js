@@ -1393,6 +1393,118 @@ describe("WorkboardStore", () => {
     expect(claimed.activity[0].message).toContain("Operator asked mcp-agent to rescue the demo task.");
   });
 
+  it("routes decomposition-needed containers only to planner decomposer slots", async () => {
+    const project = await store.createProject({ name: "Planner Routing Project" });
+    const container = await store.createTask({
+      projectId: project.id,
+      title: "Break down the OSS roadmap epic",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      labels: ["mcp", "decomposition-needed", "epic"]
+    });
+    const ordinaryMcpTask = await store.createTask({
+      projectId: project.id,
+      title: "Ordinary MCP implementation",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      labels: ["mcp"]
+    });
+
+    const plannerSlot = await store.acquireAgentSlot({
+      preferredType: "planner-decomposer",
+      runtimeId: "runtime-planner",
+      projectId: project.id,
+      now: "2026-06-13T16:00:00.000Z"
+    });
+
+    expect(plannerSlot).toMatchObject({
+      agentId: "planner-agent",
+      role: "pm",
+      specialties: expect.arrayContaining(["planner", "decomposition"])
+    });
+
+    const plannerNext = store.getNextTaskForAgent("planner-agent", {
+      projectId: project.id,
+      now: "2026-06-13T16:01:00.000Z"
+    });
+    expect(plannerNext.task).toMatchObject({ id: container.id });
+    expect(plannerNext.selection).toMatchObject({
+      claim: {
+        taskId: container.id,
+        assignee: "planner-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      }
+    });
+
+    const implementerNext = store.getNextTaskForAgent("mcp-agent", {
+      projectId: project.id,
+      now: "2026-06-13T16:01:00.000Z"
+    });
+    expect(implementerNext.task).toMatchObject({ id: ordinaryMcpTask.id });
+    expect(implementerNext.candidates.map((candidate) => candidate.id)).not.toContain(container.id);
+  });
+
+  it("creates child tasks and comments a parent decomposition summary", async () => {
+    const project = await store.createProject({ name: "Decomposition Output Project" });
+    const parent = await store.createTask({
+      projectId: project.id,
+      title: "Decompose operator approval epic",
+      status: "in_progress",
+      priority: "high",
+      role: "pm",
+      assignee: "planner-agent",
+      labels: ["decomposition-needed", "epic"]
+    });
+
+    const result = await store.decomposeTask(parent.id, {
+      actor: "planner-agent",
+      summary: "Split the approval epic into backend and frontend slices.",
+      children: [
+        {
+          title: "Backend approval audit trail",
+          role: "implementer",
+          priority: "high",
+          labels: ["backend", "approvals"],
+          acceptanceCriteria: ["Persist approval decisions with actor and timestamp."],
+          evidence: "Focused API test plus full npm test.",
+          sequencing: "Do before the frontend slice."
+        },
+        {
+          title: "Frontend approval review panel",
+          role: "implementer",
+          priority: "normal",
+          labels: ["frontend", "approvals"],
+          acceptanceCriteria: ["Show pending approvals grouped by requested action."],
+          evidence: "Component or e2e coverage for grouping."
+        }
+      ]
+    });
+
+    expect(result.childTasks).toHaveLength(2);
+    expect(result.childTasks[0]).toMatchObject({
+      projectId: project.id,
+      title: "Backend approval audit trail",
+      role: "implementer",
+      priority: "high",
+      labels: expect.arrayContaining(["backend", "approvals"])
+    });
+    expect(result.childTasks[0].description).toContain("Acceptance criteria:");
+    expect(result.childTasks[0].description).toContain("- Persist approval decisions with actor and timestamp.");
+    expect(result.childTasks[0].description).toContain("Evidence expectations:");
+    expect(result.childTasks[0].description).toContain("Sequencing notes:");
+
+    const refreshedParent = store.getTask(parent.id);
+    expect(refreshedParent.comments[0]).toMatchObject({
+      author: "planner-agent"
+    });
+    expect(refreshedParent.comments[0].body).toContain("Split the approval epic into backend and frontend slices.");
+    expect(refreshedParent.comments[0].body).toContain(result.childTasks[0].id);
+    expect(refreshedParent.comments[0].body).toContain(result.childTasks[1].id);
+  });
+
   it("returns the next claimable task with stale-safe claim preconditions", async () => {
     const project = await store.createProject({ name: "Next Task Project" });
     const assigned = await store.createTask({

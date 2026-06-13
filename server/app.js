@@ -284,6 +284,15 @@ export function createApp({ store, integrationStatusProvider = getIntegrationSta
     }
   });
 
+  app.post("/api/tasks/:taskId/decompose", async (req, res, next) => {
+    try {
+      const result = await store.decomposeTask(req.params.taskId, req.body);
+      res.status(201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/tasks/:taskId/comments", async (req, res, next) => {
     try {
       const comment = await store.addComment(req.params.taskId, req.body);

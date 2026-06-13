@@ -24,6 +24,9 @@ const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
 const DOGFOOD_PROJECT_KEY = "DOGFOOD";
+const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
+const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story", "spike"]);
+const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
 
 export const ROLES = [
@@ -165,6 +168,14 @@ const DEFAULT_AGENT_TYPES = [
     defaultWorkMode: "single-task"
   },
   {
+    id: PLANNER_DECOMPOSER_TYPE_ID,
+    role: "pm",
+    capacity: 2,
+    slotIds: ["planner-agent", "decomposer-agent"],
+    specialties: ["pm", "planner", "decomposition", "workflow", "work-items"],
+    defaultWorkMode: "single-task"
+  },
+  {
     id: "implementer-backend",
     role: "implementer",
     capacity: 4,
@@ -280,6 +291,9 @@ const AGENT_TYPE_ALIASES = new Map([
   ["test", "tester"],
   ["tests", "tester"],
   ["review", "reviewer"],
+  ["planner", PLANNER_DECOMPOSER_TYPE_ID],
+  ["decomposer", PLANNER_DECOMPOSER_TYPE_ID],
+  ["decomposition", PLANNER_DECOMPOSER_TYPE_ID],
   ["docs-agent", "docs"],
   ["documentation", "docs"]
 ]);
@@ -1416,6 +1430,52 @@ export class WorkboardStore {
     }
     await this.save();
     return task;
+  }
+
+  async decomposeTask(parentTaskId, input = {}) {
+    const parent = this.getTask(parentTaskId);
+    if (!isDecompositionTask(parent)) {
+      throw httpError("Task is not marked for decomposition. Add a decomposition-needed, ready-for-decomposition, epic, story, or spike label first.", 400, {
+        taskId: parent.id,
+        labels: parent.labels
+      });
+    }
+
+    const actor = normalizeText(input.actor) || "planner-agent";
+    const summary = normalizeText(input.summary);
+    const children = normalizeDecompositionChildren(input.children, parent);
+    const childTasks = [];
+
+    for (const child of children) {
+      const childTask = await this.createTask({
+        projectId: parent.projectId,
+        title: child.title,
+        description: buildDecompositionChildDescription(child),
+        status: child.status,
+        priority: child.priority,
+        role: child.role,
+        assignee: child.assignee,
+        labels: child.labels,
+        actor
+      });
+      childTasks.push(childTask);
+    }
+
+    const comment = await this.addComment(parent.id, {
+      author: actor,
+      body: buildDecompositionSummaryComment({ parent, summary, children, childTasks })
+    });
+
+    return {
+      parentTask: this.getTask(parent.id),
+      childTasks,
+      comment,
+      decomposition: {
+        parentTaskId: parent.id,
+        childTaskIds: childTasks.map((task) => task.id),
+        fallbackRelationship: "parent-comment"
+      }
+    };
   }
 
   getTask(taskId) {
@@ -2560,6 +2620,37 @@ function normalizeTaskLabels(value, { defaultValue = [] } = {}) {
   return [...new Set(labels)];
 }
 
+function normalizeDecompositionChildren(value, parent) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw httpError("Decomposition children must be a non-empty array.", 400, { field: "children" });
+  }
+  if (value.length > MAX_DECOMPOSITION_CHILDREN) {
+    throw httpError(`Decomposition cannot create more than ${MAX_DECOMPOSITION_CHILDREN} child tasks at once.`, 400, {
+      field: "children",
+      max: MAX_DECOMPOSITION_CHILDREN,
+      count: value.length
+    });
+  }
+
+  return value.map((childInput, index) => {
+    const child = normalizeObject(childInput);
+    return {
+      title: normalizeTaskTitle(child.title),
+      description: normalizeText(child.description),
+      status: readTaskEnumField(child, "status", STATUS_IDS, "backlog"),
+      priority: readTaskEnumField(child, "priority", PRIORITY_IDS, parent.priority || "normal"),
+      role: readTaskEnumField(child, "role", ROLE_IDS, "implementer"),
+      assignee: normalizeText(child.assignee),
+      labels: normalizeTaskLabels(child.labels, { defaultValue: [] }),
+      acceptanceCriteria: normalizeStringList(child.acceptanceCriteria || child.acceptance || child.criteria),
+      dependencies: normalizeStringList(child.dependencies),
+      evidence: normalizeText(child.evidence || child.evidenceExpectations),
+      sequencing: normalizeText(child.sequencing || child.sequencingNotes),
+      index
+    };
+  });
+}
+
 function normalizeLabels(value) {
   const list = Array.isArray(value) ? value : normalizeText(value).split(",");
   return [...new Set(list.map((label) => normalizeText(label).toLowerCase()).filter(Boolean))].slice(0, 12);
@@ -2680,6 +2771,20 @@ function taskMatchesNextTaskScope(task, input = {}) {
   return !["done", "blocked"].includes(task.status);
 }
 
+function isDecompositionTask(task) {
+  return task.labels.some((label) => DECOMPOSITION_LABELS.has(label));
+}
+
+function isPlannerDecomposerProfile(profile) {
+  return profile.type?.id === PLANNER_DECOMPOSER_TYPE_ID;
+}
+
+function taskIsEligibleForProfile(task, profile) {
+  const decompositionTask = isDecompositionTask(task);
+  if (isPlannerDecomposerProfile(profile)) return decompositionTask;
+  return !decompositionTask;
+}
+
 function reviewerCandidateBuckets(tasks, agentId, profile) {
   return [
     {
@@ -2709,31 +2814,63 @@ function reviewerCandidateBuckets(tasks, agentId, profile) {
 }
 
 function workerCandidateBuckets(tasks, agentId, profile) {
+  const eligibleTasks = tasks.filter((task) => taskIsEligibleForProfile(task, profile));
+  const specialtyTasks = isPlannerDecomposerProfile(profile)
+    ? eligibleTasks.filter((task) => ["ready", "backlog"].includes(task.status) && isUnassignedOrMine(task, agentId))
+    : eligibleTasks.filter(
+        (task) =>
+          ["ready", "backlog"].includes(task.status) &&
+          isUnassignedOrMine(task, agentId) &&
+          labelsIntersect(task.labels, profile.specialties)
+      );
   return [
     {
       reason: "assigned_to_agent",
-      tasks: sortNextTasks(tasks.filter((task) => isClaimableStatus(task.status, profile.role) && task.assignee === agentId))
+      tasks: sortNextTasks(eligibleTasks.filter((task) => isClaimableStatus(task.status, profile.role) && task.assignee === agentId))
     },
     {
       reason: "role_queue",
       tasks: sortNextTasks(
-        tasks.filter(
+        eligibleTasks.filter(
           (task) => isClaimableStatus(task.status, profile.role) && task.role === profile.role && isUnassignedOrMine(task, agentId)
         )
       )
     },
     {
       reason: "specialty_match",
-      tasks: sortNextTasks(
-        tasks.filter(
-          (task) =>
-            ["ready", "backlog"].includes(task.status) &&
-            isUnassignedOrMine(task, agentId) &&
-            labelsIntersect(task.labels, profile.specialties)
-        )
-      )
+      tasks: sortNextTasks(specialtyTasks)
     }
   ];
+}
+
+function buildDecompositionChildDescription(child) {
+  const sections = [];
+  if (child.description) sections.push(child.description);
+  if (child.acceptanceCriteria.length > 0) {
+    sections.push(["Acceptance criteria:", ...child.acceptanceCriteria.map((item) => `- ${item}`)].join("\n"));
+  }
+  if (child.evidence) {
+    sections.push(["Evidence expectations:", child.evidence].join("\n"));
+  }
+  if (child.dependencies.length > 0) {
+    sections.push(["Dependencies:", ...child.dependencies.map((item) => `- ${item}`)].join("\n"));
+  }
+  if (child.sequencing) {
+    sections.push(["Sequencing notes:", child.sequencing].join("\n"));
+  }
+  return sections.join("\n\n");
+}
+
+function buildDecompositionSummaryComment({ summary, children, childTasks }) {
+  const lines = ["Decomposition summary:", summary || "Created child tasks from this decomposition pass.", "", "Child tasks:"];
+  childTasks.forEach((task, index) => {
+    const child = children[index];
+    lines.push(`- ${task.id}: ${task.title} (role=${task.role}, priority=${task.priority}, status=${task.status})`);
+    if (child.sequencing) lines.push(`  Sequencing: ${child.sequencing}`);
+    if (child.evidence) lines.push(`  Evidence: ${child.evidence}`);
+  });
+  lines.push("", "Fallback relationship: child task ids are listed here until typed hierarchy support lands.");
+  return lines.join("\n");
 }
 
 function sortNextTasks(tasks) {
@@ -2898,6 +3035,7 @@ function labelsIntersect(left = [], right = []) {
 
 function inferRoleFromAgentId(agentId) {
   const normalized = normalizeText(agentId).toLowerCase();
+  if (normalized.includes("planner") || normalized.includes("decomposer")) return "pm";
   if (normalized.includes("pm")) return "pm";
   if (normalized.includes("review") || normalized.includes("security-reviewer")) return "reviewer";
   if (normalized.includes("test") || normalized.includes("qa")) return "tester";
@@ -2911,6 +3049,7 @@ function inferSpecialtiesFromAgentId(agentId) {
   if (normalized.includes("backend") || normalized.includes("api")) specialties.push("backend", "api");
   if (normalized.includes("frontend") || normalized.includes("ui")) specialties.push("frontend", "ui");
   if (normalized.includes("mcp")) specialties.push("mcp", "agent-tools");
+  if (normalized.includes("planner") || normalized.includes("decomposer")) specialties.push("planner", "decomposition");
   if (normalized.includes("docs")) specialties.push("docs");
   if (normalized.includes("security")) specialties.push("security");
   if (normalized.includes("release")) specialties.push("release");
