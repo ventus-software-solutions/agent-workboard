@@ -46,7 +46,8 @@ export function createApp({ store }) {
       statuses: store.statuses(),
       agentSlots: agentSlotRegistry.slots,
       agentTypes: agentSlotRegistry.types,
-      baseUrl
+      baseUrl,
+      projectContext: store.getAgentProjectContext(req.params.agentId)
     });
 
     if (req.query.format === "md" || req.query.format === "markdown" || req.accepts(["json", "text"]) === "text") {

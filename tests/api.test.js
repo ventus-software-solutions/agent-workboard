@@ -613,6 +613,62 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("returns active project context from bootstrap, agent docs, and slot registry", async () => {
+    const dogfood = (await request(app).post("/api/projects").send({ name: "Dogfood", key: "DOGFOOD" }).expect(201)).body.project;
+
+    const bootstrap = await request(app)
+      .post("/api/bootstrap")
+      .send({
+        agentId: "mcp-agent",
+        runtimeId: "api-project-runtime",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+
+    expect(bootstrap.body).toMatchObject({
+      agentId: "mcp-agent",
+      activeProjectId: dogfood.id,
+      activeProject: {
+        id: dogfood.id,
+        key: "DOGFOOD",
+        name: "Dogfood"
+      },
+      nextTask: {
+        projectId: dogfood.id
+      }
+    });
+    expect(bootstrap.body.nextTask.url).toContain(`/api/agents/mcp-agent/next-task`);
+    expect(bootstrap.body.nextTask.url).toContain(`projectId=${encodeURIComponent(dogfood.id)}`);
+
+    const doc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
+    expect(doc.body.agent).toMatchObject({
+      activeProjectId: dogfood.id,
+      activeProject: {
+        key: "DOGFOOD",
+        name: "Dogfood"
+      }
+    });
+    expect(doc.body.agent.api.listTasks).toContain(`projectId=${encodeURIComponent(dogfood.id)}`);
+    expect(doc.body.agent.api.talks).toContain(encodeURIComponent(dogfood.id));
+
+    const markdown = await request(app).get("/api/agent-docs/mcp-agent?format=md").expect(200);
+    expect(markdown.text).toContain("Assigned Project");
+    expect(markdown.text).toContain(`DOGFOOD (${dogfood.id})`);
+
+    const slots = await request(app).get("/api/agent-slots").query({ now: "2026-06-12T15:01:00.000Z" }).expect(200);
+    expect(slots.body.slots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "mcp-agent",
+          activeProjectId: dogfood.id,
+          activeProject: expect.objectContaining({
+            key: "DOGFOOD"
+          })
+        })
+      ])
+    );
+  });
+
   it("bootstraps an explicit agent id and refreshes the same runtime heartbeat", async () => {
     const first = await request(app)
       .post("/api/bootstrap")

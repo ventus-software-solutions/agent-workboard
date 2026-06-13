@@ -934,6 +934,114 @@ describe("WorkboardStore", () => {
     expect(nextSlot.agentId).toBe("implementer-backend-2");
   });
 
+  it("defaults bootstrapped agents to their active project and only searches all projects when requested", async () => {
+    const dogfood = await store.createProject({ name: "Dogfood", key: "DOGFOOD" });
+    const dogfoodTask = await store.createTask({
+      projectId: dogfood.id,
+      title: "DOGFOOD MCP work",
+      status: "ready",
+      priority: "normal",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+    const demoTask = await store.createTask({
+      projectId: "project_demo",
+      title: "DEMO MCP work should not leak",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      assignee: "mcp-agent",
+      labels: ["mcp"]
+    });
+
+    const acquired = await store.acquireAgentSlot({
+      agentId: "mcp-agent",
+      runtimeId: "runtime-project-scope",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(acquired).toMatchObject({
+      agentId: "mcp-agent",
+      activeProjectId: dogfood.id,
+      activeProject: {
+        id: dogfood.id,
+        key: "DOGFOOD",
+        name: "Dogfood"
+      }
+    });
+    expect(acquired.nextTask).toMatchObject({
+      projectId: dogfood.id
+    });
+
+    const scopedNext = store.getNextTaskForAgent("mcp-agent", {
+      now: "2026-06-12T15:01:00.000Z"
+    });
+    expect(scopedNext.agent).toMatchObject({
+      activeProjectId: dogfood.id,
+      activeProject: {
+        key: "DOGFOOD"
+      }
+    });
+    expect(scopedNext.task).toMatchObject({ id: dogfoodTask.id });
+    expect(scopedNext.candidates.map((candidate) => candidate.id)).not.toContain(demoTask.id);
+
+    const allProjectsNext = store.getNextTaskForAgent("mcp-agent", {
+      allProjects: true,
+      now: "2026-06-12T15:01:00.000Z"
+    });
+    expect(allProjectsNext.task).toMatchObject({ id: demoTask.id });
+    expect(allProjectsNext.selection).toMatchObject({
+      projectScope: "all"
+    });
+  });
+
+  it("rejects bootstrapped cross-project claims unless an override reason is supplied", async () => {
+    const dogfood = await store.createProject({ name: "Dogfood", key: "DOGFOOD" });
+    const demoTask = await store.createTask({
+      projectId: "project_demo",
+      title: "DEMO task outside active project",
+      status: "ready",
+      priority: "urgent",
+      role: "implementer",
+      labels: ["mcp"]
+    });
+
+    await store.acquireAgentSlot({
+      agentId: "mcp-agent",
+      activeProjectId: dogfood.id,
+      runtimeId: "runtime-claim-scope",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    await expect(
+      store.claimTask(demoTask.id, {
+        assignee: "mcp-agent",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        activeProjectId: dogfood.id,
+        taskProjectId: "project_demo"
+      }
+    });
+
+    const claimed = await store.claimTask(demoTask.id, {
+      assignee: "mcp-agent",
+      expectedStatus: "ready",
+      expectedAssignee: "",
+      projectOverrideReason: "Operator asked mcp-agent to rescue the demo task."
+    });
+    expect(claimed).toMatchObject({
+      id: demoTask.id,
+      status: "in_progress",
+      assignee: "mcp-agent"
+    });
+    expect(claimed.activity[0].message).toContain("Operator asked mcp-agent to rescue the demo task.");
+  });
+
   it("returns the next claimable task with stale-safe claim preconditions", async () => {
     const project = await store.createProject({ name: "Next Task Project" });
     const assigned = await store.createTask({
@@ -1290,7 +1398,7 @@ describe("WorkboardStore", () => {
 
     expect(next.task).toBeNull();
     expect(next.candidates).toEqual([]);
-    expect(next.selection).toEqual({ reason: "no_eligible_work" });
+    expect(next.selection).toMatchObject({ reason: "no_eligible_work" });
   });
 
   it("prioritizes review-column work over assigned ready reviewer wrappers", async () => {
@@ -1353,8 +1461,10 @@ describe("WorkboardStore", () => {
   });
 
   it("records agent presence and no-eligible-work reports", async () => {
+    const dogfood = await store.createProject({ name: "Dogfood", key: "DOGFOOD" });
     const active = await store.updateAgentPresence("mcp-agent", {
       state: "active",
+      activeProjectId: dogfood.id,
       currentTaskId: "task_123",
       workMode: "single-task",
       message: "Working the claimed helper task.",
@@ -1365,6 +1475,11 @@ describe("WorkboardStore", () => {
       agentId: "mcp-agent",
       state: "active",
       status: "online",
+      activeProjectId: dogfood.id,
+      activeProject: {
+        id: dogfood.id,
+        key: "DOGFOOD"
+      },
       currentTaskId: "task_123",
       workMode: "single-task",
       message: "Working the claimed helper task.",

@@ -24,10 +24,18 @@ describe("Agent Workboard MCP tools", () => {
       listProjects: vi.fn(() => []),
       listTasks: vi.fn(() => []),
       createTask: vi.fn(),
-      claimTask: vi.fn(),
-      acquireAgentSlot: vi.fn(),
+      claimTask: vi.fn((taskId, input) => ({ id: taskId, ...input })),
+      acquireAgentSlot: vi.fn((input) => ({ agentId: input.agentId || "mcp-agent", ...input })),
       updateTask: vi.fn(),
       addComment: vi.fn(),
+      getAgentProjectContext: vi.fn(() => ({
+        activeProjectId: "project_dogfood",
+        activeProject: {
+          id: "project_dogfood",
+          key: "DOGFOOD",
+          name: "Dogfood"
+        }
+      })),
       listCapabilities: vi.fn(() => [
         {
           id: "cap_mcp_workflow_tools",
@@ -44,9 +52,10 @@ describe("Agent Workboard MCP tools", () => {
         task: { id: "task_123" },
         selection: { reason: "assigned_to_agent" }
       })),
-      updateAgentPresence: vi.fn(() => ({
-        agentId: "mcp-agent",
-        state: "active"
+      updateAgentPresence: vi.fn((agentId, input) => ({
+        agentId,
+        ...input,
+        state: input.state || "active"
       })),
       reportNoEligibleWork: vi.fn(() => ({
         presence: { agentId: "mcp-agent", state: "idle" },
@@ -66,6 +75,34 @@ describe("Agent Workboard MCP tools", () => {
     expect(fakeStore.getNextTaskForAgent).toHaveBeenCalledWith("mcp-agent", {
       agentId: "mcp-agent",
       projectId: "project_123"
+    });
+
+    expect(parseTextResult(await getNext.handler({ agentId: "mcp-agent", allProjects: true }))).toMatchObject({
+      task: { id: "task_123" },
+      selection: { reason: "assigned_to_agent" }
+    });
+    expect(fakeStore.getNextTaskForAgent).toHaveBeenCalledWith("mcp-agent", {
+      agentId: "mcp-agent",
+      allProjects: true
+    });
+
+    const acquireSlot = registrations.find((registration) => registration.name === "acquire_agent_slot");
+    expect(
+      parseTextResult(
+        await acquireSlot.handler({
+          agentId: "mcp-agent",
+          activeProjectId: "project_dogfood",
+          runtimeId: "runtime-mcp"
+        })
+      )
+    ).toMatchObject({
+      agentId: "mcp-agent",
+      activeProjectId: "project_dogfood"
+    });
+    expect(fakeStore.acquireAgentSlot).toHaveBeenCalledWith({
+      agentId: "mcp-agent",
+      activeProjectId: "project_dogfood",
+      runtimeId: "runtime-mcp"
     });
 
     const claimTask = registrations.find((registration) => registration.name === "claim_task");
@@ -89,11 +126,36 @@ describe("Agent Workboard MCP tools", () => {
       assignee: "reviewer"
     });
 
+    expect(
+      parseTextResult(
+        await claimTask.handler({
+          taskId: "task_123",
+          assignee: "mcp-agent",
+          projectOverrideReason: "Operator asked this agent to take a DEMO task."
+        })
+      )
+    ).toMatchObject({
+      task: {
+        id: "task_123",
+        assignee: "mcp-agent",
+        projectOverrideReason: "Operator asked this agent to take a DEMO task."
+      }
+    });
+
     const updatePresence = registrations.find((registration) => registration.name === "update_presence");
-    expect(parseTextResult(await updatePresence.handler({ agentId: "mcp-agent", state: "active" }))).toMatchObject({
+    expect(
+      parseTextResult(
+        await updatePresence.handler({
+          agentId: "mcp-agent",
+          state: "active",
+          activeProjectId: "project_dogfood"
+        })
+      )
+    ).toMatchObject({
       presence: {
         agentId: "mcp-agent",
-        state: "active"
+        state: "active",
+        activeProjectId: "project_dogfood"
       }
     });
 
