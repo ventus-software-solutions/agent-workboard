@@ -64,6 +64,8 @@ The MCP server exposes project/task listing, task creation, slot acquisition, ne
 
 Every agent can get its operating instructions from the board itself.
 
+See the [agent spawning guide](docs/agent-spawning.md) for operator steps, specialist prompts, reviewer queue handling, blocked-agent signals, and cleanup.
+
 For copy-paste continuous worker prompts, see [continuous agent prompt templates](docs/continuous-agent-prompts.md).
 
 For a PM agent:
