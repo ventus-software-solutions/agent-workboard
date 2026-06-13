@@ -678,9 +678,27 @@ export function App() {
               </>
             ) : view === "agents" ? (
               <>
-                <Stat icon={Bot} label="Agents" value={agentRegistry.totalAgents} />
-                <Stat icon={Clock3} label="Busy" value={agentRegistry.busyAgents} />
-                <Stat icon={AlertCircle} label="Blocked" value={agentRegistry.blockedAgents} />
+                <Stat
+                  icon={Bot}
+                  label="Configured slots"
+                  value={agentRegistry.configuredAgentCount}
+                  sublabel={`${agentRegistry.historicalAssigneeCount} historical listed`}
+                  title="Configured agent slots. Historical task-only assignees are listed separately below and do not count as active capacity."
+                />
+                <Stat
+                  icon={Clock3}
+                  label="Busy"
+                  value={agentRegistry.busyAgents}
+                  sublabel="current work"
+                  title="Agents with an in-progress task, including task-only assignees only when they have current work."
+                />
+                <Stat
+                  icon={AlertCircle}
+                  label="Blocked"
+                  value={agentRegistry.blockedAgents}
+                  sublabel="current work"
+                  title="Agents with blocked open work, excluding completed-only historical identities."
+                />
               </>
             ) : (
               <>
@@ -847,11 +865,14 @@ export function App() {
   );
 }
 
-function Stat({ icon: Icon, label, value }) {
+function Stat({ icon: Icon, label, value, sublabel = "", title = "" }) {
   return (
-    <div className="stat">
+    <div className="stat" title={title || sublabel}>
       <Icon size={16} />
-      <span>{label}</span>
+      <span className="statLabel">
+        <span>{label}</span>
+        {sublabel && <small>{sublabel}</small>}
+      </span>
       <strong>{value}</strong>
     </div>
   );
@@ -1204,18 +1225,35 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent }) {
               <h3>{group.label}</h3>
             </div>
             <div className="agentGroupStats">
-              <span>{group.total} total</span>
+              <span>{group.configured} slots</span>
+              {group.historical > 0 && <span>{group.historical} historical</span>}
               <span>{group.busy} busy</span>
               <span>{group.blocked} blocked</span>
               <span>{group.idle} idle</span>
             </div>
           </div>
 
-          <div className="agentGrid">
-            {group.agents.map((agent) => (
-              <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
-            ))}
-          </div>
+          {group.configuredAgents.length > 0 && (
+            <div className="agentGrid">
+              {group.configuredAgents.map((agent) => (
+                <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
+              ))}
+            </div>
+          )}
+
+          {group.historicalAgents.length > 0 && (
+            <>
+              <div className="agentSubgroupHeader">
+                <span>Historical assignees</span>
+                <small>Task-only identities, not configured capacity</small>
+              </div>
+              <div className="agentGrid historicalAgentGrid">
+                {group.historicalAgents.map((agent) => (
+                  <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
+                ))}
+              </div>
+            </>
+          )}
         </section>
       ))}
     </section>
@@ -1227,7 +1265,7 @@ function AgentCard({ agent, onOpenTask, onFilterAgent }) {
   const linkedTasks = agent.assignedTasks.slice(0, 4);
 
   return (
-    <article className={`agentCard agentStatus-${agent.status}`} data-testid="agent-card">
+    <article className={`agentCard agentStatus-${agent.status} agentSource-${agent.source}`} data-testid="agent-card">
       <div className="agentCardHeader">
         <div className="agentIdentity">
           <span className="agentIcon">
@@ -1243,6 +1281,7 @@ function AgentCard({ agent, onOpenTask, onFilterAgent }) {
 
       <div className="agentMeta">
         <span>{agent.roleLabel}</span>
+        {agent.source === "task-assignee" && <span>historical assignee</span>}
         {agent.workMode && <span>{agent.workMode}</span>}
         {agent.stale && <span>stale</span>}
         {agent.available && <span>available</span>}

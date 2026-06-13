@@ -120,6 +120,16 @@ const tasks = [
     updatedAt: "2026-06-12T15:20:00.000Z"
   },
   {
+    id: "task-historical",
+    title: "Closed one-off implementation",
+    status: "done",
+    priority: "low",
+    role: "implementer",
+    assignee: "implementer-retired",
+    labels: ["cleanup"],
+    updatedAt: "2026-06-12T12:30:00.000Z"
+  },
+  {
     id: "task-review",
     title: "Review registry slice",
     status: "review",
@@ -146,13 +156,26 @@ describe("agent registry derivation", () => {
     const registry = buildAgentRegistry({ agentSlots, tasks, roles });
 
     expect(registry.groups.map((group) => group.role)).toEqual(["pm", "implementer", "reviewer", "tester"]);
-    expect(registry.totalAgents).toBe(5);
+    expect(registry.totalAgents).toBe(6);
+    expect(registry.configuredAgentCount).toBe(4);
+    expect(registry.historicalAssigneeCount).toBe(2);
     expect(registry.busyAgents).toBe(1);
     expect(registry.blockedAgents).toBe(1);
-    expect(registry.idleAgents).toBe(2);
+    expect(registry.idleAgents).toBe(3);
 
     const implementerGroup = registry.groups.find((group) => group.role === "implementer");
-    expect(implementerGroup.agents.map((agent) => agent.id)).toEqual(["implementer-backend-1", "implementer-adhoc"]);
+    expect(implementerGroup).toMatchObject({
+      total: 3,
+      configured: 1,
+      historical: 2
+    });
+    expect(implementerGroup.agents.map((agent) => agent.id)).toEqual([
+      "implementer-backend-1",
+      "implementer-adhoc",
+      "implementer-retired"
+    ]);
+    expect(implementerGroup.configuredAgents.map((agent) => agent.id)).toEqual(["implementer-backend-1"]);
+    expect(implementerGroup.historicalAgents.map((agent) => agent.id)).toEqual(["implementer-adhoc", "implementer-retired"]);
 
     const backendAgent = registry.agents.find((agent) => agent.id === "implementer-backend-1");
     expect(backendAgent).toMatchObject({
@@ -183,6 +206,15 @@ describe("agent registry derivation", () => {
       statusLabel: "Blocked",
       blockedTaskCount: 1,
       specialties: ["frontend", "ui"]
+    });
+
+    const retiredAgent = registry.agents.find((agent) => agent.id === "implementer-retired");
+    expect(retiredAgent).toMatchObject({
+      source: "task-assignee",
+      status: "idle",
+      assignedTaskCount: 1,
+      openTaskCount: 0,
+      specialties: ["cleanup"]
     });
 
     const reviewerAgent = registry.agents.find((agent) => agent.id === "reviewer-agent");

@@ -75,14 +75,22 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
   }
 
   const agents = [...agentsById.values()].map(finalizeAgent).sort(compareAgents);
+  const configuredAgents = agents.filter(isConfiguredAgent);
+  const historicalAgents = agents.filter(isHistoricalAssignee);
   const roleOrder = orderedRoles(roles, agents);
   const groups = roleOrder.map((role) => {
     const groupAgents = agents.filter((agent) => agent.role === role);
+    const configuredGroupAgents = groupAgents.filter(isConfiguredAgent);
+    const historicalGroupAgents = groupAgents.filter(isHistoricalAssignee);
     return {
       role,
       label: roleById.get(role)?.label || titleize(role),
       agents: groupAgents,
+      configuredAgents: configuredGroupAgents,
+      historicalAgents: historicalGroupAgents,
       total: groupAgents.length,
+      configured: configuredGroupAgents.length,
+      historical: historicalGroupAgents.length,
       busy: groupAgents.filter((agent) => agent.status === "busy").length,
       blocked: groupAgents.filter((agent) => agent.status === "blocked").length,
       idle: groupAgents.filter((agent) => agent.status === "idle").length
@@ -93,10 +101,20 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     agents,
     groups,
     totalAgents: agents.length,
+    configuredAgentCount: configuredAgents.length,
+    historicalAssigneeCount: historicalAgents.length,
     busyAgents: agents.filter((agent) => agent.status === "busy").length,
     blockedAgents: agents.filter((agent) => agent.status === "blocked").length,
     idleAgents: agents.filter((agent) => agent.status === "idle").length
   };
+}
+
+function isConfiguredAgent(agent) {
+  return agent.source === "slot";
+}
+
+function isHistoricalAssignee(agent) {
+  return agent.source === "task-assignee";
 }
 
 function finalizeAgent(agent) {
