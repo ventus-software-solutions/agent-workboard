@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../server/app.js";
 import { WorkboardStore } from "../server/storage/workboardStore.js";
+import { buildWorktreeCleanupReport } from "../server/worktreeCleanup.js";
 
 let tempDir;
 let store;
@@ -312,6 +313,136 @@ describe("Agent Workboard API", () => {
 
     const tools = await request(app).get("/api/mcp/tools").expect(200);
     expect(tools.body.tools).toEqual(expect.arrayContaining(["post_talk_message", "list_talk_messages"]));
+  });
+
+  it("exposes a worktree cleanup dry-run report for operator coordination", async () => {
+    const cleanupApp = createApp({
+      store,
+      worktreeCleanupProvider: ({ store: reportStore, mainRef }) =>
+        buildWorktreeCleanupReport({
+          tasks: reportStore.listTasks(),
+          mainRef,
+          generatedAt: "2026-06-01T12:00:00.000Z",
+          worktrees: [
+            {
+              path: "C:/tmp/wt-agent-workboard-implementer-clean",
+              branch: "implementer/clean",
+              head: "abc1234",
+              dirty: false,
+              untrackedCount: 0,
+              aheadMain: 0,
+              behindMain: 0,
+              mergedIntoMain: true
+            }
+          ]
+        })
+    });
+
+    const project = (await request(cleanupApp).post("/api/projects").send({ name: "Cleanup API" }).expect(201)).body.project;
+    const task = (
+      await request(cleanupApp)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Merged branch cleanup",
+          status: "done",
+          role: "reviewer",
+          completion: {
+            completionType: "merged",
+            branch: "implementer/clean",
+            commitSha: "abc1234",
+            mergedTo: "main"
+          }
+        })
+        .expect(201)
+    ).body.task;
+
+    const response = await request(cleanupApp).get("/api/worktree-cleanup?mainRef=main").expect(200);
+
+    expect(response.body.report).toMatchObject({
+      mainRef: "main",
+      counts: {
+        cleanupReady: 1
+      },
+      items: [
+        {
+          branch: "implementer/clean",
+          status: "cleanup-ready",
+          cleanupEligible: true,
+          task: {
+            id: task.id,
+            status: "done"
+          },
+          completion: {
+            branch: "implementer/clean",
+            commitSha: "abc1234"
+          },
+          commands: {
+            removeWorktree: "git worktree remove C:/tmp/wt-agent-workboard-implementer-clean",
+            deleteBranch: "git branch -d implementer/clean"
+          }
+        }
+      ]
+    });
+  });
+
+  it("rejects incomplete worktree cleanup API requests before the action runs", async () => {
+    const calls = [];
+    const cleanupApp = createApp({
+      store,
+      worktreeCleanupAction: async (input) => {
+        calls.push(input);
+        return { cleaned: true };
+      }
+    });
+
+    const response = await request(cleanupApp)
+      .post("/api/worktree-cleanup/cleanup")
+      .send({
+        branch: "implementer/clean"
+      })
+      .expect(400);
+
+    expect(response.body.error).toMatchObject({
+      message: "Cleanup request must identify one current cleanup candidate."
+    });
+    expect(response.body.error.details.missing).toEqual(["taskId", "worktreePath", "expectedHead"]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("runs guarded worktree cleanup through the API", async () => {
+    const cleanupApp = createApp({
+      store,
+      worktreeCleanupAction: async ({ taskId, branch, worktreePath, expectedHead, actor }) => ({
+        cleaned: true,
+        taskId,
+        branch,
+        worktreePath,
+        expectedHead,
+        actor,
+        actions: ["worktree.remove", "branch.delete"]
+      })
+    });
+
+    const response = await request(cleanupApp)
+      .post("/api/worktree-cleanup/cleanup")
+      .send({
+        taskId: "task_clean",
+        branch: "implementer/clean",
+        worktreePath: "C:/tmp/wt-clean",
+        expectedHead: "abc1234",
+        actor: "operator-ui"
+      })
+      .expect(200);
+
+    expect(response.body.cleanup).toMatchObject({
+      cleaned: true,
+      taskId: "task_clean",
+      branch: "implementer/clean",
+      worktreePath: "C:/tmp/wt-clean",
+      expectedHead: "abc1234",
+      actions: ["worktree.remove", "branch.delete"]
+    });
   });
 
   it("exposes capability CRUD, filtering, and task completion links", async () => {

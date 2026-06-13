@@ -77,6 +77,12 @@ export const api = {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/operator-approvals${params.size ? `?${params}` : ""}`);
   },
+  worktreeCleanup: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/worktree-cleanup${params.size ? `?${params}` : ""}`);
+  },
+  cleanupWorktree: (cleanup) =>
+    request("/api/worktree-cleanup/cleanup", { method: "POST", body: JSON.stringify(cleanup) }),
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),
