@@ -21,11 +21,51 @@ describe("Agent Workboard MCP tools", () => {
     const fakeStore = {
       roles: () => [],
       statuses: () => [],
+      listAgentSlots: vi.fn(() => ({
+        types: [
+          {
+            id: "mcp",
+            role: "implementer",
+            specialties: ["mcp", "agent-tools"],
+            defaultWorkMode: "single-task",
+            slotIds: ["mcp-agent"]
+          }
+        ],
+        slots: [
+          {
+            id: "mcp-agent",
+            typeId: "mcp",
+            role: "implementer",
+            specialties: ["mcp", "agent-tools"],
+            workMode: "single-task",
+            slotNumber: 1
+          }
+        ]
+      })),
       listProjects: vi.fn(() => []),
       listTasks: vi.fn(() => []),
       createTask: vi.fn(),
       claimTask: vi.fn((taskId, input) => ({ id: taskId, ...input })),
-      acquireAgentSlot: vi.fn((input) => ({ agentId: input.agentId || "mcp-agent", ...input })),
+      acquireAgentSlot: vi.fn((input) => ({
+        acquired: true,
+        agentId: input.agentId || "mcp-agent",
+        typeId: "mcp",
+        role: "implementer",
+        specialties: ["mcp", "agent-tools"],
+        slotNumber: 1,
+        workMode: "single-task",
+        activeProjectId: input.activeProjectId,
+        activeProject: input.activeProjectId
+          ? {
+              id: input.activeProjectId,
+              key: "DOGFOOD",
+              name: "Dogfood"
+            }
+          : null,
+        lease: {
+          expiresAt: "2026-06-12T15:05:00.000Z"
+        }
+      })),
       updateTask: vi.fn(),
       addComment: vi.fn(),
       getAgentProjectContext: vi.fn(() => ({
@@ -87,17 +127,26 @@ describe("Agent Workboard MCP tools", () => {
     });
 
     const acquireSlot = registrations.find((registration) => registration.name === "acquire_agent_slot");
-    expect(
-      parseTextResult(
-        await acquireSlot.handler({
-          agentId: "mcp-agent",
-          activeProjectId: "project_dogfood",
-          runtimeId: "runtime-mcp"
-        })
-      )
-    ).toMatchObject({
+    const acquiredSlot = parseTextResult(
+      await acquireSlot.handler({
+        agentId: "mcp-agent",
+        activeProjectId: "project_dogfood",
+        runtimeId: "runtime-mcp"
+      })
+    );
+    expect(acquiredSlot).toMatchObject({
       agentId: "mcp-agent",
-      activeProjectId: "project_dogfood"
+      activeProjectId: "project_dogfood",
+      instructions: {
+        activeProjectId: "project_dogfood",
+        activeProject: {
+          key: "DOGFOOD"
+        },
+        integrationStatus: {
+          sourceOfTruth: expect.any(String),
+          baseRef: expect.any(String)
+        }
+      }
     });
     expect(fakeStore.acquireAgentSlot).toHaveBeenCalledWith({
       agentId: "mcp-agent",
@@ -140,6 +189,45 @@ describe("Agent Workboard MCP tools", () => {
         assignee: "mcp-agent",
         projectOverrideReason: "Operator asked this agent to take a DEMO task."
       }
+    });
+
+    const bootstrap = parseTextResult(
+      await acquireSlot.handler({
+        preferredType: "mcp",
+        runtimeId: "runtime-123",
+        specialties: ["mcp"]
+      })
+    );
+    expect(bootstrap).toMatchObject({
+      acquired: true,
+      agentId: "mcp-agent",
+      role: "implementer",
+      slotNumber: 1,
+      workMode: "single-task",
+      instructions: {
+        agentId: "mcp-agent",
+        role: "implementer"
+      },
+      nextTask: {
+        task: { id: "task_123" },
+        selection: { reason: "assigned_to_agent" }
+      },
+      heartbeat: {
+        presenceTool: "update_presence",
+        renewTool: "acquire_agent_slot",
+        leaseExpiresAt: "2026-06-12T15:05:00.000Z"
+      }
+    });
+    expect(fakeStore.acquireAgentSlot).toHaveBeenCalledWith({
+      preferredType: "mcp",
+      runtimeId: "runtime-123",
+      specialties: ["mcp"]
+    });
+    expect(fakeStore.getNextTaskForAgent).toHaveBeenCalledWith("mcp-agent", {
+      agentId: "mcp-agent",
+      role: "implementer",
+      specialties: ["mcp", "agent-tools"],
+      workMode: "single-task"
     });
 
     const updatePresence = registrations.find((registration) => registration.name === "update_presence");

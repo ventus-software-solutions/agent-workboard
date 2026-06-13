@@ -157,15 +157,60 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         role: z.string().optional(),
         specialties: z.array(z.string()).optional(),
         labels: z.array(z.string()).optional(),
-        agentId: z.string().optional(),
         projectId: z.string().optional(),
+        q: z.string().optional(),
+        agentId: z.string().optional(),
         activeProjectId: z.string().optional(),
         runtimeId: z.string().optional(),
         workMode: z.string().optional(),
         now: z.string().optional()
       }
     },
-    async (input) => asText(await store.acquireAgentSlot(input))
+    async (input) => {
+      const acquisition = await store.acquireAgentSlot(input);
+      const agentSlotRegistry = store.listAgentSlots();
+      const projectContext =
+        acquisition.activeProjectId || acquisition.activeProject
+          ? {
+              activeProjectId: acquisition.activeProjectId || "",
+              activeProject: acquisition.activeProject || null,
+              projectContextSource: acquisition.projectContextSource || "",
+              projectContextExplicit: Boolean(acquisition.projectContextExplicit),
+              projectContextDefaulted: Boolean(acquisition.projectContextDefaulted)
+            }
+          : store.getAgentProjectContext(acquisition.agentId);
+      const instructions = buildAgentDoc({
+        agentId: acquisition.agentId,
+        roles: store.roles(),
+        statuses: store.statuses(),
+        agentSlots: agentSlotRegistry.slots,
+        agentTypes: agentSlotRegistry.types,
+        integrationStatus: getIntegrationStatus(),
+        projectContext,
+        baseUrl
+      });
+      const nextTaskFilters = {
+        agentId: acquisition.agentId,
+        role: acquisition.role,
+        specialties: acquisition.specialties,
+        workMode: acquisition.workMode
+      };
+      if (input.projectId) nextTaskFilters.projectId = input.projectId;
+      if (input.labels) nextTaskFilters.labels = input.labels;
+      if (input.q) nextTaskFilters.q = input.q;
+
+      return asText({
+        ...acquisition,
+        instructions,
+        nextTask: store.getNextTaskForAgent(acquisition.agentId, nextTaskFilters),
+        heartbeat: {
+          presenceTool: "update_presence",
+          renewTool: "acquire_agent_slot",
+          leaseExpiresAt: acquisition.lease?.expiresAt || null,
+          releaseBehavior: "No explicit release tool is required; stop renewing the lease and the slot becomes available after expiry."
+        }
+      });
+    }
   );
 
   server.registerTool(
