@@ -706,6 +706,43 @@ export class WorkboardStore {
     };
   }
 
+  async updateAgentSlot(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput);
+    if (!agentId) {
+      throw httpError("Agent slot id is required.", 400);
+    }
+    const currentTime = parseTimestamp(input.now);
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
+      if (!slot) {
+        throw httpError("Agent slot not found.", 404, { agentId });
+      }
+
+      if (Object.prototype.hasOwnProperty.call(input, "workMode")) {
+        const workMode = normalizeWorkMode(input.workMode);
+        if (!workMode) {
+          throw httpError("Invalid workMode.", 400, { workMode: input.workMode });
+        }
+        slot.workMode = workMode;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(input, "paused")) {
+        if (typeof input.paused !== "boolean") {
+          throw httpError("paused must be a boolean.", 400, { paused: input.paused });
+        }
+        slot.paused = input.paused;
+      }
+
+      slot.updatedAt = currentTime.toISOString();
+      await this.writeData(this.data);
+
+      return this.describeAgentSlot(slot, currentTime, this.agentSlotTaskStats().get(slot.id));
+    });
+  }
+
   async acquireAgentSlot(input = {}) {
     const currentTime = parseTimestamp(input.now);
     const runtimeId = normalizeText(input.runtimeId) || id("runtime");

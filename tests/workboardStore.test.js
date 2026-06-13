@@ -2135,6 +2135,35 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("updates agent slot controls for work mode and pause state", async () => {
+    const slot = await store.updateAgentSlot("mcp-agent", {
+      workMode: "watch-mode",
+      paused: true,
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(slot).toMatchObject({
+      id: "mcp-agent",
+      workMode: "watch-mode",
+      paused: true,
+      active: false,
+      available: false,
+      updatedAt: "2026-06-12T15:00:00.000Z"
+    });
+
+    const registry = store.listAgentSlots({ now: "2026-06-12T15:01:00.000Z" });
+    expect(registry.slots.find((candidate) => candidate.id === "mcp-agent")).toMatchObject({
+      workMode: "watch-mode",
+      paused: true,
+      available: false
+    });
+
+    await expect(store.updateAgentSlot("mcp-agent", { workMode: "freestyle" })).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("workMode")
+    });
+  });
+
   it("records agent presence and no-eligible-work reports", async () => {
     const dogfood = await store.createProject({ name: "Dogfood", key: "DOGFOOD" });
     const active = await store.updateAgentPresence("mcp-agent", {

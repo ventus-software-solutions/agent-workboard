@@ -755,6 +755,33 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(backendCard).toContainText("Busy");
   await expect(backendCard).toContainText(currentTaskTitle);
   await expect(backendCard).toContainText("backend");
+  const backendMode = backendCard.getByLabel("implementer-backend-1 work mode");
+  await expect(backendMode).toHaveValue("single-task");
+  await backendMode.selectOption("watch-mode");
+  await expect(backendMode).toHaveValue("watch-mode");
+  let slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
+  expect(slotsResponse.ok()).toBe(true);
+  let slots = await slotsResponse.json();
+  expect(slots.slots.find((slot) => slot.id === "implementer-backend-1")).toMatchObject({
+    workMode: "watch-mode",
+    paused: false
+  });
+
+  await backendCard.getByRole("button", { name: "Pause implementer-backend-1" }).click();
+  await expect(backendCard).toContainText("Paused");
+  await expect(backendCard.getByRole("button", { name: "Resume implementer-backend-1" })).toBeVisible();
+  slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
+  expect(slotsResponse.ok()).toBe(true);
+  slots = await slotsResponse.json();
+  expect(slots.slots.find((slot) => slot.id === "implementer-backend-1")).toMatchObject({
+    workMode: "watch-mode",
+    paused: true
+  });
+
+  await backendCard.getByRole("button", { name: "Resume implementer-backend-1" }).click();
+  await expect(backendCard).toContainText("Busy");
+  await backendMode.selectOption("single-task");
+  await expect(backendMode).toHaveValue("single-task");
 
   const adHocCard = page.getByTestId("agent-card").filter({ hasText: "implementer-adhoc-ui" });
   await expect(adHocCard).toBeVisible();

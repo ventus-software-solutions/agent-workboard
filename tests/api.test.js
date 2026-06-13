@@ -1314,6 +1314,41 @@ describe("Agent Workboard API", () => {
     );
   });
 
+  it("updates configured agent slot controls", async () => {
+    const update = await request(app)
+      .patch("/api/agent-slots/mcp-agent")
+      .send({
+        workMode: "watch-mode",
+        paused: true,
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+
+    expect(update.body.slot).toMatchObject({
+      id: "mcp-agent",
+      workMode: "watch-mode",
+      paused: true,
+      active: false,
+      available: false,
+      updatedAt: "2026-06-12T15:00:00.000Z"
+    });
+
+    const listed = await request(app).get("/api/agent-slots").query({ now: "2026-06-12T15:01:00.000Z" }).expect(200);
+    expect(listed.body.slots.find((slot) => slot.id === "mcp-agent")).toMatchObject({
+      workMode: "watch-mode",
+      paused: true,
+      available: false
+    });
+
+    await request(app)
+      .patch("/api/agent-slots/mcp-agent")
+      .send({ workMode: "freestyle" })
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.message).toContain("workMode");
+      });
+  });
+
   it("reports in-progress work assigned to non-slot identities as slot warnings", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Slot Warning API Project" })).body.project;
     const task = (

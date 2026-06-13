@@ -138,6 +138,7 @@ function finalizeAgent(agent) {
     status,
     statusLabel: STATUS_LABELS[status] || titleize(status),
     active: Boolean(agent.slot?.active),
+    paused: Boolean(agent.slot?.paused),
     stale: Boolean(agent.slot?.stale),
     available: Boolean(agent.slot?.available),
     currentTask,
