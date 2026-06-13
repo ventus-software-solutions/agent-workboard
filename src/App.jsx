@@ -15,6 +15,8 @@ import {
   Menu,
   MessageSquarePlus,
   Paperclip,
+  PauseCircle,
+  PlayCircle,
   Plus,
   RefreshCw,
   Search,
@@ -51,6 +53,11 @@ const priorityClass = {
 };
 
 const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+const workModeOptions = [
+  { id: "single-task", label: "Single task" },
+  { id: "drain-role-queue", label: "Drain queue" },
+  { id: "watch-mode", label: "Watch mode" }
+];
 const activityTypes = [
   { id: "project.created", label: "Project" },
   { id: "created", label: "Created" },
@@ -130,6 +137,7 @@ export function App() {
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
   const [worktreeCleanup, setWorktreeCleanup] = useState(() => emptyWorktreeCleanup());
   const [cleanupActionKey, setCleanupActionKey] = useState("");
+  const [agentControlPending, setAgentControlPending] = useState("");
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
   const [view, setView] = useState("board");
   const [workspaceTab, setWorkspaceTab] = useState("tasks");
@@ -328,6 +336,19 @@ export function App() {
   async function refreshAgentSlots() {
     const result = await api.agentSlots();
     setAgentSlots(result);
+  }
+
+  async function updateAgentSlotControls(agentId, patch) {
+    setError("");
+    setAgentControlPending(agentId);
+    try {
+      await api.updateAgentSlot(agentId, patch);
+      await refreshAgentSlots();
+    } catch (nextError) {
+      setError(nextError.message);
+    } finally {
+      setAgentControlPending("");
+    }
   }
 
   async function refreshWorktreeCleanup() {
@@ -798,6 +819,8 @@ export function App() {
             registry={agentRegistry}
             onOpenTask={openLinkedTask}
             onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
+            onUpdateAgentSlot={updateAgentSlotControls}
+            updatingAgentId={agentControlPending}
           />
         ) : workspaceTab === "coordination" ? (
           <CoordinationWorkspace
@@ -1371,7 +1394,7 @@ function AttentionAgentList({ agents }) {
   );
 }
 
-function AgentsRegistry({ registry, onOpenTask, onFilterAgent }) {
+function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, updatingAgentId }) {
   const groups = registry.groups.filter((group) => group.agents.length > 0);
 
   if (groups.length === 0) {
@@ -1399,7 +1422,14 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent }) {
           {group.configuredAgents.length > 0 && (
             <div className="agentGrid">
               {group.configuredAgents.map((agent) => (
-                <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  onOpenTask={onOpenTask}
+                  onFilterAgent={onFilterAgent}
+                  onUpdateAgentSlot={onUpdateAgentSlot}
+                  updatingAgentId={updatingAgentId}
+                />
               ))}
             </div>
           )}
@@ -1423,9 +1453,15 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent }) {
   );
 }
 
-function AgentCard({ agent, onOpenTask, onFilterAgent }) {
+function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, updatingAgentId }) {
   const Icon = roleIcons[agent.role] || Bot;
   const linkedTasks = agent.assignedTasks.slice(0, 4);
+  const isConfiguredSlot = agent.source === "slot";
+  const isUpdating = updatingAgentId === agent.id;
+  const isPaused = Boolean(agent.paused);
+  const selectedWorkMode = workModeOptions.some((option) => option.id === agent.workMode)
+    ? agent.workMode
+    : workModeOptions[0].id;
 
   return (
     <article className={`agentCard agentStatus-${agent.status} agentSource-${agent.source}`} data-testid="agent-card">
@@ -1450,6 +1486,35 @@ function AgentCard({ agent, onOpenTask, onFilterAgent }) {
         {agent.available && <span>available</span>}
         <span>{agent.lastActivityAt ? formatDate(agent.lastActivityAt) : "No activity"}</span>
       </div>
+
+      {isConfiguredSlot && (
+        <div className="agentControls" aria-label={`${agent.id} controls`}>
+          <label className="agentModeControl">
+            <span>Mode</span>
+            <select
+              aria-label={`${agent.id} work mode`}
+              value={selectedWorkMode}
+              disabled={isUpdating}
+              onChange={(event) => onUpdateAgentSlot(agent.id, { workMode: event.target.value })}
+            >
+              {workModeOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="ghostButton agentPauseButton"
+            disabled={isUpdating}
+            aria-label={`${isPaused ? "Resume" : "Pause"} ${agent.id}`}
+            onClick={() => onUpdateAgentSlot(agent.id, { paused: !isPaused })}
+          >
+            {isPaused ? <PlayCircle size={15} /> : <PauseCircle size={15} />}
+            <span>{isPaused ? "Resume" : "Pause"}</span>
+          </button>
+        </div>
+      )}
 
       <div className="agentCounts">
         <span>{agent.openTaskCount} open</span>

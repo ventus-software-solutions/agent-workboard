@@ -80,6 +80,14 @@ export function createApp({
     }
   });
 
+  app.patch("/api/agent-slots/:agentId", async (req, res, next) => {
+    try {
+      res.json({ slot: await store.updateAgentSlot(req.params.agentId, req.body) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/integration-status", (_req, res, next) => {
     try {
       res.json({ integrationStatus: integrationStatus() });

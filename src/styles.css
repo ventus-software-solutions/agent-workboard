@@ -1299,6 +1299,44 @@ button {
   overflow-wrap: anywhere;
 }
 
+.agentControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  min-width: 0;
+}
+
+.agentModeControl {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agentModeControl span {
+  color: #9aa6b4;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.agentModeControl select {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 32px 0 10px;
+  border: 1px solid #303842;
+  border-radius: 8px;
+  background: #101418;
+  color: #eef2f7;
+}
+
+.agentPauseButton {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
 .agentGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(285px, 100%), 1fr));
@@ -2520,6 +2558,11 @@ button {
 
   .agentSubgroupHeader small {
     text-align: left;
+  }
+
+  .agentControls {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .agentCardActions {

@@ -289,4 +289,32 @@ describe("agent registry derivation", () => {
     expect(agent.openTaskCount).toBe(2);
     expect(agent.blockedTaskCount).toBe(1);
   });
+
+  it("exposes pause state for configured slots", () => {
+    const registry = buildAgentRegistry({
+      roles,
+      agentSlots: {
+        types: agentSlots.types,
+        slots: [
+          {
+            id: "test-agent",
+            typeId: "tester",
+            role: "tester",
+            specialties: ["tests"],
+            workMode: "single-task",
+            paused: true,
+            active: false,
+            available: false
+          }
+        ]
+      },
+      tasks: []
+    });
+
+    expect(registry.agents.find((agent) => agent.id === "test-agent")).toMatchObject({
+      paused: true,
+      status: "paused",
+      statusLabel: "Paused"
+    });
+  });
 });
