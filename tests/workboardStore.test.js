@@ -2283,4 +2283,136 @@ describe("WorkboardStore", () => {
     expect(secondAttachment.sha256).toHaveLength(64);
     expect(store.getTask(task.id).attachments).toHaveLength(2);
   });
+
+  it("round-trips a project backup with comments, activity, and attachment metadata", async () => {
+    const project = await store.createProject({ name: "Backup Store Project", key: "BSP" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Preserve task evidence",
+      description: "Backup should keep task history.",
+      status: "ready",
+      role: "implementer",
+      labels: ["backup"]
+    });
+
+    await store.updateTask(
+      task.id,
+      { status: "review", assignee: "reviewer-agent", expectedRevision: task.revision },
+      "implementer-backend-2"
+    );
+    const comment = await store.addComment(task.id, { author: "reviewer-agent", body: "Review evidence survives." });
+    const attachment = await store.addAttachment(
+      task.id,
+      {
+        originalname: "restore-me.txt",
+        mimetype: "text/plain",
+        size: 12,
+        buffer: Buffer.from("restore data")
+      },
+      "tester-agent"
+    );
+
+    const backup = store.exportProjectBackup(project.id);
+    expect(backup).toMatchObject({
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: project.id,
+        key: "BSP"
+      },
+      tasks: [
+        expect.objectContaining({
+          id: task.id,
+          projectId: project.id,
+          comments: [comment],
+          attachments: [attachment]
+        })
+      ]
+    });
+    expect(backup.tasks[0].activity.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
+    );
+
+    const importDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-import-store-"));
+    const targetStore = new WorkboardStore({ dataDir: importDir });
+    await targetStore.init();
+    try {
+      const imported = await targetStore.importProjectBackup(backup, { actor: "restore-agent" });
+      expect(imported).toMatchObject({
+        created: true,
+        projectId: project.id,
+        taskCount: 1
+      });
+
+      const importedTask = targetStore.getTask(task.id);
+      expect(importedTask).toMatchObject({
+        id: task.id,
+        projectId: project.id,
+        title: "Preserve task evidence",
+        revision: backup.tasks[0].revision,
+        comments: [comment],
+        attachments: [attachment]
+      });
+      expect(importedTask.activity.map((event) => event.type)).toEqual(
+        backup.tasks[0].activity.map((event) => event.type)
+      );
+
+      const updated = await targetStore.importProjectBackup(
+        {
+          ...backup,
+          project: { ...backup.project, name: "Updated Backup Store Project" },
+          tasks: [{ ...backup.tasks[0], title: "Updated restored task" }]
+        },
+        { actor: "restore-agent" }
+      );
+      expect(updated).toMatchObject({
+        created: false,
+        taskCount: 1
+      });
+      expect(targetStore.getProject(project.id).name).toBe("Updated Backup Store Project");
+      expect(targetStore.getTask(task.id).title).toBe("Updated restored task");
+    } finally {
+      await rm(importDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe project backup imports", async () => {
+    const existing = await store.createProject({ name: "Existing Backup Project", key: "EXISTING" });
+    const backup = {
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: "project_restore",
+        key: existing.key,
+        name: "Conflicting Backup Project"
+      },
+      tasks: [],
+      events: []
+    };
+
+    await expect(store.importProjectBackup(backup, { actor: "restore-agent" })).rejects.toMatchObject({
+      status: 409,
+      details: expect.objectContaining({ reason: "project_key_collision" })
+    });
+
+    await expect(
+      store.importProjectBackup(
+        {
+          ...backup,
+          project: { ...backup.project, key: "SAFE" },
+          tasks: [
+            {
+              id: "task_restore",
+              projectId: "project_other",
+              title: "Wrong project task"
+            }
+          ]
+        },
+        { actor: "restore-agent" }
+      )
+    ).rejects.toMatchObject({
+      status: 400,
+      details: expect.objectContaining({ reason: "task_project_mismatch" })
+    });
+  });
 });

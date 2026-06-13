@@ -153,6 +153,107 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("exports and imports a project backup package without losing task evidence", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Backup API Project", key: "BKP" }).expect(201)).body
+      .project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Back up this task",
+          description: "Needs comments, activity, and attachment metadata.",
+          status: "ready",
+          role: "implementer",
+          labels: ["backup"]
+        })
+        .expect(201)
+    ).body.task;
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "review", actor: "implementer-backend-2", expectedRevision: task.revision })
+      .expect(200);
+    await request(app)
+      .post(`/api/tasks/${task.id}/comments`)
+      .send({ author: "reviewer-agent", body: "Keep this review note." })
+      .expect(201);
+    await request(app)
+      .post(`/api/tasks/${task.id}/attachments`)
+      .field("author", "tester-agent")
+      .attach("file", Buffer.from("backup evidence"), "backup.txt")
+      .expect(201);
+
+    const exported = await request(app).get(`/api/projects/${project.id}/export`).expect(200);
+
+    expect(exported.headers["content-type"]).toContain("application/json");
+    expect(exported.headers["content-disposition"]).toContain("attachment");
+    expect(exported.body).toMatchObject({
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: project.id,
+        key: "BKP",
+        name: "Backup API Project"
+      }
+    });
+    expect(exported.body.tasks).toHaveLength(1);
+    expect(exported.body.tasks[0]).toMatchObject({
+      id: task.id,
+      projectId: project.id,
+      title: "Back up this task",
+      comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
+      attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
+    });
+    expect(exported.body.tasks[0].activity.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
+    );
+
+    const importDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-import-api-"));
+    const importStore = new WorkboardStore({ dataDir: importDir });
+    await importStore.init();
+    const importApp = createApp({ store: importStore });
+    try {
+      const imported = await request(importApp).post("/api/projects/import").send(exported.body).expect(201);
+      expect(imported.body.import).toMatchObject({
+        created: true,
+        projectId: project.id,
+        taskCount: 1
+      });
+
+      const importedTask = (await request(importApp).get(`/api/tasks/${task.id}`).expect(200)).body.task;
+      expect(importedTask).toMatchObject({
+        id: task.id,
+        projectId: project.id,
+        title: "Back up this task",
+        comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
+        attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
+      });
+      expect(importedTask.activity.map((event) => event.type)).toEqual(
+        expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
+      );
+
+      const renamedPackage = {
+        ...exported.body,
+        project: {
+          ...exported.body.project,
+          name: "Restored Backup API Project"
+        }
+      };
+      const updated = await request(importApp).post("/api/projects/import").send(renamedPackage).expect(200);
+      expect(updated.body.import).toMatchObject({
+        created: false,
+        projectId: project.id,
+        taskCount: 1
+      });
+      expect((await request(importApp).get("/api/projects").expect(200)).body.projects).toContainEqual(
+        expect.objectContaining({ id: project.id, name: "Restored Backup API Project" })
+      );
+    } finally {
+      await rm(importDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects invalid task create and update payloads with readable 400 errors", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Task Validation API", key: "TVAPI" }).expect(201)).body
       .project;

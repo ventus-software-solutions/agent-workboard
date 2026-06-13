@@ -152,6 +152,26 @@ export function createApp({
     }
   });
 
+  app.get("/api/projects/:projectId/export", (req, res, next) => {
+    try {
+      const backup = store.exportProjectBackup(req.params.projectId);
+      const filename = `${backup.project.key || backup.project.id}-workboard-backup.json`.toLowerCase();
+      res.attachment(filename);
+      res.json(backup);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/projects/import", async (req, res, next) => {
+    try {
+      const result = await store.importProjectBackup(req.body, { actor: req.body.actor });
+      res.status(result.created ? 201 : 200).json({ import: result, project: store.getProject(result.projectId) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/projects/:projectId/talks", (req, res, next) => {
     try {
       const messages = store

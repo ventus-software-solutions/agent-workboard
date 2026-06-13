@@ -142,6 +142,8 @@ Example local MCP command:
 
 - `GET /api/projects`
 - `POST /api/projects`
+- `GET /api/projects/:projectId/export`
+- `POST /api/projects/import`
 - `GET /api/tasks`
 - `POST /api/tasks`
 - `GET /api/tasks/:taskId`
