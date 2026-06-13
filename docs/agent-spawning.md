@@ -69,6 +69,14 @@ For ordinary implementation, PM, docs, MCP, and tester work:
 9. Move finished implementation to `review`, testing work to the requested status, or blocked work to `blocked` with a specific blocker.
 10. Only then look for another task.
 
+## Autonomous Go-Ahead
+
+A normal ready task does not need a second human "go" after an agent has claimed it. The successful claim plus a visible plan comment is the go-ahead for PM, implementer, tester, docs, MCP, and reviewer work to proceed inside the task scope.
+
+Agents must still verify assumptions before acting. They should wait for explicit operator approval before destructive changes, scope changes, ambiguous requirements, cross-project overrides, or tasks marked as needing approval. Use the operator approval queue when approval is needed so the wait is visible and actionable.
+
+For active tasks already waiting only for ordinary go-ahead, post a short acknowledgement of this policy and continue. If the actual blocker is unclear scope or an operator decision, request approval or move the task to `blocked` with the exact decision needed.
+
 Reviewer agents are the exception. They should scan original tasks already in `status=review` before ordinary reviewer-role ready tasks. For review-column work, preserve the original assignee and do not create duplicate `Review:` wrapper tasks. Claim the review pass with a visible comment or first-class review metadata when available, then either merge and mark the original task `done`, or return it to `ready` or `blocked` with specific findings.
 
 ## How To Spot Blocked Agents

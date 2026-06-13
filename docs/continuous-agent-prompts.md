@@ -12,9 +12,12 @@ Continuous agents should:
 4. Claim exactly one eligible normal task at a time through the claim endpoint or MCP `claim_task`.
 5. Use a task branch/worktree before edits.
 6. Post a plan, progress, evidence, and handoff comments on the task.
-7. Move finished implementation to `review`, approved review work to `done`, or blocked work to `blocked` with the exact blocker.
-8. After each task is handed off, ask the board for the next task again.
-9. Stop only when the board reports no eligible work, the agent is explicitly paused, the next task needs operator approval, or the agent hits a real blocker it has recorded on the task.
+7. Treat a successful claim plus that visible plan as the go-ahead for ordinary ready tasks; do not wait for a separate human yes unless explicit operator approval is needed.
+8. Move finished implementation to `review`, approved review work to `done`, or blocked work to `blocked` with the exact blocker.
+9. After each task is handed off, ask the board for the next task again.
+10. Stop only when the board reports no eligible work, the agent is explicitly paused, the next task needs operator approval, or the agent hits a real blocker it has recorded on the task.
+
+Safety still wins: verify assumptions before acting, and wait for explicit operator approval before destructive changes, scope changes, ambiguous requirements, cross-project overrides, or tasks marked as needing approval. For active tasks already waiting only for ordinary go-ahead, acknowledge this policy and continue; if the real blocker is an operator decision, use the operator approval queue or mark the task blocked with the exact decision needed.
 
 Reviewer agents have a special queue rule: scan original `status=review` tasks first, preserve the original assignee, do not create duplicate `Review:` wrapper tasks, and claim the review pass by comment or first-class review metadata when available.
 
