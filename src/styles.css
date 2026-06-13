@@ -389,9 +389,9 @@ button {
 
 .workspaceTabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  width: min(360px, 100%);
+  width: min(540px, 100%);
   margin-bottom: 12px;
 }
 
@@ -443,6 +443,165 @@ button {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+}
+
+.activityWorkspace {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.activityHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.activityHeader h3 {
+  margin: 2px 0 0;
+  font-size: 18px;
+}
+
+.activityHeader > span {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 28px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #dce6f0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.activityFilters {
+  margin-bottom: 0;
+}
+
+.activityFilters .agentFilter {
+  width: min(230px, 100%);
+}
+
+.activityFeed {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.activityEvent {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #333a43;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #1d232a;
+}
+
+.activityType-project-created {
+  border-left-color: #d0b6ff;
+}
+
+.activityType-created,
+.activityType-claimed {
+  border-left-color: #ffd991;
+}
+
+.activityType-commented {
+  border-left-color: #b8efc0;
+}
+
+.activityType-attachment-added {
+  border-left-color: #9ee7ff;
+}
+
+.activityType-update-rejected,
+.activityType-approval-requested {
+  border-left-color: #ff8fa0;
+}
+
+.activityType-completed,
+.activityType-approval-decided {
+  border-left-color: #a8c7ff;
+}
+
+.activityEventHeader,
+.activityEventMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.activityEventHeader time {
+  margin-left: auto;
+  color: #82909f;
+  font-size: 12px;
+}
+
+.activityTypePill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #27313b;
+  color: #d6e2ed;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.activityEventBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.activityEventBody strong,
+.activityEventBody p,
+.activityEventMeta span,
+.activityTaskLink {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.activityEventBody strong {
+  color: #edf5fb;
+}
+
+.activityEventBody p {
+  margin: 0;
+  color: #c8d5e0;
+  line-height: 1.35;
+}
+
+.activityEventMeta {
+  color: #8f9baa;
+  font-size: 12px;
+}
+
+.activityTaskLink {
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid #384752;
+  border-radius: 8px;
+  background: #18222a;
+  color: #bdeafa;
+}
+
+.activityEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border: 1px dashed #343b44;
+  border-radius: 8px;
+  color: #8f9baa;
 }
 
 .searchBox,

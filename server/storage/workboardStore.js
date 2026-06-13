@@ -311,6 +311,42 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeActivityLimit(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.min(Math.max(parsed, 1), 200);
+}
+
+function findActivityDetailRecord(items, event, actorField, createdAtField) {
+  const actor = normalizeText(event.actor);
+  const createdAt = normalizeText(event.createdAt);
+  return (items || []).find((item) => item?.[actorField] === actor && item?.[createdAtField] === createdAt);
+}
+
+function taskActivityDetail(task, event) {
+  const type = normalizeText(event.type);
+  if (type === "commented") {
+    return normalizeText(findActivityDetailRecord(task.comments, event, "author", "createdAt")?.body);
+  }
+  if (type === "attachment.added") {
+    const attachment = findActivityDetailRecord(task.attachments, event, "uploadedBy", "createdAt");
+    if (!attachment) return "";
+    return `${attachment.filename} (${attachment.size} bytes)`;
+  }
+  if (type === "approval.requested") {
+    const approval = findActivityDetailRecord(task.approvalHistory, event, "requestedBy", "requestedAt");
+    return [approval?.reason, approval?.requestedAction].map(normalizeText).filter(Boolean).join(" ");
+  }
+  if (type === "approval.decided") {
+    const approval = findActivityDetailRecord(task.approvalHistory, event, "decidedBy", "decidedAt");
+    return [approval?.decision, approval?.note, approval?.nextStatus].map(normalizeText).filter(Boolean).join(" ");
+  }
+  if (type === "completed") {
+    return normalizeText(task.completion?.notes);
+  }
+  return "";
+}
+
 function readCompletionInput(input) {
   if (Object.prototype.hasOwnProperty.call(input, "completion") && input.completion !== undefined) {
     return { hasCompletion: true, completionInput: input.completion };
@@ -1017,6 +1053,88 @@ export class WorkboardStore {
         if (statusDelta !== 0) return statusDelta;
         return priorityRank(b.priority) - priorityRank(a.priority) || b.updatedAt.localeCompare(a.updatedAt);
       });
+  }
+
+  listProjectActivity(filters = {}) {
+    const projectId = normalizeText(filters.projectId);
+    const project = this.getProject(projectId);
+    const q = normalizeText(filters.q).toLowerCase();
+    const types = normalizeText(filters.type || filters.types)
+      .split(",")
+      .map((type) => type.trim())
+      .filter(Boolean);
+    const source = normalizeText(filters.source);
+    const limit = normalizeActivityLimit(filters.limit);
+
+    const projectEvents = (this.data.events || [])
+      .filter((event) => event.projectId === project.id)
+      .map((event) => ({
+        id: event.id,
+        projectId: project.id,
+        projectName: project.name,
+        source: "project",
+        actor: normalizeText(event.actor) || "system",
+        type: normalizeText(event.type) || "event",
+        message: normalizeText(event.message) || "Project event.",
+        detail: "",
+        createdAt: normalizeText(event.createdAt) || project.updatedAt || project.createdAt || now(),
+        taskId: "",
+        taskTitle: "",
+        taskStatus: "",
+        taskAssignee: "",
+        taskRole: "",
+        taskPriority: ""
+      }));
+
+    const taskEvents = this.data.tasks
+      .filter((task) => task.projectId === project.id)
+      .flatMap((task) =>
+        (task.activity || []).map((event) => {
+          const detail = taskActivityDetail(task, event);
+          return {
+            id: event.id,
+            projectId: project.id,
+            projectName: project.name,
+            source: "task",
+            actor: normalizeText(event.actor) || "system",
+            type: normalizeText(event.type) || "event",
+            message: normalizeText(event.message) || "Task event.",
+            detail,
+            createdAt: normalizeText(event.createdAt) || task.updatedAt || task.createdAt || now(),
+            taskId: task.id,
+            taskTitle: task.title,
+            taskStatus: task.status,
+            taskAssignee: task.assignee,
+            taskRole: task.role,
+            taskPriority: task.priority
+          };
+        })
+      );
+
+    return [...projectEvents, ...taskEvents]
+      .filter((event) => types.length === 0 || types.includes(event.type))
+      .filter((event) => !source || event.source === source)
+      .filter((event) => {
+        if (!q) return true;
+        return [
+          event.actor,
+          event.type,
+          event.message,
+          event.detail,
+          event.projectName,
+          event.taskId,
+          event.taskTitle,
+          event.taskStatus,
+          event.taskAssignee,
+          event.taskRole,
+          event.taskPriority
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+      .slice(0, limit);
   }
 
   listTalkMessages(filters = {}) {

@@ -336,6 +336,95 @@ describe("WorkboardStore", () => {
     expect(current.activity[0].message).toMatch(/expected revision 1, found 2/i);
   });
 
+  it("lists project activity across project and task audit events", async () => {
+    const project = await store.createProject({ name: "Audit Feed Project", actor: "pm-agent" });
+    const otherProject = await store.createProject({ name: "Other Audit Feed Project", actor: "other-agent" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Ship audit trail",
+      status: "ready",
+      assignee: "",
+      role: "implementer",
+      actor: "pm-agent"
+    });
+    await store.createTask({
+      projectId: otherProject.id,
+      title: "Wrong project audit noise",
+      actor: "other-agent"
+    });
+
+    const staleRevision = task.revision;
+    await store.claimTask(task.id, {
+      assignee: "implementer-backend-1",
+      expectedStatus: "ready",
+      expectedAssignee: "",
+      actor: "implementer-backend-1"
+    });
+    await expect(
+      store.updateTask(task.id, { title: "Stale audit title", expectedRevision: staleRevision }, "operator-stale")
+    ).rejects.toMatchObject({ status: 409 });
+    await store.addComment(task.id, { author: "reviewer-agent", body: "Audit evidence comment." });
+    await store.addAttachment(
+      task.id,
+      {
+        buffer: Buffer.from("audit evidence\n"),
+        originalname: "audit-note.txt",
+        mimetype: "text/plain",
+        size: Buffer.byteLength("audit evidence\n")
+      },
+      "tester-agent"
+    );
+    await store.requestOperatorApproval(task.id, {
+      requestedBy: "implementer-backend-1",
+      reason: "Need operator approval before audit release.",
+      requestedAction: "Approve audit release",
+      nextStatus: "in_progress"
+    });
+
+    const activity = store.listProjectActivity({ projectId: project.id, limit: 50 });
+    expect(activity.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "project.created",
+        "created",
+        "claimed",
+        "update.rejected",
+        "commented",
+        "attachment.added",
+        "approval.requested"
+      ])
+    );
+    expect(activity).not.toContainEqual(expect.objectContaining({ projectId: otherProject.id }));
+    expect(activity.find((event) => event.type === "project.created")).toMatchObject({
+      projectId: project.id,
+      source: "project",
+      taskId: "",
+      taskTitle: ""
+    });
+    expect(activity.find((event) => event.type === "claimed")).toMatchObject({
+      source: "task",
+      taskId: task.id,
+      taskTitle: "Ship audit trail",
+      taskStatus: "blocked",
+      taskAssignee: "implementer-backend-1"
+    });
+    expect(activity[0].createdAt >= activity[1].createdAt).toBe(true);
+
+    expect(store.listProjectActivity({ projectId: project.id, type: "commented" })).toMatchObject([
+      {
+        type: "commented",
+        actor: "reviewer-agent",
+        taskId: task.id
+      }
+    ]);
+    expect(store.listProjectActivity({ projectId: project.id, q: "operator approval before audit release" })).toMatchObject([
+      {
+        type: "approval.requested",
+        taskId: task.id
+      }
+    ]);
+    expect(store.listProjectActivity({ projectId: project.id, limit: 2 })).toHaveLength(2);
+  });
+
   it("requires an expected revision for full task edits", async () => {
     const project = await store.createProject({ name: "Revision Required Project" });
     const task = await store.createTask({ projectId: project.id, title: "Needs guarded edits" });

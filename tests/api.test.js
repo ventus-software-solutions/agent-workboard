@@ -313,6 +313,100 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("returns a project activity audit feed with task context and filters", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Activity API Project", key: "ACTAPI" }).expect(201)).body
+      .project;
+    const otherProject = (await request(app).post("/api/projects").send({ name: "Other Activity API Project" }).expect(201)).body
+      .project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Audit backend endpoint",
+          status: "ready",
+          assignee: "",
+          role: "implementer",
+          actor: "pm-agent"
+        })
+        .expect(201)
+    ).body.task;
+    await request(app)
+      .post("/api/tasks")
+      .send({ projectId: otherProject.id, title: "Wrong project activity", actor: "other-agent" })
+      .expect(201);
+
+    await request(app)
+      .post(`/api/tasks/${task.id}/claim`)
+      .send({
+        assignee: "implementer-backend-1",
+        expectedStatus: "ready",
+        expectedAssignee: "",
+        actor: "implementer-backend-1"
+      })
+      .expect(200);
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ title: "Outdated audit endpoint title", expectedRevision: task.revision, actor: "operator-stale" })
+      .expect(409);
+    await request(app)
+      .post(`/api/tasks/${task.id}/comments`)
+      .send({ author: "reviewer-agent", body: "API audit evidence comment." })
+      .expect(201);
+    await request(app)
+      .post(`/api/tasks/${task.id}/attachments`)
+      .field("author", "tester-agent")
+      .attach("file", Buffer.from("api audit evidence"), "api-audit.txt")
+      .expect(201);
+    await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval`)
+      .send({
+        requestedBy: "implementer-backend-1",
+        reason: "Need operator signoff before audit release.",
+        requestedAction: "Approve audit API release",
+        nextStatus: "in_progress"
+      })
+      .expect(200);
+
+    const response = await request(app).get(`/api/projects/${project.id}/activity`).query({ limit: 50 }).expect(200);
+    expect(response.body.activity.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "project.created",
+        "created",
+        "claimed",
+        "update.rejected",
+        "commented",
+        "attachment.added",
+        "approval.requested"
+      ])
+    );
+    expect(response.body.activity).not.toContainEqual(expect.objectContaining({ projectId: otherProject.id }));
+    expect(response.body.activity.find((event) => event.type === "claimed")).toMatchObject({
+      source: "task",
+      projectId: project.id,
+      taskId: task.id,
+      taskTitle: "Audit backend endpoint",
+      taskStatus: "blocked",
+      taskAssignee: "implementer-backend-1"
+    });
+
+    const commentOnly = await request(app)
+      .get(`/api/projects/${project.id}/activity`)
+      .query({ type: "commented", q: "evidence comment" })
+      .expect(200);
+    expect(commentOnly.body.activity).toHaveLength(1);
+    expect(commentOnly.body.activity[0]).toMatchObject({
+      type: "commented",
+      actor: "reviewer-agent",
+      taskId: task.id
+    });
+
+    const limited = await request(app).get(`/api/projects/${project.id}/activity`).query({ limit: 2 }).expect(200);
+    expect(limited.body.activity).toHaveLength(2);
+
+    await request(app).get("/api/projects/project_missing/activity").expect(404);
+  });
+
   it("rejects invalid task create and update payloads with readable 400 errors", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Task Validation API", key: "TVAPI" }).expect(201)).body
       .project;

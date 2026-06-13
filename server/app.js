@@ -172,6 +172,14 @@ export function createApp({
     }
   });
 
+  app.get("/api/projects/:projectId/activity", (req, res, next) => {
+    try {
+      res.json({ activity: store.listProjectActivity({ ...req.query, projectId: req.params.projectId }) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/projects/:projectId/talks", (req, res, next) => {
     try {
       const messages = store

@@ -51,6 +51,18 @@ const priorityClass = {
 };
 
 const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+const activityTypes = [
+  { id: "project.created", label: "Project" },
+  { id: "created", label: "Created" },
+  { id: "claimed", label: "Claimed" },
+  { id: "updated", label: "Updated" },
+  { id: "completed", label: "Completed" },
+  { id: "update.rejected", label: "Validation" },
+  { id: "commented", label: "Comment" },
+  { id: "attachment.added", label: "Attachment" },
+  { id: "approval.requested", label: "Blocked" },
+  { id: "approval.decided", label: "Approval" }
+];
 const LIVE_POLL_INTERVAL_MS = 2500;
 const SIDEBAR_PREFERENCE_KEY = "agentWorkboard.sidebarCollapsed";
 const SIDEBAR_NARROW_QUERY = "(max-width: 920px)";
@@ -105,12 +117,14 @@ export function App() {
   const [tasks, setTasks] = useState([]);
   const [projectTasks, setProjectTasks] = useState([]);
   const [talks, setTalks] = useState([]);
+  const [activityEvents, setActivityEvents] = useState([]);
   const [capabilities, setCapabilities] = useState([]);
   const [agentSlots, setAgentSlots] = useState({ types: [], slots: [] });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "" });
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
+  const [activityFilters, setActivityFilters] = useState({ q: "", type: "" });
   const [staleWork, setStaleWork] = useState([]);
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
   const [worktreeCleanup, setWorktreeCleanup] = useState(() => emptyWorktreeCleanup());
@@ -201,7 +215,7 @@ export function App() {
     const [metaResult, projectsResult, agentSlotsResult] = await Promise.all([api.meta(), api.projects(), api.agentSlots()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, activityResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -212,9 +226,10 @@ export function App() {
           api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
           api.staleInProgressTasks({ projectId: nextProjectId }),
-          api.capabilities({ projectId: nextProjectId, ...capabilityFilters })
+          api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
+          api.projectActivity(nextProjectId, activityFilters)
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, { activity: [] }];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
@@ -223,6 +238,7 @@ export function App() {
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
+    setActivityEvents(activityResult.activity);
     setWorktreeCleanup(emptyWorktreeCleanup());
     setAgentSlots(agentSlotsResult);
     setLoading(false);
@@ -254,6 +270,15 @@ export function App() {
     return result.messages;
   }
 
+  async function refreshActivity(overrides = {}, projectId = selectedProjectId) {
+    const nextFilters = { ...activityFilters, ...overrides };
+    setActivityFilters(nextFilters);
+    if (!projectId) return;
+    const result = await api.projectActivity(projectId, nextFilters);
+    setActivityEvents(result.activity);
+    return result.activity;
+  }
+
   async function pollBoardState({ refreshOnChange = true } = {}) {
     if (!selectedProjectId) return;
 
@@ -270,7 +295,7 @@ export function App() {
           lastUpdatedAt: result.state.latestUpdatedAt || "",
           error: ""
         });
-        await refreshTasks();
+        await Promise.all([refreshTasks(), refreshActivity()]);
       }
 
       boardVersionRef.current = result.state.version;
@@ -376,7 +401,9 @@ export function App() {
   useEffect(() => {
     if (!selectedProjectId || loading) return;
     setWorktreeCleanup(emptyWorktreeCleanup());
-    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) => setError(nextError.message));
+    Promise.all([refreshTasks(), refreshTalks(), refreshActivity(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) =>
+      setError(nextError.message)
+    );
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -462,7 +489,7 @@ export function App() {
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]);
+    await Promise.all([refreshTasks(), refreshTalks(), refreshActivity(), refreshCapabilities(), refreshAgentSlots()]);
     return result;
   }
 
@@ -480,7 +507,7 @@ export function App() {
         ...cleanupRequest,
         actor: "operator-ui"
       });
-      await Promise.all([refreshWorktreeCleanup(), refreshTasks(), refreshTalks()]);
+      await Promise.all([refreshWorktreeCleanup(), refreshTasks(), refreshTalks(), refreshActivity()]);
     } catch (nextError) {
       setError(nextError.message);
     } finally {
@@ -734,6 +761,7 @@ export function App() {
             activeTab={workspaceTab}
             taskCount={tasks.length}
             coordinationCount={coordinationAttention.count}
+            activityCount={activityEvents.length}
             onChange={setWorkspaceTab}
           />
         )}
@@ -790,6 +818,13 @@ export function App() {
             onRefreshWorktreeCleanup={() => refreshWorktreeCleanup()}
             onCleanupWorktree={runWorktreeCleanup}
             cleanupActionKey={cleanupActionKey}
+          />
+        ) : workspaceTab === "activity" ? (
+          <ActivityWorkspace
+            events={activityEvents}
+            filters={activityFilters}
+            onFilterChange={refreshActivity}
+            onSelectTask={openLinkedTask}
           />
         ) : (
           <TasksWorkspace
@@ -905,10 +940,11 @@ function IntegrationStatusPill({ status }) {
   );
 }
 
-function WorkspaceTabs({ activeTab, taskCount, coordinationCount, onChange }) {
+function WorkspaceTabs({ activeTab, taskCount, coordinationCount, activityCount, onChange }) {
   const tabs = [
     { id: "tasks", label: "Tasks", count: taskCount, icon: FolderKanban },
-    { id: "coordination", label: "Coordination", count: coordinationCount, icon: MessageSquarePlus }
+    { id: "coordination", label: "Coordination", count: coordinationCount, icon: MessageSquarePlus },
+    { id: "activity", label: "Activity", count: activityCount, icon: Clock3 }
   ];
 
   return (
@@ -1039,6 +1075,102 @@ function CoordinationWorkspace({
       </div>
     </div>
   );
+}
+
+function ActivityWorkspace({ events, filters, onFilterChange, onSelectTask }) {
+  const extraTypes = useMemo(() => {
+    const known = new Set(activityTypes.map((type) => type.id));
+    return [...new Set(events.map((event) => event.type).filter((type) => type && !known.has(type)))].sort();
+  }, [events]);
+  const hasFilters = Boolean(filters.q || filters.type);
+
+  return (
+    <div className="activityWorkspace">
+      <div className="activityHeader">
+        <div>
+          <div className="sectionLabel">Audit</div>
+          <h3>Recent Activity</h3>
+        </div>
+        <span>{events.length}</span>
+      </div>
+
+      <div className="filterBar activityFilters">
+        <label className="searchBox">
+          <Search size={17} />
+          <input
+            aria-label="Search activity"
+            value={filters.q}
+            placeholder="Search activity"
+            onChange={(event) => onFilterChange({ q: event.target.value })}
+          />
+        </label>
+        <label className="agentFilter">
+          <Filter size={16} />
+          <select
+            aria-label="Activity type filter"
+            value={filters.type}
+            onChange={(event) => onFilterChange({ type: event.target.value })}
+          >
+            <option value="">All activity</option>
+            {activityTypes.map((type) => (
+              <option key={type.id} value={type.id}>
+                {type.label}
+              </option>
+            ))}
+            {extraTypes.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+        </label>
+        {hasFilters && (
+          <button className="ghostButton" onClick={() => onFilterChange({ q: "", type: "" })}>
+            <X size={15} />
+            <span>Clear</span>
+          </button>
+        )}
+      </div>
+
+      <div className="activityFeed">
+        {events.length > 0 ? (
+          events.map((event) => (
+            <article className={`activityEvent activityType-${activityTypeClass(event.type)}`} key={event.id}>
+              <div className="activityEventHeader">
+                <span className="activityTypePill">{activityTypeLabel(event.type)}</span>
+                <time>{formatDate(event.createdAt)}</time>
+              </div>
+              <div className="activityEventBody">
+                <strong>{event.message}</strong>
+                {event.detail && <p>{event.detail}</p>}
+              </div>
+              <div className="activityEventMeta">
+                <span>{event.actor}</span>
+                {event.taskId ? (
+                  <button className="linkButton activityTaskLink" onClick={() => onSelectTask(event.taskId)}>
+                    {event.taskTitle}
+                  </button>
+                ) : (
+                  <span>{event.projectName}</span>
+                )}
+                {event.taskStatus && <span>{event.taskStatus}</span>}
+              </div>
+            </article>
+          ))
+        ) : (
+          <div className="activityEmpty">No activity found.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function activityTypeLabel(type) {
+  return activityTypes.find((item) => item.id === type)?.label || type || "Activity";
+}
+
+function activityTypeClass(type) {
+  return (type || "event").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
 }
 
 function CoordinationStat({ icon: Icon, label, value }) {
