@@ -21,6 +21,7 @@ const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
+const DOGFOOD_PROJECT_KEY = "DOGFOOD";
 
 export const ROLES = [
   {
@@ -654,6 +655,10 @@ export class WorkboardStore {
         throw httpError(`Agent slot ${selected.id} is already active.`, 409, { agentId: selected.id, typeId: type.id });
       }
 
+      const projectContext = this.resolveAgentProjectContext(selected.id, input, {
+        allowDefault: true,
+        slot: selected
+      });
       const heartbeatAt = currentTime.toISOString();
       const previousLease = selected.lease;
       const reclaimed = Boolean(previousLease && !this.isLeaseFresh(previousLease, currentTime) && !described.inProgressTaskCount);
@@ -664,6 +669,7 @@ export class WorkboardStore {
         expiresAt: new Date(currentTime.getTime() + SLOT_LEASE_MS).toISOString()
       };
       selected.workMode = normalizeWorkMode(input.workMode) || selected.workMode || type.defaultWorkMode;
+      selected.activeProjectId = projectContext.activeProjectId;
       selected.updatedAt = heartbeatAt;
 
       await this.writeData(this.data);
@@ -679,6 +685,9 @@ export class WorkboardStore {
         slotNumber: selected.slotNumber,
         workMode: selected.workMode,
         paused: selected.paused,
+        activeProjectId: projectContext.activeProjectId,
+        activeProject: projectContext.activeProject,
+        nextTask: this.buildNextTaskGuidance(selected.id, projectContext),
         lease: { ...selected.lease },
         capacity: type.capacity
       };
@@ -809,12 +818,19 @@ export class WorkboardStore {
     const currentTime = parseTimestamp(input.now);
     const profile = this.resolveWorkAgentProfile(agentId, input);
     const slotRequirement = this.agentSlotRequirement(agentId, input);
+    const allProjects = isAllProjectsScope(input) && !normalizeText(input.projectId);
+    const projectContext = this.resolveAgentProjectContext(agentId, input, {
+      allowDefault: true,
+      useProjectId: !allProjects
+    });
     const agent = {
       agentId,
       role: profile.role,
       specialties: [...profile.specialties],
       workMode: profile.workMode,
       paused: profile.paused,
+      activeProjectId: projectContext.activeProjectId,
+      activeProject: projectContext.activeProject,
       ...(profile.slot ? { slotId: profile.slot.id, typeId: profile.slot.typeId } : {})
     };
 
@@ -860,7 +876,8 @@ export class WorkboardStore {
       }
     }
 
-    const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, input));
+    const scopedInput = allProjects ? input : { ...input, projectId: projectContext.activeProjectId };
+    const scopedTasks = this.data.tasks.filter((task) => taskMatchesNextTaskScope(task, scopedInput));
     const buckets = profile.role === "reviewer"
       ? reviewerCandidateBuckets(scopedTasks, agentId, profile)
       : workerCandidateBuckets(scopedTasks, agentId, profile);
@@ -873,7 +890,7 @@ export class WorkboardStore {
       return {
         agent,
         task,
-        selection: buildSelection(bucket.reason, task, agentId),
+        selection: withProjectScope(buildSelection(bucket.reason, task, agentId), projectContext, allProjects),
         candidates
       };
     }
@@ -882,7 +899,8 @@ export class WorkboardStore {
       agent,
       task: null,
       selection: {
-        reason: "no_eligible_work"
+        reason: "no_eligible_work",
+        ...selectionProjectScope(projectContext, allProjects)
       },
       candidates: []
     };
@@ -1373,6 +1391,33 @@ export class WorkboardStore {
         }
       }
 
+      const expectedProjectId = normalizeText(input.projectId);
+      if (expectedProjectId && task.projectId !== expectedProjectId) {
+        throw httpError(`Task claim expected project ${expectedProjectId}, found ${task.projectId}.`, 409, {
+          expectedProjectId,
+          taskProjectId: task.projectId
+        });
+      }
+
+      const projectContext = this.resolveAgentProjectContext(assignee, input, {
+        allowDefault: false,
+        useProjectId: false
+      });
+      const projectOverrideReason = normalizeText(input.projectOverrideReason || input.crossProjectReason || input.overrideProjectReason);
+      const crossingProjects = projectContext.activeProjectId && task.projectId !== projectContext.activeProjectId;
+      if (crossingProjects && !projectOverrideReason) {
+        throw httpError(
+          `Task ${task.id} belongs to project ${task.projectId}, outside ${assignee}'s active project ${projectContext.activeProjectId}. Supply projectOverrideReason for an operator-approved cross-project claim.`,
+          409,
+          {
+            reason: "cross_project_claim_requires_override",
+            activeProjectId: projectContext.activeProjectId,
+            activeProject: projectContext.activeProject,
+            taskProjectId: task.projectId
+          }
+        );
+      }
+
       const claimedAt = now();
       const previousStatus = task.status;
       const previousAssignee = task.assignee;
@@ -1383,7 +1428,9 @@ export class WorkboardStore {
         id: id("event"),
         actor,
         type: "claimed",
-        message: `Claimed task (${previousStatus}/${previousAssignee || "unassigned"} -> in_progress/${assignee}).`,
+        message: `Claimed task (${previousStatus}/${previousAssignee || "unassigned"} -> in_progress/${assignee}).${
+          crossingProjects ? ` Cross-project override: ${projectOverrideReason}` : ""
+        }`,
         createdAt: claimedAt
       });
 
@@ -1509,7 +1556,7 @@ export class WorkboardStore {
         }
 
         const defaults = createAgentSlot(type, slotId, index + 1);
-        for (const field of ["typeId", "slotNumber", "role", "workMode", "paused"]) {
+        for (const field of ["typeId", "slotNumber", "role", "workMode", "paused", "activeProjectId"]) {
           if (!(field in slot)) {
             slot[field] = defaults[field];
             changed = true;
@@ -1544,6 +1591,10 @@ export class WorkboardStore {
     const currentTaskId = normalizeText(input.currentTaskId || input.currentTask);
     const workMode = normalizeWorkMode(input.workMode) || existing.workMode || slot?.workMode || "";
     const message = normalizeText(input.message);
+    const projectContext = this.resolveAgentProjectContext(agentId, input, {
+      allowDefault: false,
+      slot
+    });
     const nextPresence = {
       ...existing,
       agentId,
@@ -1559,6 +1610,11 @@ export class WorkboardStore {
     }
 
     if (workMode) nextPresence.workMode = workMode;
+    if (projectContext.activeProjectId) {
+      nextPresence.activeProjectId = projectContext.activeProjectId;
+    } else if ("activeProjectId" in input || "projectId" in input) {
+      delete nextPresence.activeProjectId;
+    }
     if (message) {
       nextPresence.message = message;
     } else if ("message" in input) {
@@ -1582,9 +1638,12 @@ export class WorkboardStore {
     const paused = presence.state === "paused" || Boolean(slot?.paused);
     const offline = stale && presence.state !== "idle" && !paused;
     const status = paused ? "paused" : offline ? "offline" : presence.state === "idle" ? "idle" : "online";
+    const activeProject = this.findActiveProject(normalizeText(presence.activeProjectId) || normalizeText(slot?.activeProjectId));
+    const projectContext = activeProject ? this.decorateProjectContext(activeProject) : { activeProjectId: "", activeProject: null };
 
     return {
       ...presence,
+      ...projectContext,
       status,
       stale,
       offline,
@@ -1782,8 +1841,11 @@ export class WorkboardStore {
     };
     const leaseFresh = this.isLeaseFresh(slot.lease, currentTime);
     const active = !slot.paused && (leaseFresh || stats.inProgressTaskCount > 0);
+    const activeProject = this.findActiveProject(slot.activeProjectId);
+    const projectContext = activeProject ? this.decorateProjectContext(activeProject) : { activeProjectId: "", activeProject: null };
     return {
       ...slot,
+      ...projectContext,
       specialties: [...(slot.specialties || [])],
       lease: slot.lease ? { ...slot.lease } : null,
       leaseFresh,
@@ -2057,6 +2119,104 @@ export class WorkboardStore {
       paused: Boolean(slot?.paused)
     };
   }
+
+  getAgentProjectContext(agentIdInput, input = {}) {
+    this.ensureAgentSlotSchema();
+    this.ensureAgentPresenceSchema();
+    const agentId = normalizeText(agentIdInput || input.agentId);
+    return this.resolveAgentProjectContext(agentId, input, { allowDefault: true });
+  }
+
+  resolveAgentProjectContext(agentId, input = {}, { allowDefault = false, slot = null, useProjectId = true } = {}) {
+    const explicitProjectId = normalizeText(input.activeProjectId) || (useProjectId ? normalizeText(input.projectId) : "");
+    if (explicitProjectId) {
+      return this.decorateProjectContext(this.requireActiveProject(explicitProjectId), {
+        source: "input",
+        explicit: true
+      });
+    }
+
+    const presence = agentId ? this.data.agentPresence?.[agentId] : null;
+    const agentSlot = slot || (agentId ? this.data.agentSlots.find((candidate) => candidate.id === agentId) : null);
+    const storedProjectId = normalizeText(presence?.activeProjectId) || normalizeText(agentSlot?.activeProjectId);
+    const storedProject = this.findActiveProject(storedProjectId);
+    if (storedProject) {
+      return this.decorateProjectContext(storedProject, {
+        source: presence?.activeProjectId ? "presence" : "slot",
+        explicit: false
+      });
+    }
+
+    if (allowDefault) {
+      const defaultProject = this.defaultActiveProject();
+      if (defaultProject) {
+        return this.decorateProjectContext(defaultProject, {
+          source: defaultProject.key === DOGFOOD_PROJECT_KEY ? "dogfood-default" : "default",
+          explicit: false,
+          defaulted: true
+        });
+      }
+    }
+
+    return {
+      activeProjectId: "",
+      activeProject: null,
+      projectContextSource: "",
+      projectContextExplicit: false,
+      projectContextDefaulted: false
+    };
+  }
+
+  requireActiveProject(projectId) {
+    const project = this.findActiveProject(projectId);
+    if (!project) {
+      throw httpError(`Active project ${projectId || "(none)"} was not found or is archived.`, 400, { activeProjectId: projectId });
+    }
+    return project;
+  }
+
+  findActiveProject(projectId) {
+    const normalized = normalizeText(projectId);
+    if (!normalized) return null;
+    return this.data.projects.find((project) => project.id === normalized && !project.archived) || null;
+  }
+
+  defaultActiveProject() {
+    const activeProjects = this.data.projects.filter((project) => !project.archived);
+    return (
+      activeProjects.find((project) => project.key === DOGFOOD_PROJECT_KEY) ||
+      activeProjects.find((project) => project.id === "project_demo") ||
+      [...activeProjects].sort((a, b) => a.name.localeCompare(b.name))[0] ||
+      null
+    );
+  }
+
+  decorateProjectContext(project, { source = "", explicit = false, defaulted = false } = {}) {
+    return {
+      activeProjectId: project.id,
+      activeProject: {
+        id: project.id,
+        key: project.key,
+        name: project.name
+      },
+      projectContextSource: source,
+      projectContextExplicit: explicit,
+      projectContextDefaulted: defaulted
+    };
+  }
+
+  buildNextTaskGuidance(agentId, projectContext) {
+    const encodedAgentId = encodeURIComponent(agentId);
+    const encodedProjectId = projectContext.activeProjectId ? encodeURIComponent(projectContext.activeProjectId) : "";
+    return {
+      projectId: projectContext.activeProjectId,
+      projectKey: projectContext.activeProject?.key || "",
+      url: `/api/agents/${encodedAgentId}/next-task${encodedProjectId ? `?projectId=${encodedProjectId}` : ""}`,
+      guidance: projectContext.activeProjectId
+        ? `Call get_next_task without allProjects to stay inside ${projectContext.activeProject.key || projectContext.activeProjectId}. Use allProjects only with an explicit operator/admin reason.`
+        : "Call get_next_task with an explicit projectId before claiming work."
+    };
+  }
 }
 
 function validOr(value, allowed, fallback) {
@@ -2101,6 +2261,11 @@ function normalizeObject(value) {
 function normalizePresenceState(value) {
   const normalized = normalizeText(value).toLowerCase();
   return ["active", "idle", "paused"].includes(normalized) ? normalized : "";
+}
+
+function isAllProjectsScope(input = {}) {
+  const scope = normalizeText(input.projectScope || input.scope).toLowerCase();
+  return input.allProjects === true || input.allProjects === "true" || scope === "all" || scope === "all-projects";
 }
 
 function taskMatchesNextTaskScope(task, input = {}) {
@@ -2265,6 +2430,21 @@ function buildSelection(reason, task, agentId) {
       expectedStatus: task.status,
       expectedAssignee: task.assignee || ""
     }
+  };
+}
+
+function withProjectScope(selection, projectContext, allProjects) {
+  return {
+    ...selection,
+    ...selectionProjectScope(projectContext, allProjects)
+  };
+}
+
+function selectionProjectScope(projectContext, allProjects) {
+  return {
+    projectScope: allProjects ? "all" : "active",
+    activeProjectId: projectContext.activeProjectId,
+    activeProject: projectContext.activeProject
   };
 }
 
@@ -2493,6 +2673,7 @@ function createAgentSlot(type, slotId, slotNumber) {
     specialties: [...type.specialties],
     workMode: type.defaultWorkMode,
     paused: false,
+    activeProjectId: "",
     lease: null,
     updatedAt: null
   };

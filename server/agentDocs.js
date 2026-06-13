@@ -81,11 +81,22 @@ export function listAgentDocs({ roles, statuses }) {
   };
 }
 
-export function buildAgentDoc({ agentId, roles, statuses, agentSlots = [], agentTypes = [], baseUrl = "http://localhost:8088" }) {
+export function buildAgentDoc({
+  agentId,
+  roles,
+  statuses,
+  agentSlots = [],
+  agentTypes = [],
+  baseUrl = "http://localhost:8088",
+  projectContext = null
+}) {
   const profile = resolveAgentProfile(agentId);
   const role = roles.find((candidate) => candidate.id === profile.role) || roles.find((candidate) => candidate.id === "implementer");
   const rule = ROLE_RULES[profile.role] || ROLE_RULES.implementer;
-  const filters = taskFilters(profile);
+  const activeProject = projectContext?.activeProject || null;
+  const activeProjectId = projectContext?.activeProjectId || activeProject?.id || "";
+  const activeProjectLabel = activeProject ? `${activeProject.key || activeProject.name} (${activeProject.id})` : "No active project assigned";
+  const filters = taskFilters(profile, activeProjectId);
   const isReviewer = profile.role === "reviewer";
 
   return {
@@ -94,12 +105,17 @@ export function buildAgentDoc({ agentId, roles, statuses, agentSlots = [], agent
     role: role?.id || profile.role,
     roleLabel: role?.label || profile.role,
     specialties: profile.specialties,
+    activeProjectId,
+    activeProject,
     identity: identityModel(agentId, { agentSlots, agentTypes }),
     mission: rule.mission,
     taskSelection: [
-      "First, list active projects.",
+      `Use assigned project ${activeProjectLabel} unless the operator gives an explicit override.`,
+      "First, list active projects if you need to confirm project names or keys.",
       "If you were spawned from a role type only, acquire a concrete slot through /api/bootstrap before claiming tasks.",
-      "Prefer the DOGFOOD project when it exists unless the operator named another project.",
+      activeProjectId
+        ? `Call next-task helpers with projectId=${activeProjectId}, or omit projectId after bootstrap so the active project is applied automatically.`
+        : "Call next-task helpers with an explicit projectId before claiming work.",
       "Find tasks assigned to your exact agent id.",
       ...(isReviewer ? ["Then scan tasks in status=review; review-column work takes priority over ordinary reviewer-role tasks."] : []),
       `Then find ready tasks where role=${profile.role}.`,
@@ -118,7 +134,7 @@ export function buildAgentDoc({ agentId, roles, statuses, agentSlots = [], agent
       claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
       bootstrap: `${baseUrl}/api/bootstrap`,
       agentSlots: `${baseUrl}/api/agent-slots`,
-      talks: `${baseUrl}/api/projects/{projectId}/talks`,
+      talks: activeProjectId ? `${baseUrl}/api/projects/${encodeURIComponent(activeProjectId)}/talks` : `${baseUrl}/api/projects/{projectId}/talks`,
       ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
     },
@@ -159,6 +175,7 @@ export function renderAgentDocMarkdown(doc) {
     "",
     `Role: **${doc.roleLabel}** (${doc.role})`,
     `Specialties: ${doc.specialties.length ? doc.specialties.join(", ") : "general"}`,
+    `Assigned Project: ${doc.activeProject ? `${doc.activeProject.key || doc.activeProject.name} (${doc.activeProject.id})` : "none"}`,
     "",
     "## Mission",
     doc.mission,
@@ -293,10 +310,13 @@ function inferRole(agentId) {
   return "implementer";
 }
 
-function taskFilters(profile) {
+function taskFilters(profile, activeProjectId = "") {
   const filters = {
     role: profile.role
   };
+  if (activeProjectId) {
+    filters.projectId = activeProjectId;
+  }
   if (profile.specialties.length > 0) {
     filters.labels = profile.specialties.join(",");
   }
@@ -305,7 +325,7 @@ function taskFilters(profile) {
 
 function sharedWorkflow() {
   return [
-    "List projects and choose the operator-named project, or DOGFOOD when no project is named.",
+    "Use your assigned active project from bootstrap/docs; list projects only when you need to confirm names or operator overrides.",
     "List candidate tasks using your exact agent id, role, and specialty labels.",
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",

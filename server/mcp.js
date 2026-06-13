@@ -37,7 +37,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         statuses: store.statuses(),
         agentSlots: agentSlotRegistry.slots,
         agentTypes: agentSlotRegistry.types,
-        baseUrl
+        baseUrl,
+        projectContext: store.getAgentProjectContext(input.agentId)
       });
       return asText(input.format === "json" ? doc : renderAgentDocMarkdown(doc));
     }
@@ -129,6 +130,9 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         taskId: z.string(),
         assignee: z.string(),
         actor: z.string().optional(),
+        projectId: z.string().optional(),
+        activeProjectId: z.string().optional(),
+        projectOverrideReason: z.string().optional(),
         expectedStatus: z.string().optional(),
         expectedAssignee: z.string().optional()
       }
@@ -152,6 +156,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         specialties: z.array(z.string()).optional(),
         labels: z.array(z.string()).optional(),
         agentId: z.string().optional(),
+        projectId: z.string().optional(),
+        activeProjectId: z.string().optional(),
         runtimeId: z.string().optional(),
         workMode: z.string().optional(),
         now: z.string().optional()
@@ -168,6 +174,9 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       inputSchema: {
         agentId: z.string(),
         projectId: z.string().optional(),
+        activeProjectId: z.string().optional(),
+        allProjects: z.boolean().optional(),
+        projectScope: z.enum(["active", "all", "all-projects"]).optional(),
         role: z.string().optional(),
         labels: z.array(z.string()).optional(),
         specialties: z.array(z.string()).optional(),
@@ -189,6 +198,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         state: z.enum(["active", "idle", "paused"]).optional(),
         currentTaskId: z.string().optional(),
         currentTask: z.string().optional(),
+        projectId: z.string().optional(),
+        activeProjectId: z.string().optional(),
         workMode: z.string().optional(),
         message: z.string().optional(),
         now: z.string().optional()
