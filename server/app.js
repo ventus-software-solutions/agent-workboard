@@ -4,6 +4,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
+import { getIntegrationStatus } from "./integrationStatus.js";
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
 
 const upload = multer({
@@ -15,10 +16,12 @@ const upload = multer({
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createApp({ store }) {
+export function createApp({ store, integrationStatusProvider = getIntegrationStatus }) {
   const app = express();
 
   app.use(express.json({ limit: "2mb" }));
+
+  const integrationStatus = () => integrationStatusProvider();
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "agent-workboard" });
@@ -29,12 +32,13 @@ export function createApp({ store }) {
       roles: store.roles(),
       statuses: store.statuses(),
       completionTypes: store.completionTypes(),
-      capabilityStatuses: store.capabilityStatuses()
+      capabilityStatuses: store.capabilityStatuses(),
+      integrationStatus: integrationStatus()
     });
   });
 
   app.get("/api/agent-docs", (_req, res) => {
-    res.json(listAgentDocs({ roles: store.roles(), statuses: store.statuses() }));
+    res.json(listAgentDocs({ roles: store.roles(), statuses: store.statuses(), integrationStatus: integrationStatus() }));
   });
 
   app.get("/api/agent-docs/:agentId", (req, res) => {
@@ -46,6 +50,7 @@ export function createApp({ store }) {
       statuses: store.statuses(),
       agentSlots: agentSlotRegistry.slots,
       agentTypes: agentSlotRegistry.types,
+      integrationStatus: integrationStatus(),
       baseUrl,
       projectContext: store.getAgentProjectContext(req.params.agentId)
     });
@@ -66,9 +71,17 @@ export function createApp({ store }) {
     }
   });
 
+  app.get("/api/integration-status", (_req, res, next) => {
+    try {
+      res.json({ integrationStatus: integrationStatus() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/bootstrap", async (req, res, next) => {
     try {
-      res.json(await store.acquireAgentSlot(req.body));
+      res.json({ ...(await store.acquireAgentSlot(req.body)), integrationStatus: integrationStatus() });
     } catch (error) {
       next(error);
     }

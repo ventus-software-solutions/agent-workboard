@@ -46,7 +46,7 @@ const SPECIALTY_KEYWORDS = [
   ["security", ["security", "auth", "permission", "role"]]
 ];
 
-export function listAgentDocs({ roles, statuses }) {
+export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
   return {
     service: "agent-workboard",
     purpose: "Bootstrap agents from the board itself so every worker follows the same task-selection and reporting rules.",
@@ -76,7 +76,8 @@ export function listAgentDocs({ roles, statuses }) {
     },
     roles,
     statuses,
-    worktree: worktreeDiscipline(),
+    integrationStatus,
+    worktree: worktreeDiscipline(undefined, integrationStatus),
     workflow: sharedWorkflow()
   };
 }
@@ -88,6 +89,7 @@ export function buildAgentDoc({
   agentSlots = [],
   agentTypes = [],
   baseUrl = "http://localhost:8088",
+  integrationStatus = null,
   projectContext = null
 }) {
   const profile = resolveAgentProfile(agentId);
@@ -123,7 +125,8 @@ export function buildAgentDoc({
       "Sort by urgent, high, normal, low. Prefer ready over backlog.",
       "Claim exactly one task before doing substantive work."
     ],
-    worktree: worktreeDiscipline(agentId),
+    integrationStatus,
+    worktree: worktreeDiscipline(agentId, integrationStatus),
     workflow: sharedWorkflow(),
     accepts: rule.accepts,
     outputs: rule.outputs,
@@ -134,6 +137,7 @@ export function buildAgentDoc({
       claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
       bootstrap: `${baseUrl}/api/bootstrap`,
       agentSlots: `${baseUrl}/api/agent-slots`,
+      integrationStatus: `${baseUrl}/api/integration-status`,
       talks: activeProjectId ? `${baseUrl}/api/projects/${encodeURIComponent(activeProjectId)}/talks` : `${baseUrl}/api/projects/{projectId}/talks`,
       ...(isReviewer ? { reviewQueue: `${baseUrl}/api/tasks?status=review` } : {}),
       agentDoc: `${baseUrl}/api/agent-docs/${encodeURIComponent(agentId)}?format=md`
@@ -197,6 +201,18 @@ export function renderAgentDocMarkdown(doc) {
     "## Branch And Worktree Discipline",
     ...doc.worktree.map((line, index) => `${index + 1}. ${line}`),
     "",
+    ...(doc.integrationStatus
+      ? [
+          "## Integration Source",
+          `Source of truth: \`${doc.integrationStatus.sourceOfTruth}\`.`,
+          `Recommended worktree base: \`${doc.integrationStatus.baseRef || "reconcile-first"}\`.`,
+          `Local head: \`${doc.integrationStatus.localHead || "unknown"}\`; origin head: \`${doc.integrationStatus.originHead || "unknown"}\`.`,
+          `Push debt: ${doc.integrationStatus.pushDebt ? `yes (${doc.integrationStatus.ahead} ahead, ${doc.integrationStatus.behind} behind)` : "no"}.`,
+          doc.integrationStatus.summary,
+          ...(doc.integrationStatus.recoveryActions || []).map((line) => `- ${line}`),
+          ""
+        ]
+      : []),
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
     "",
@@ -351,12 +367,17 @@ function reviewerMergeRules() {
   ];
 }
 
-function worktreeDiscipline(agentId = "<agent-id>") {
+function worktreeDiscipline(agentId = "<agent-id>", integrationStatus = null) {
   const safeAgentId = String(agentId || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+  const baseRef = integrationStatus?.baseRef || "origin/main";
+  const worktreeExample = integrationStatus?.baseRef
+    ? `git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> -b ${safeAgentId}/<slug> ${baseRef}`
+    : `do not run git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> until local main and origin/main are reconciled`;
   return [
     "Before editing code, check `git status --short --branch` and confirm you are not doing implementation work directly on `main`.",
     `Use a task branch named like \`${safeAgentId}/<short-task-slug>\` or another operator-approved branch name.`,
-    `Prefer a separate worktree for implementation, for example \`git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> -b ${safeAgentId}/<slug> origin/main\`.`,
+    `Check ${integrationStatus ? "`/api/integration-status`" : "the current integration status"} before choosing a base ref; use the recommended worktree base instead of blindly assuming \`origin/main\`.`,
+    `Prefer a separate worktree for implementation, for example \`${worktreeExample}\`.`,
     "Keep the main checkout for running/observing the local service and for operator state. Do not pile unrelated agent edits into it.",
     "Commit only your task files, run the task-specific checks, push your branch when possible, then comment the branch/commit/test evidence on the task.",
     "If you find dirty files you did not create, do not overwrite them. Report the conflict on the task or in Agent Talks."

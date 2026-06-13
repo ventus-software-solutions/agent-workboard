@@ -74,7 +74,13 @@ function formatClock(value) {
 }
 
 export function App() {
-  const [meta, setMeta] = useState({ roles: [], statuses: [], completionTypes: [], capabilityStatuses: [] });
+  const [meta, setMeta] = useState({
+    roles: [],
+    statuses: [],
+    completionTypes: [],
+    capabilityStatuses: [],
+    integrationStatus: null
+  });
   const [projects, setProjects] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [projectTasks, setProjectTasks] = useState([]);
@@ -603,6 +609,7 @@ export function App() {
               </>
             )}
           </div>
+          <IntegrationStatusPill status={meta.integrationStatus} />
           <BoardRefreshStatus state={refreshState} />
           <button
             className="primaryButton"
@@ -758,6 +765,33 @@ function Stat({ icon: Icon, label, value }) {
       <Icon size={16} />
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function IntegrationStatusPill({ status }) {
+  if (!status) return null;
+  const needsReconcile = status.sourceOfTruth === "reconcile-first";
+  const label = needsReconcile ? "Reconcile" : status.baseRef || "Unknown";
+  const detail = status.pushDebt
+    ? `${status.ahead} ahead, ${status.behind} behind`
+    : status.clean === false
+      ? "dirty"
+      : "clean";
+  const title = [
+    status.summary,
+    `local: ${status.localHead || "unknown"}`,
+    `origin: ${status.originHead || "unknown"}`,
+    ...(status.recoveryActions || [])
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return (
+    <div className={`integrationStatus ${needsReconcile ? "needsReconcile" : status.pushDebt ? "pushDebt" : ""}`} title={title}>
+      <Link2 size={15} />
+      <span>{label}</span>
+      <strong>{detail}</strong>
     </div>
   );
 }
