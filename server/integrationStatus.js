@@ -36,8 +36,7 @@ export function buildIntegrationStatus({
   const originHead = readGit(git, ["rev-parse", remoteRef]);
   const counts = readGit(git, ["rev-list", "--left-right", "--count", `${remoteRef}...${localRef}`]);
   const { behind, ahead } = parseAheadBehind(counts);
-  const statusShort = readGit(git, ["status", "--short"]) || "";
-  const clean = statusShort.trim().length === 0;
+  const clean = isCleanCheckout(git);
   const shortLocalHead = shortSha(localHead);
   const shortOriginHead = shortSha(originHead);
   const pushDebt = ahead > 0 || (!originHead && Boolean(localHead));
@@ -69,6 +68,13 @@ function readGit(runGit, args) {
   } catch {
     return "";
   }
+}
+
+function isCleanCheckout(git) {
+  const statusShort = readGit(git, ["status", "--short"]);
+  if (!statusShort) return true;
+  const autocrlfStatus = readGit(git, ["-c", "core.autocrlf=true", "status", "--short"]);
+  return !autocrlfStatus;
 }
 
 function parseAheadBehind(value) {

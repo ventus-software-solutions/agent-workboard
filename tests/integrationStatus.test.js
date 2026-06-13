@@ -95,6 +95,28 @@ describe("integration status guidance", () => {
     expect(status.worktreeCommand).toMatch(/reconcile/i);
   });
 
+  it("treats CRLF-only Docker mount status noise as clean for local-main-ahead guidance", () => {
+    const status = buildIntegrationStatus({
+      runGit: fakeGit({
+        "branch --show-current": "main",
+        "rev-parse main": "localsha",
+        "rev-parse origin/main": "originsha",
+        "rev-list --left-right --count origin/main...main": "0\t2",
+        "status --short": " M docs/architecture.md",
+        "-c core.autocrlf=true status --short": ""
+      })
+    });
+
+    expect(status).toMatchObject({
+      sourceOfTruth: "local-main",
+      baseRef: "main",
+      pushDebt: true,
+      ahead: 2,
+      behind: 0,
+      clean: true
+    });
+  });
+
   it("uses WORKBOARD_REPO_DIR so deployed app endpoints can read host Git state", async () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-repo-"));
     const remoteDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-origin-"));
