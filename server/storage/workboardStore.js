@@ -1712,6 +1712,8 @@ export class WorkboardStore {
       }
     }
 
+    this.rebuildTaskRelationshipDerivatives();
+
     this.data.events.push({
       id: id("event"),
       projectId: backup.project.id,

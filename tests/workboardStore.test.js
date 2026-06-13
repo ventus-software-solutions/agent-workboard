@@ -423,6 +423,84 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("rebuilds task relationship derivatives when importing project backups", async () => {
+    const projectId = "project_relationship_import";
+    const parentId = "task_relationship_import_parent";
+    const childId = "task_relationship_import_child";
+
+    await store.importProjectBackup({
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      exportedAt: "2026-06-13T00:00:00.000Z",
+      project: {
+        id: projectId,
+        key: "RELIMPORT",
+        name: "Relationship Import",
+        description: "",
+        createdAt: "2026-06-13T00:00:00.000Z",
+        updatedAt: "2026-06-13T00:00:00.000Z",
+        archived: false
+      },
+      tasks: [
+        {
+          id: parentId,
+          projectId,
+          title: "Imported prerequisite",
+          description: "",
+          status: "ready",
+          priority: "normal",
+          role: "implementer",
+          workItemType: "task",
+          assignee: "",
+          labels: ["backend"],
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+          revision: 1,
+          comments: [],
+          attachments: [],
+          activity: []
+        },
+        {
+          id: childId,
+          projectId,
+          title: "Imported dependent child",
+          description: "",
+          status: "ready",
+          priority: "normal",
+          role: "implementer",
+          workItemType: "task",
+          dependsOn: [parentId],
+          parentTaskId: parentId,
+          assignee: "",
+          labels: ["backend"],
+          createdAt: "2026-06-13T00:00:00.000Z",
+          updatedAt: "2026-06-13T00:00:00.000Z",
+          revision: 1,
+          comments: [],
+          attachments: [],
+          activity: []
+        }
+      ],
+      events: []
+    });
+
+    expect(store.getTask(parentId)).toMatchObject({
+      blocks: [childId],
+      childTaskIds: [childId]
+    });
+    expect(store.getTask(childId).dependencyStatus).toMatchObject({
+      state: "waiting",
+      waitingTaskIds: [parentId]
+    });
+    expect(
+      store.getNextTaskForAgent("implementer-backend-2", {
+        projectId,
+        labels: "backend",
+        now: "2026-06-13T21:00:00.000Z"
+      }).candidates.map((task) => task.id)
+    ).not.toContain(childId);
+  });
+
   it("seeds searchable product capabilities", () => {
     const capabilities = store.listCapabilities({ q: "MCP" });
 
