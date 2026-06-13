@@ -19,18 +19,30 @@ export async function createWorktreeCleanupReport({
   const resolvedRepoRoot = repoRoot || config.repoRoot;
   const resolvedMainRef = mainRef || config.mainRef;
   const snapshot = await collectWorktreeSnapshot({ repoRoot: resolvedRepoRoot, mainRef: resolvedMainRef, git });
-  return buildWorktreeCleanupReport({
+  const report = buildWorktreeCleanupReport({
     tasks: store.listTasks(),
     worktrees: snapshot.worktrees,
     mainRef: resolvedMainRef,
     generatedAt: new Date().toISOString()
   });
+  return {
+    ...report,
+    cleanup: {
+      mutationsEnabled: config.mutationsEnabled,
+      mode: config.mutationsEnabled ? "enabled" : "report-only",
+      repoRoot: resolvedRepoRoot,
+      reason: config.mutationsEnabled
+        ? ""
+        : "Cleanup actions are disabled because WORKBOARD_CLEANUP_MUTATIONS is false."
+    }
+  };
 }
 
 export function readWorktreeCleanupConfig(env = runtimeEnv(), fallbackRepoRoot = DEFAULT_REPO_ROOT) {
   return {
     repoRoot: normalizeText(env.WORKBOARD_REPO_DIR) || fallbackRepoRoot,
-    mainRef: normalizeText(env.WORKBOARD_CLEANUP_MAIN_REF) || "main"
+    mainRef: normalizeText(env.WORKBOARD_CLEANUP_MAIN_REF) || "main",
+    mutationsEnabled: parseBooleanFlag(env.WORKBOARD_CLEANUP_MUTATIONS, true)
   };
 }
 
@@ -39,12 +51,32 @@ export async function cleanupWorktree({
   taskId,
   branch,
   worktreePath,
+  expectedHead,
+  head,
   actor = "operator",
   repoRoot,
   mainRef,
   git = runGit
 } = {}) {
+  const request = validateWorktreeCleanupRequest({
+    taskId,
+    branch,
+    worktreePath,
+    expectedHead,
+    head,
+    actor
+  });
   const config = readWorktreeCleanupConfig();
+  if (!config.mutationsEnabled) {
+    throw Object.assign(new Error("Worktree cleanup actions are disabled in this deployment."), {
+      status: 409,
+      details: {
+        mode: "report-only",
+        env: "WORKBOARD_CLEANUP_MUTATIONS"
+      }
+    });
+  }
+
   const resolvedRepoRoot = repoRoot || config.repoRoot;
   const resolvedMainRef = mainRef || config.mainRef;
   const report = await createWorktreeCleanupReport({
@@ -53,14 +85,24 @@ export async function cleanupWorktree({
     mainRef: resolvedMainRef,
     git
   });
-  const item = report.items.find(
+  const matchingCandidate = report.items.find(
     (candidate) =>
-      (!taskId || candidate.task?.id === taskId) &&
-      (!branch || candidate.branch === normalizeText(branch)) &&
-      (!worktreePath || candidate.worktreePath === normalizeText(worktreePath))
+      candidate.task?.id === request.taskId &&
+      candidate.branch === request.branch &&
+      candidate.worktreePath === request.worktreePath
   );
+  const item = matchingCandidate && matchingCandidate.head === request.expectedHead ? matchingCandidate : null;
 
   if (!item) {
+    if (matchingCandidate) {
+      throw Object.assign(new Error("Cleanup candidate changed since the report was generated."), {
+        status: 409,
+        details: {
+          expectedHead: request.expectedHead,
+          currentHead: matchingCandidate.head
+        }
+      });
+    }
     throw Object.assign(new Error("Cleanup candidate not found."), { status: 404 });
   }
 
@@ -76,7 +118,7 @@ export async function cleanupWorktree({
   }
 
   const comment = await store.addComment(item.task.id, {
-    author: normalizeText(actor) || "operator",
+    author: request.actor,
     body: cleanupEvidenceComment(item, actions)
   });
 
@@ -85,10 +127,29 @@ export async function cleanupWorktree({
     taskId: item.task.id,
     branch: item.branch,
     worktreePath: item.worktreePath,
+    expectedHead: request.expectedHead,
     mainRef: resolvedMainRef,
     actions,
     comment
   };
+}
+
+export function validateWorktreeCleanupRequest(input = {}) {
+  const request = {
+    taskId: normalizeText(input.taskId),
+    branch: normalizeText(input.branch),
+    worktreePath: normalizeText(input.worktreePath),
+    expectedHead: normalizeText(input.expectedHead) || normalizeText(input.head),
+    actor: normalizeText(input.actor) || "operator"
+  };
+  const missing = ["taskId", "branch", "worktreePath", "expectedHead"].filter((field) => !request[field]);
+  if (missing.length > 0) {
+    throw Object.assign(new Error("Cleanup request must identify one current cleanup candidate."), {
+      status: 400,
+      details: { missing }
+    });
+  }
+  return request;
 }
 
 export function buildWorktreeCleanupReport({
@@ -197,7 +258,8 @@ async function hydrateWorktree(worktree, { repoRoot, mainRef, git }) {
 
   return {
     ...worktree,
-    dirty: !statusResult.ok || statusEntries.length > 0,
+    inaccessible: !statusResult.ok,
+    dirty: statusResult.ok ? statusEntries.length > 0 : false,
     untrackedCount: statusEntries.filter((entry) => entry.startsWith("??")).length,
     statusEntries,
     statusError: statusResult.ok ? "" : statusResult.stderr || "Unable to inspect worktree status.",
@@ -235,6 +297,7 @@ function classifyWorktree(worktreeInput, tasks, mainRef) {
     worktreePath: worktree.path,
     branch: worktree.branch,
     head: worktree.head,
+    inaccessible: worktree.inaccessible,
     dirty: worktree.dirty,
     untrackedCount: worktree.untrackedCount,
     aheadMain: worktree.aheadMain,
@@ -244,6 +307,7 @@ function classifyWorktree(worktreeInput, tasks, mainRef) {
     task: task ? summarizeTask(task) : null,
     completion: task?.completion ? summarizeCompletion(task.completion) : null,
     commands: {},
+    cleanupRequest: null,
     cleanupEligible: false
   };
 
@@ -274,6 +338,15 @@ function classifyWorktree(worktreeInput, tasks, mainRef) {
     };
   }
 
+  if (worktree.inaccessible) {
+    return {
+      ...base,
+      status: "quarantined-inaccessible",
+      reason: worktree.statusError || "Worktree path is not available to the running process.",
+      recommendedAction: "Run cleanup from a host-side process or mount the worktree root and writable Git metadata before enabling cleanup actions."
+    };
+  }
+
   if (worktree.dirty) {
     return {
       ...base,
@@ -298,6 +371,12 @@ function classifyWorktree(worktreeInput, tasks, mainRef) {
     cleanupEligible: true,
     reason: `Done task is clean and merged into ${mainRef}.`,
     recommendedAction: "Remove the worktree, delete the merged branch, and comment cleanup evidence on the task.",
+    cleanupRequest: {
+      taskId: task.id,
+      branch: worktree.branch,
+      worktreePath: worktree.path,
+      expectedHead: worktree.head
+    },
     commands: {
       removeWorktree: `git worktree remove ${shellQuote(worktree.path)}`,
       deleteBranch: `git branch -d ${shellQuote(worktree.branch)}`
@@ -312,7 +391,8 @@ function normalizeWorktree(worktree) {
     path: normalizeText(worktree.path),
     branch: normalizeText(worktree.branch),
     head: normalizeText(worktree.head),
-    dirty: Boolean(worktree.dirty || statusEntries.length > 0 || untrackedCount > 0),
+    inaccessible: Boolean(worktree.inaccessible),
+    dirty: !worktree.inaccessible && Boolean(worktree.dirty || statusEntries.length > 0 || untrackedCount > 0),
     untrackedCount,
     statusEntries,
     statusError: normalizeText(worktree.statusError),
@@ -396,11 +476,12 @@ function parseAheadBehind(output) {
 function compareCleanupItems(left, right) {
   const rank = {
     "cleanup-ready": 0,
-    "quarantined-dirty": 1,
-    "quarantined-unmerged": 2,
-    "quarantined-not-done": 3,
-    "active-keep": 4,
-    "unknown-task": 5
+    "quarantined-inaccessible": 1,
+    "quarantined-dirty": 2,
+    "quarantined-unmerged": 3,
+    "quarantined-not-done": 4,
+    "active-keep": 5,
+    "unknown-task": 6
   };
   return (rank[left.status] ?? 99) - (rank[right.status] ?? 99) || left.branch.localeCompare(right.branch);
 }
@@ -439,6 +520,14 @@ function normalizeText(value) {
 function toNumber(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBooleanFlag(value, fallback) {
+  const text = normalizeText(value).toLowerCase();
+  if (!text) return fallback;
+  if (["1", "true", "yes", "on", "enabled"].includes(text)) return true;
+  if (["0", "false", "no", "off", "disabled"].includes(text)) return false;
+  return fallback;
 }
 
 function cleanupEvidenceComment(item, actions) {

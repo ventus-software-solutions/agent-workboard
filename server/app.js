@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
 import { getIntegrationStatus } from "./integrationStatus.js";
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
-import { cleanupWorktree, createWorktreeCleanupReport } from "./worktreeCleanup.js";
+import { cleanupWorktree, createWorktreeCleanupReport, validateWorktreeCleanupRequest } from "./worktreeCleanup.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -241,7 +241,8 @@ export function createApp({
 
   app.post("/api/worktree-cleanup/cleanup", async (req, res, next) => {
     try {
-      const cleanup = await worktreeCleanupAction({ store, ...req.body });
+      const cleanupRequest = validateWorktreeCleanupRequest(req.body);
+      const cleanup = await worktreeCleanupAction({ store, ...cleanupRequest });
       res.json({ cleanup });
     } catch (error) {
       next(error);

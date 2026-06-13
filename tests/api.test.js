@@ -386,14 +386,39 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("rejects incomplete worktree cleanup API requests before the action runs", async () => {
+    const calls = [];
+    const cleanupApp = createApp({
+      store,
+      worktreeCleanupAction: async (input) => {
+        calls.push(input);
+        return { cleaned: true };
+      }
+    });
+
+    const response = await request(cleanupApp)
+      .post("/api/worktree-cleanup/cleanup")
+      .send({
+        branch: "implementer/clean"
+      })
+      .expect(400);
+
+    expect(response.body.error).toMatchObject({
+      message: "Cleanup request must identify one current cleanup candidate."
+    });
+    expect(response.body.error.details.missing).toEqual(["taskId", "worktreePath", "expectedHead"]);
+    expect(calls).toHaveLength(0);
+  });
+
   it("runs guarded worktree cleanup through the API", async () => {
     const cleanupApp = createApp({
       store,
-      worktreeCleanupAction: async ({ taskId, branch, worktreePath, actor }) => ({
+      worktreeCleanupAction: async ({ taskId, branch, worktreePath, expectedHead, actor }) => ({
         cleaned: true,
         taskId,
         branch,
         worktreePath,
+        expectedHead,
         actor,
         actions: ["worktree.remove", "branch.delete"]
       })
@@ -405,6 +430,7 @@ describe("Agent Workboard API", () => {
         taskId: "task_clean",
         branch: "implementer/clean",
         worktreePath: "C:/tmp/wt-clean",
+        expectedHead: "abc1234",
         actor: "operator-ui"
       })
       .expect(200);
@@ -414,6 +440,7 @@ describe("Agent Workboard API", () => {
       taskId: "task_clean",
       branch: "implementer/clean",
       worktreePath: "C:/tmp/wt-clean",
+      expectedHead: "abc1234",
       actions: ["worktree.remove", "branch.delete"]
     });
   });

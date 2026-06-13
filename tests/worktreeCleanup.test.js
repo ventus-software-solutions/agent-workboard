@@ -227,9 +227,10 @@ prunable gitdir file points to non-existent location
   });
 
   it("uses WORKBOARD_REPO_DIR for deployed cleanup scans", () => {
-    expect(readWorktreeCleanupConfig({ WORKBOARD_REPO_DIR: "/workspace" }, "/app")).toMatchObject({
+    expect(readWorktreeCleanupConfig({ WORKBOARD_REPO_DIR: "/workspace", WORKBOARD_CLEANUP_MUTATIONS: "false" }, "/app")).toMatchObject({
       repoRoot: "/workspace",
-      mainRef: "main"
+      mainRef: "main",
+      mutationsEnabled: false
     });
   });
 
@@ -239,9 +240,113 @@ prunable gitdir file points to non-existent location
 
     expect(dockerfile).toContain("apk add --no-cache git");
     expect(dockerfile).toContain("WORKBOARD_REPO_DIR=/workspace");
+    expect(dockerfile).toContain("WORKBOARD_CLEANUP_MUTATIONS=false");
     expect(dockerfile).toContain("safe.directory /workspace");
     expect(compose).toContain("WORKBOARD_REPO_DIR: /workspace");
+    expect(compose).toContain('WORKBOARD_CLEANUP_MUTATIONS: "false"');
     expect(compose).toContain("./:/workspace:ro");
+  });
+
+  it("quarantines inaccessible done-task worktrees instead of presenting them as cleanup-ready", () => {
+    const report = buildWorktreeCleanupReport({
+      tasks: [
+        task({
+          id: "task_clean",
+          completion: {
+            completionType: "merged",
+            branch: "implementer/clean",
+            commitSha: "abc1234",
+            mergedTo: "main"
+          }
+        })
+      ],
+      mainRef: "main",
+      generatedAt: "2026-06-01T12:00:00.000Z",
+      worktrees: [
+        {
+          path: "C:/tmp/wt-clean",
+          branch: "implementer/clean",
+          head: "abc1234",
+          inaccessible: true,
+          statusError: "fatal: cannot change to C:/tmp/wt-clean",
+          dirty: false,
+          untrackedCount: 0,
+          aheadMain: 0,
+          behindMain: 0,
+          mergedIntoMain: true
+        }
+      ]
+    });
+
+    expect(report.counts).toMatchObject({
+      cleanupReady: 0,
+      quarantined: 1
+    });
+    expect(report.items[0]).toMatchObject({
+      status: "quarantined-inaccessible",
+      cleanupEligible: false,
+      inaccessible: true,
+      reason: "fatal: cannot change to C:/tmp/wt-clean"
+    });
+    expect(report.items[0].commands).toEqual({});
+  });
+
+  it("requires a precise cleanup candidate identity before running destructive commands", async () => {
+    const calls = [];
+
+    await expect(
+      cleanupWorktree({
+        store: { listTasks: () => [] },
+        branch: "implementer/clean",
+        git: async (args) => {
+          calls.push(args);
+          return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+        }
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      details: {
+        missing: ["taskId", "worktreePath", "expectedHead"]
+      }
+    });
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it("refuses cleanup mutations in report-only deployments before running git commands", async () => {
+    const originalCleanupMutations = process.env.WORKBOARD_CLEANUP_MUTATIONS;
+    const calls = [];
+    process.env.WORKBOARD_CLEANUP_MUTATIONS = "false";
+
+    try {
+      await expect(
+        cleanupWorktree({
+          store: { listTasks: () => [] },
+          taskId: "task_clean",
+          branch: "implementer/clean",
+          worktreePath: "C:/tmp/wt-clean",
+          expectedHead: "abc1234",
+          git: async (args) => {
+            calls.push(args);
+            return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+          }
+        })
+      ).rejects.toMatchObject({
+        status: 409,
+        details: {
+          mode: "report-only",
+          env: "WORKBOARD_CLEANUP_MUTATIONS"
+        }
+      });
+    } finally {
+      if (originalCleanupMutations === undefined) {
+        delete process.env.WORKBOARD_CLEANUP_MUTATIONS;
+      } else {
+        process.env.WORKBOARD_CLEANUP_MUTATIONS = originalCleanupMutations;
+      }
+    }
+
+    expect(calls).toHaveLength(0);
   });
 
   it("removes cleanup-ready worktrees and records task evidence", async () => {
@@ -298,6 +403,7 @@ prunable gitdir file points to non-existent location
       taskId: task.id,
       branch: "implementer/clean",
       worktreePath: "C:/tmp/wt-clean",
+      expectedHead: "abc1234",
       actor: "operator-ui",
       git
     });
@@ -318,5 +424,69 @@ prunable gitdir file points to non-existent location
       author: "operator-ui"
     });
     expect(store.getTask(task.id).comments[0].body).toContain("Removed cleanup-ready worktree");
+  });
+
+  it("rejects stale cleanup requests when the reported head no longer matches", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-cleanup-stale-"));
+    cleanupPaths.push(dataDir);
+    const store = new WorkboardStore({ dataDir });
+    await store.init();
+    const project = await store.createProject({ name: "Cleanup stale action project" });
+    const staleTask = await store.createTask({
+      projectId: project.id,
+      title: "Merged cleanup branch",
+      status: "done",
+      completion: {
+        completionType: "merged",
+        branch: "implementer/clean",
+        commitSha: "abc1234",
+        mergedTo: "main"
+      }
+    });
+    const calls = [];
+    const git = async (args) => {
+      calls.push(args);
+      const key = args.join(" ");
+      if (key === "-C C:/repo worktree list --porcelain") {
+        return {
+          ok: true,
+          stdout: "worktree C:/tmp/wt-clean\nHEAD abc1234\nbranch refs/heads/implementer/clean",
+          stderr: "",
+          exitCode: 0
+        };
+      }
+      if (key === "-C C:/tmp/wt-clean status --porcelain --untracked-files=normal") {
+        return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo rev-list --left-right --count main...implementer/clean") {
+        return { ok: true, stdout: "0\t0", stderr: "", exitCode: 0 };
+      }
+      if (key === "-C C:/repo merge-base --is-ancestor abc1234 main") {
+        return { ok: true, stdout: "", stderr: "", exitCode: 0 };
+      }
+      throw new Error(`Unexpected git command: ${key}`);
+    };
+
+    await expect(
+      cleanupWorktree({
+        store,
+        repoRoot: "C:/repo",
+        mainRef: "main",
+        taskId: staleTask.id,
+        branch: "implementer/clean",
+        worktreePath: "C:/tmp/wt-clean",
+        expectedHead: "stale000",
+        actor: "operator-ui",
+        git
+      })
+    ).rejects.toMatchObject({
+      status: 409
+    });
+    expect(calls.map((args) => args.join(" "))).not.toEqual(
+      expect.arrayContaining([
+        "-C C:/repo worktree remove C:/tmp/wt-clean",
+        "-C C:/repo branch -d implementer/clean"
+      ])
+    );
   });
 });

@@ -468,12 +468,16 @@ export function App() {
 
   async function runWorktreeCleanup(item) {
     const actionKey = `${item.worktreePath}:${item.branch}`;
+    const cleanupRequest = item.cleanupRequest || {
+      taskId: item.task?.id,
+      branch: item.branch,
+      worktreePath: item.worktreePath,
+      expectedHead: item.head
+    };
     setCleanupActionKey(actionKey);
     try {
       await api.cleanupWorktree({
-        taskId: item.task?.id,
-        branch: item.branch,
-        worktreePath: item.worktreePath,
+        ...cleanupRequest,
         actor: "operator-ui"
       });
       await Promise.all([refreshWorktreeCleanup(), refreshTasks(), refreshTalks()]);
@@ -1029,6 +1033,7 @@ function CoordinationStat({ icon: Icon, label, value }) {
 function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, cleanupActionKey }) {
   const items = (report.items || []).filter((item) => item.status !== "active-keep");
   const activeCount = report.counts?.active || 0;
+  const cleanupDisabled = report.cleanup?.mutationsEnabled === false;
 
   return (
     <section className="worktreeCleanupPanel" aria-label="Worktree cleanup queue">
@@ -1053,6 +1058,7 @@ function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, clea
         <span>{report.counts?.quarantined || 0} quarantined</span>
         <span>{report.counts?.unknown || 0} unknown</span>
         {activeCount > 0 && <span>{activeCount} active</span>}
+        {cleanupDisabled && <span>report-only</span>}
       </div>
 
       {report.loading ? (
@@ -1089,9 +1095,14 @@ function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, clea
                   <div className="cleanupCommands">
                     <code>{item.commands.removeWorktree}</code>
                     <code>{item.commands.deleteBranch}</code>
-                    <button className="cleanupActionButton" onClick={() => onCleanup(item)} disabled={cleanupBusy}>
+                    <button
+                      className="cleanupActionButton"
+                      onClick={() => onCleanup(item)}
+                      disabled={cleanupBusy || cleanupDisabled}
+                      title={cleanupDisabled ? report.cleanup?.reason : "Clean worktree"}
+                    >
                       <Archive size={14} />
-                      <span>{cleanupBusy ? "Cleaning" : "Clean"}</span>
+                      <span>{cleanupDisabled ? "Report only" : cleanupBusy ? "Cleaning" : "Clean"}</span>
                     </button>
                   </div>
                 )}
@@ -1108,6 +1119,7 @@ function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, clea
 
 function cleanupStatusLabel(status) {
   if (status === "cleanup-ready") return "Ready";
+  if (status === "quarantined-inaccessible") return "Inaccessible";
   if (status === "quarantined-dirty") return "Dirty";
   if (status === "quarantined-unmerged") return "Unmerged";
   if (status === "quarantined-not-done") return "Not done";
