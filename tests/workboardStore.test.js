@@ -2357,11 +2357,13 @@ describe("WorkboardStore", () => {
         backup.tasks[0].activity.map((event) => event.type)
       );
 
+      const updatedEventMessage = "Updated restored project event.";
       const updated = await targetStore.importProjectBackup(
         {
           ...backup,
           project: { ...backup.project, name: "Updated Backup Store Project" },
-          tasks: [{ ...backup.tasks[0], title: "Updated restored task" }]
+          tasks: [{ ...backup.tasks[0], title: "Updated restored task" }],
+          events: backup.events.map((event, index) => (index === 0 ? { ...event, message: updatedEventMessage } : event))
         },
         { actor: "restore-agent" }
       );
@@ -2371,9 +2373,49 @@ describe("WorkboardStore", () => {
       });
       expect(targetStore.getProject(project.id).name).toBe("Updated Backup Store Project");
       expect(targetStore.getTask(task.id).title).toBe("Updated restored task");
+      expect(targetStore.data.events.filter((event) => event.id === backup.events[0].id)).toHaveLength(1);
+      expect(targetStore.data.events.find((event) => event.id === backup.events[0].id)).toMatchObject({
+        projectId: project.id,
+        message: updatedEventMessage
+      });
     } finally {
       await rm(importDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects project backup event id collisions across projects", async () => {
+    const existing = await store.createProject({ name: "Existing Event Project", key: "EEP" });
+    const existingEvent = store.data.events.find((event) => event.projectId === existing.id && event.type === "project.created");
+    const backup = {
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: "project_restore_events",
+        key: "RESTORE-EVENTS",
+        name: "Restore Events Project"
+      },
+      tasks: [],
+      events: [
+        {
+          ...existingEvent,
+          projectId: "project_restore_events",
+          message: "Unsafe imported event"
+        }
+      ]
+    };
+
+    await expect(store.importProjectBackup(backup, { actor: "restore-agent" })).rejects.toMatchObject({
+      status: 409,
+      details: expect.objectContaining({
+        reason: "event_id_collision",
+        eventId: existingEvent.id,
+        existingProjectId: existing.id
+      })
+    });
+    expect(store.data.events.find((event) => event.id === existingEvent.id)).toMatchObject({
+      projectId: existing.id,
+      message: existingEvent.message
+    });
   });
 
   it("rejects unsafe project backup imports", async () => {

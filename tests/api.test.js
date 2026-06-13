@@ -233,12 +233,14 @@ describe("Agent Workboard API", () => {
         expect.arrayContaining(["created", "updated", "commented", "attachment.added"])
       );
 
+      const updatedEventMessage = "API restored project event was updated.";
       const renamedPackage = {
         ...exported.body,
         project: {
           ...exported.body.project,
           name: "Restored Backup API Project"
-        }
+        },
+        events: exported.body.events.map((event, index) => (index === 0 ? { ...event, message: updatedEventMessage } : event))
       };
       const updated = await request(importApp).post("/api/projects/import").send(renamedPackage).expect(200);
       expect(updated.body.import).toMatchObject({
@@ -249,9 +251,48 @@ describe("Agent Workboard API", () => {
       expect((await request(importApp).get("/api/projects").expect(200)).body.projects).toContainEqual(
         expect.objectContaining({ id: project.id, name: "Restored Backup API Project" })
       );
+      expect(importStore.data.events.filter((event) => event.id === exported.body.events[0].id)).toHaveLength(1);
+      expect(importStore.data.events.find((event) => event.id === exported.body.events[0].id)).toMatchObject({
+        projectId: project.id,
+        message: updatedEventMessage
+      });
     } finally {
       await rm(importDir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects project backup imports with cross-project event id collisions", async () => {
+    const existing = (await request(app).post("/api/projects").send({ name: "Existing Event API", key: "EEAPI" }).expect(201)).body
+      .project;
+    const existingEvent = store.data.events.find((event) => event.projectId === existing.id && event.type === "project.created");
+    const backup = {
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: {
+        id: "project_api_restore_events",
+        key: "API-RESTORE-EVENTS",
+        name: "API Restore Events Project"
+      },
+      tasks: [],
+      events: [
+        {
+          ...existingEvent,
+          projectId: "project_api_restore_events",
+          message: "Unsafe API imported event"
+        }
+      ]
+    };
+
+    const rejected = await request(app).post("/api/projects/import").send(backup).expect(409);
+    expect(rejected.body.error.details).toMatchObject({
+      reason: "event_id_collision",
+      eventId: existingEvent.id,
+      existingProjectId: existing.id
+    });
+    expect(store.data.events.find((event) => event.id === existingEvent.id)).toMatchObject({
+      projectId: existing.id,
+      message: existingEvent.message
+    });
   });
 
   it("rejects invalid task create and update payloads with readable 400 errors", async () => {

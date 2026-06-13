@@ -1440,6 +1440,15 @@ export class WorkboardStore {
       if (existingEventIndex === -1) {
         this.data.events.push(event);
       } else {
+        const existingEvent = this.data.events[existingEventIndex];
+        if (existingEvent.projectId !== backup.project.id) {
+          throw httpError(`Project event backup id ${event.id} already belongs to another project.`, 409, {
+            reason: "event_id_collision",
+            projectId: backup.project.id,
+            eventId: event.id,
+            existingProjectId: existingEvent.projectId
+          });
+        }
         this.data.events[existingEventIndex] = event;
       }
     }
