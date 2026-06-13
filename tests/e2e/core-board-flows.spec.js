@@ -305,6 +305,93 @@ test("shows, filters, creates, and edits work item types in the task UI", async 
   await expect(taskCard(page, taskTitle)).toContainText("Bug");
 });
 
+test("edits parent-child and dependency relationships in the task drawer", async ({ page }) => {
+  const projectName = uniqueName("E2E Relationships Project");
+  const projectKey = uniqueKey("REL");
+  const parentTitle = uniqueName("Parent relationship story");
+  const prerequisiteTitle = uniqueName("Prerequisite relationship task");
+  const childTitle = uniqueName("Child relationship task");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  async function createApiTask(title) {
+    const response = await page.request.post(`${apiBaseURL}/api/tasks`, {
+      data: {
+        projectId: project.id,
+        title,
+        status: "ready",
+        role: "implementer",
+        priority: "normal",
+        labels: ["backend"]
+      }
+    });
+    expect(response.ok()).toBe(true);
+    return (await response.json()).task;
+  }
+
+  const parent = await createApiTask(parentTitle);
+  const prerequisite = await createApiTask(prerequisiteTitle);
+  const child = await createApiTask(childTitle);
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await taskCard(page, parentTitle).click();
+  let drawer = page.locator(".drawer");
+  await drawer.getByLabel("Child tasks").selectOption(child.id);
+  await drawer.getByRole("button", { name: "Save" }).click();
+  await expect(drawer.locator(".saveErrorPanel")).toHaveCount(0);
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`${apiBaseURL}/api/tasks/${child.id}`);
+      expect(response.ok()).toBe(true);
+      return (await response.json()).task.parentTaskId;
+    })
+    .toBe(parent.id);
+
+  await closeDrawerIfOpen(page);
+  await taskCard(page, childTitle).click();
+  drawer = page.locator(".drawer");
+  await drawer.getByLabel("Depends on").selectOption(prerequisite.id);
+  await drawer.getByRole("button", { name: "Save" }).click();
+  await expect(drawer.locator(".saveErrorPanel")).toHaveCount(0);
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`${apiBaseURL}/api/tasks/${child.id}`);
+      expect(response.ok()).toBe(true);
+      const updated = (await response.json()).task;
+      return {
+        dependsOn: updated.dependsOn,
+        state: updated.dependencyStatus.state
+      };
+    })
+    .toEqual({
+      dependsOn: [prerequisite.id],
+      state: "waiting"
+    });
+  await expect(taskCard(page, childTitle)).toContainText("Waiting");
+
+  const prerequisiteResponse = await page.request.patch(`${apiBaseURL}/api/tasks/${prerequisite.id}`, {
+    data: { status: "review", actor: "operator-ui" }
+  });
+  expect(prerequisiteResponse.ok()).toBe(true);
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`${apiBaseURL}/api/tasks/${child.id}`);
+      expect(response.ok()).toBe(true);
+      return (await response.json()).task.dependencyStatus.state;
+    })
+    .toBe("clear");
+});
+
 test("collapses the desktop sidebar without resetting board context", async ({ page }) => {
   const projectName = uniqueName("E2E Sidebar Project");
   const projectKey = uniqueKey("NAV");

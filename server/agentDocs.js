@@ -425,6 +425,7 @@ function sharedWorkflow() {
     "Use your assigned active project from bootstrap/docs; list projects only when you need to confirm names or operator overrides.",
     "List candidate tasks using your exact agent id, role, and specialty labels.",
     "Ordinary implementers claim task, subtask, bug, spike, and chore work item types; leave epic/story containers for planner/decomposer agents unless an operator explicitly converts or decomposes them.",
+    "Respect dependency and blocker relationships: ordinary work is claimable only when related prerequisite tasks are in review or done.",
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",

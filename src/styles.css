@@ -1904,6 +1904,7 @@ button {
 .statusPill,
 .workflowPill,
 .workItemTypePill,
+.relationshipPill,
 .attachmentPill,
 .completionPill,
 .approvalPill {
@@ -1970,6 +1971,27 @@ button {
 .workItemTypePill.container {
   background: #3f3520;
   color: #ffd991;
+}
+
+.relationshipPill {
+  background: #233744;
+  color: #c4f1ff;
+}
+
+.relationshipPill.waiting {
+  background: #3f3520;
+  color: #ffd991;
+}
+
+.relationshipPill.blocked,
+.relationshipPill.invalid {
+  background: #4a2931;
+  color: #ffc7d1;
+}
+
+.relationshipPill.clear {
+  background: #243828;
+  color: #c9f7d5;
 }
 
 .approvalPill {
@@ -2277,6 +2299,10 @@ button {
 .formGrid textarea {
   min-height: 96px;
   resize: vertical;
+}
+
+.formGrid select[multiple] {
+  min-height: 104px;
 }
 
 .wide {

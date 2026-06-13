@@ -590,6 +590,126 @@ describe("Agent Workboard API", () => {
     expect(docs.text).toContain("task, subtask, bug, spike, and chore");
   });
 
+  it("exposes task relationships through task APIs and agent eligibility", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Relationship API Project" }).expect(201)).body.project;
+    const otherProject = (await request(app).post("/api/projects").send({ name: "Other Relationship API Project" }).expect(201)).body
+      .project;
+    const blocker = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Finish prerequisite",
+          status: "ready",
+          role: "implementer",
+          labels: ["backend"]
+        })
+        .expect(201)
+    ).body.task;
+    const otherTask = (
+      await request(app)
+        .post("/api/tasks")
+        .send({ projectId: otherProject.id, title: "Foreign relationship target" })
+        .expect(201)
+    ).body.task;
+    const parent = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Relationship parent",
+          status: "ready",
+          role: "implementer",
+          labels: ["backend"]
+        })
+        .expect(201)
+    ).body.task;
+
+    const child = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Relationship child",
+          status: "ready",
+          role: "implementer",
+          labels: ["backend"],
+          parentTaskId: parent.id,
+          dependsOn: [blocker.id]
+        })
+        .expect(201)
+    ).body.task;
+
+    expect(child).toMatchObject({
+      parentTaskId: parent.id,
+      dependsOn: [blocker.id],
+      blockedBy: [],
+      dependencyStatus: {
+        state: "waiting",
+        waitingTaskIds: [blocker.id]
+      }
+    });
+
+    const listedWaiting = await request(app).get("/api/tasks").query({ projectId: project.id, q: "Finish prerequisite" }).expect(200);
+    expect(listedWaiting.body.tasks.map((task) => task.id)).toContain(child.id);
+
+    const nextBefore = await request(app)
+      .get("/api/agents/implementer-backend-2/next-task")
+      .query({ projectId: project.id, labels: "backend", now: "2026-06-13T21:00:00.000Z" })
+      .expect(200);
+    expect(nextBefore.body.candidates.map((task) => task.id)).not.toContain(child.id);
+    expect(nextBefore.body.blockedCandidates).toContainEqual(
+      expect.objectContaining({
+        id: child.id,
+        dependencyStatus: expect.objectContaining({ state: "waiting" })
+      })
+    );
+
+    const reviewedBlocker = (
+      await request(app)
+        .patch(`/api/tasks/${blocker.id}`)
+        .send({ status: "review", actor: "operator-ui" })
+        .expect(200)
+    ).body.task;
+    expect(reviewedBlocker.blocks).toContain(child.id);
+
+    const updatedChild = (await request(app).get(`/api/tasks/${child.id}`).expect(200)).body.task;
+    expect(updatedChild).toMatchObject({
+      dependencyStatus: {
+        state: "clear",
+        satisfiedTaskIds: [blocker.id]
+      }
+    });
+
+    const nextAfter = await request(app)
+      .get("/api/agents/implementer-backend-2/next-task")
+      .query({ projectId: project.id, labels: "backend", now: "2026-06-13T21:00:00.000Z" })
+      .expect(200);
+    expect(nextAfter.body.candidates.map((task) => task.id)).toContain(child.id);
+
+    const invalidCrossProject = await request(app)
+      .patch(`/api/tasks/${child.id}`)
+      .send({ dependsOn: [otherTask.id], actor: "operator-ui", expectedRevision: updatedChild.revision })
+      .expect(400);
+    expect(invalidCrossProject.body.error.details).toMatchObject({
+      field: "dependsOn",
+      reason: "cross_project"
+    });
+
+    const cycle = await request(app)
+      .patch(`/api/tasks/${parent.id}`)
+      .send({ parentTaskId: child.id, actor: "operator-ui", expectedRevision: parent.revision })
+      .expect(400);
+    expect(cycle.body.error.details).toMatchObject({
+      field: "parentTaskId",
+      reason: "cycle"
+    });
+
+    const docs = await request(app).get("/api/agent-docs/implementer-backend-2?format=md").expect(200);
+    expect(docs.text).toContain("dependency and blocker relationships");
+    expect(docs.text).toContain("review or done");
+  });
+
   it("posts and lists project Agent Talks through the API", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Talks API Project" }).expect(201)).body.project;
     const task = (
