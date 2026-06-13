@@ -349,6 +349,57 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("advances revisions for operator approval mutations before stale full edits", async () => {
+    const project = await store.createProject({ name: "Approval Revision Project" });
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Approval guarded by revision",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-01"
+    });
+    const startingRevision = task.revision;
+
+    const requested = await store.requestOperatorApproval(task.id, {
+      requestedBy: "implementer-01",
+      reason: "Need approval before review.",
+      requestedAction: "Approve review handoff.",
+      nextStatus: "review"
+    });
+
+    expect(requested.revision).toBe(startingRevision + 1);
+    const requestedRevision = requested.revision;
+    await expect(
+      store.updateTask(task.id, { title: "Stale after request", expectedRevision: startingRevision }, "operator-stale")
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        taskId: task.id,
+        expectedRevision: startingRevision,
+        currentRevision: requestedRevision
+      }
+    });
+
+    const approved = await store.decideOperatorApproval(task.id, {
+      decision: "approved",
+      decidedBy: "operator",
+      note: "Approved after stale save was rejected.",
+      nextStatus: "review"
+    });
+
+    expect(approved.revision).toBe(requestedRevision + 1);
+    await expect(
+      store.updateTask(task.id, { title: "Stale after approval", expectedRevision: requestedRevision }, "operator-stale")
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        taskId: task.id,
+        expectedRevision: requestedRevision,
+        currentRevision: approved.revision
+      }
+    });
+  });
+
   it("posts and filters project-scoped Agent Talks messages", async () => {
     const project = await store.createProject({ name: "Talks Project" });
     const task = await store.createTask({ projectId: project.id, title: "Needs review", status: "review" });

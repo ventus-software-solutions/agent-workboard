@@ -566,6 +566,72 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("rejects stale full task saves after operator approval request and decision mutations", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Approval Revision API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Approval API revision guard",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-01"
+        })
+        .expect(201)
+    ).body.task;
+
+    const requested = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval`)
+      .send({
+        requestedBy: "implementer-01",
+        reason: "Need approval before review.",
+        requestedAction: "Approve review handoff.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(requested.body.task.revision).toBe(task.revision + 1);
+    const staleAfterRequest = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Stale API save after request",
+        actor: "operator-stale",
+        expectedRevision: task.revision
+      })
+      .expect(409);
+    expect(staleAfterRequest.body.error.details).toMatchObject({
+      taskId: task.id,
+      expectedRevision: task.revision,
+      currentRevision: requested.body.task.revision
+    });
+
+    const approved = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval/decision`)
+      .send({
+        decision: "approved",
+        decidedBy: "operator",
+        note: "Approved after stale save was rejected.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(approved.body.task.revision).toBe(requested.body.task.revision + 1);
+    const staleAfterDecision = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Stale API save after approval",
+        actor: "operator-stale",
+        expectedRevision: requested.body.task.revision
+      })
+      .expect(409);
+    expect(staleAfterDecision.body.error.details).toMatchObject({
+      taskId: task.id,
+      expectedRevision: requested.body.task.revision,
+      currentRevision: approved.body.task.revision
+    });
+  });
+
   it("rejects role-type task claims that bypass concrete agent slots", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Role Claim API Project" })).body.project;
     const task = (

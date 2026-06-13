@@ -1258,6 +1258,7 @@ export class WorkboardStore {
       message: "Requested operator approval.",
       createdAt: requestedAt
     });
+    task.revision = nextTaskRevision(task);
 
     await this.save();
     return task;
@@ -1344,6 +1345,7 @@ export class WorkboardStore {
       message: `Operator approval ${decision}.`,
       createdAt: decidedAt
     });
+    task.revision = nextTaskRevision(task);
 
     await this.save();
     return task;
