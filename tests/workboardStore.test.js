@@ -423,6 +423,36 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("links create-time childTaskIds to existing children", async () => {
+    const project = await store.createProject({ name: "Create Child Relationship Project" });
+    const child = await store.createTask({
+      projectId: project.id,
+      title: "Existing child",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"]
+    });
+
+    const parent = await store.createTask({
+      projectId: project.id,
+      title: "New parent",
+      status: "ready",
+      role: "implementer",
+      labels: ["backend"],
+      childTaskIds: [child.id],
+      actor: "operator-ui"
+    });
+
+    expect(parent.childTaskIds).toEqual([child.id]);
+    expect(store.getTask(child.id)).toMatchObject({
+      parentTaskId: parent.id
+    });
+    expect(store.getTask(child.id).activity[0]).toMatchObject({
+      actor: "operator-ui",
+      message: `Updated parentTaskId:${parent.id}.`
+    });
+  });
+
   it("rebuilds task relationship derivatives when importing project backups", async () => {
     const projectId = "project_relationship_import";
     const parentId = "task_relationship_import_parent";

@@ -705,6 +705,37 @@ describe("Agent Workboard API", () => {
       reason: "cycle"
     });
 
+    const createChild = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Create-time child link target",
+          status: "ready",
+          role: "implementer",
+          labels: ["backend"]
+        })
+        .expect(201)
+    ).body.task;
+    const createParent = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Create-time parent link",
+          status: "ready",
+          role: "implementer",
+          labels: ["backend"],
+          childTaskIds: [createChild.id],
+          actor: "operator-ui"
+        })
+        .expect(201)
+    ).body.task;
+    expect(createParent.childTaskIds).toEqual([createChild.id]);
+    expect((await request(app).get(`/api/tasks/${createChild.id}`).expect(200)).body.task).toMatchObject({
+      parentTaskId: createParent.id
+    });
+
     const docs = await request(app).get("/api/agent-docs/implementer-backend-2?format=md").expect(200);
     expect(docs.text).toContain("dependency and blocker relationships");
     expect(docs.text).toContain("review or done");
