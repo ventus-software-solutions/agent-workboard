@@ -4,6 +4,12 @@ Agent Workboard is a local-first project and task board for coordinating AI agen
 
 It gives the operator a browser UI, gives agents an API/MCP surface, and keeps the first version small enough to run with one Docker command.
 
+## Local Security Boundary
+
+Agent Workboard is a local-first, unauthenticated board. By default, the API server and development UI bind to `127.0.0.1`, and the Docker Compose port publish is pinned to `127.0.0.1:8088`. Other processes on the same machine can use the board, but it is not exposed to the LAN by default.
+
+For a deliberate remote or hosted deployment, set `WORKBOARD_HOST=0.0.0.0` for the Node server or container and adjust any Docker port mapping or Vite `--host` value explicitly. Put that deployment behind trusted access controls such as a VPN, reverse proxy authentication, or another operator-approved boundary before exposing it to a network.
+
 ## What It Has
 
 - Multi-project task board
@@ -23,6 +29,8 @@ docker compose up --build
 
 Open `http://localhost:8088`.
 
+Docker Compose publishes `127.0.0.1:8088:8080` on the host. The container process sets `WORKBOARD_HOST=0.0.0.0` only inside the container so Docker can forward the loopback-only host port.
+
 Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
 
 ## Run In Development
@@ -32,7 +40,7 @@ npm install
 npm run dev
 ```
 
-The API runs on `http://localhost:8080` and the Vite UI runs on `http://localhost:5174`.
+The API runs on `http://localhost:8080` and the Vite UI runs on `http://localhost:5174`. Both bind to loopback by default.
 
 ## Test
 
