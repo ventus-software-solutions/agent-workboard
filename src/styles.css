@@ -132,6 +132,12 @@ button {
   cursor: not-allowed;
 }
 
+.ghostButton:disabled,
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .ghostButton {
   background: #1a1f25;
 }
@@ -1328,7 +1334,8 @@ button {
 .statusPill,
 .workflowPill,
 .attachmentPill,
-.completionPill {
+.completionPill,
+.approvalPill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1382,6 +1389,11 @@ button {
 .workflowPill {
   background: #312e4a;
   color: #d8d1ff;
+}
+
+.approvalPill {
+  background: #3d3146;
+  color: #e9d7ff;
 }
 
 .taskMeta {
@@ -1450,6 +1462,76 @@ button {
   border-radius: 8px;
   background: #2b1c21;
   color: #ffbfca;
+}
+
+.approvalQueue {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #3f4b55;
+  border-radius: 8px;
+  background: #171e24;
+}
+
+.approvalQueueHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.approvalQueueHeader > span {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 24px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #cbd7e3;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.approvalQueueList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.approvalQueueItem {
+  display: grid;
+  gap: 5px;
+  min-height: 82px;
+  padding: 10px;
+  border: 1px solid #394550;
+  border-radius: 8px;
+  background: #202832;
+  color: #edf3f8;
+  text-align: left;
+}
+
+.approvalQueueItem strong,
+.approvalQueueItem span,
+.approvalQueueItem p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.approvalQueueItem span {
+  color: #b8c6d3;
+  font-size: 12px;
+}
+
+.approvalQueueItem p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: #9eaab7;
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .saveErrorPanel {
@@ -1629,6 +1711,73 @@ button {
 
 .completionSection {
   background: #151a20;
+}
+
+.approvalPanel {
+  background: #151c22;
+}
+
+.approvalFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.approvalFacts span {
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #b9c5d1;
+  font-size: 12px;
+}
+
+.approvalRequest {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #394550;
+  border-radius: 8px;
+  background: #202832;
+}
+
+.approvalRequest strong,
+.approvalRequest p {
+  overflow-wrap: anywhere;
+}
+
+.approvalRequest p {
+  margin: 0;
+  color: #c4ced8;
+  line-height: 1.4;
+}
+
+.approvalRequest blockquote {
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid #6f8d9a;
+  background: #182128;
+}
+
+.approvalRequest blockquote span {
+  color: #9ba9b7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.approvalDecisionForm textarea {
+  min-height: 72px;
+}
+
+.approvalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dangerButton {
+  border-color: #6f3944;
+  color: #ffbfca;
 }
 
 .completionRecord {

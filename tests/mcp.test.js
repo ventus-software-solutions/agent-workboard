@@ -88,6 +88,22 @@ describe("Agent Workboard MCP tools", () => {
         name: "MCP workflow tools",
         status: "live"
       })),
+      requestOperatorApproval: vi.fn(() => ({
+        id: "task_approval",
+        status: "blocked",
+        blocker: { type: "operator_approval", status: "pending" }
+      })),
+      listOperatorApprovals: vi.fn(() => [
+        {
+          task: { id: "task_approval" },
+          blocker: { status: "pending" }
+        }
+      ]),
+      decideOperatorApproval: vi.fn(() => ({
+        id: "task_approval",
+        status: "review",
+        blocker: null
+      })),
       getNextTaskForAgent: vi.fn(() => ({
         task: { id: "task_123" },
         selection: { reason: "assigned_to_agent" }
@@ -276,6 +292,60 @@ describe("Agent Workboard MCP tools", () => {
       }
     });
     expect(fakeStore.getCapability).toHaveBeenCalledWith("cap_mcp_workflow_tools");
+
+    const requestApproval = registrations.find((registration) => registration.name === "request_operator_approval");
+    expect(
+      parseTextResult(
+        await requestApproval.handler({
+          taskId: "task_approval",
+          requestedBy: "mcp-agent",
+          reason: "Need approval before commit.",
+          requestedAction: "Approve commit.",
+          nextStatus: "review"
+        })
+      )
+    ).toMatchObject({
+      task: {
+        status: "blocked",
+        blocker: { status: "pending" }
+      }
+    });
+    expect(fakeStore.requestOperatorApproval).toHaveBeenCalledWith("task_approval", {
+      taskId: "task_approval",
+      requestedBy: "mcp-agent",
+      reason: "Need approval before commit.",
+      requestedAction: "Approve commit.",
+      nextStatus: "review"
+    });
+
+    const listApprovals = registrations.find((registration) => registration.name === "list_operator_approvals");
+    expect(parseTextResult(await listApprovals.handler({ projectId: "project_123" }))).toMatchObject({
+      approvals: [
+        {
+          task: { id: "task_approval" },
+          blocker: { status: "pending" }
+        }
+      ]
+    });
+    expect(fakeStore.listOperatorApprovals).toHaveBeenCalledWith({ projectId: "project_123" });
+
+    const decideApproval = registrations.find((registration) => registration.name === "decide_operator_approval");
+    expect(
+      parseTextResult(
+        await decideApproval.handler({
+          taskId: "task_approval",
+          decision: "approved",
+          decidedBy: "operator",
+          note: "Approved.",
+          nextStatus: "review"
+        })
+      )
+    ).toMatchObject({
+      task: {
+        status: "review",
+        blocker: null
+      }
+    });
   });
 
   it("surfaces the store one-active-task guard through claim_task", async () => {

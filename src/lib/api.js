@@ -73,9 +73,17 @@ export const api = {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks/stale-in-progress${params.size ? `?${params}` : ""}`);
   },
+  operatorApprovals: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    return request(`/api/operator-approvals${params.size ? `?${params}` : ""}`);
+  },
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),
+  requestOperatorApproval: (taskId, input) =>
+    request(`/api/tasks/${taskId}/operator-approval`, { method: "POST", body: JSON.stringify(input) }),
+  decideOperatorApproval: (taskId, input) =>
+    request(`/api/tasks/${taskId}/operator-approval/decision`, { method: "POST", body: JSON.stringify(input) }),
   addComment: (taskId, comment) =>
     request(`/api/tasks/${taskId}/comments`, { method: "POST", body: JSON.stringify(comment) }),
   uploadAttachment: (taskId, file, author = "operator") => {

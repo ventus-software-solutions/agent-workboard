@@ -304,6 +304,52 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
   );
 
   server.registerTool(
+    "request_operator_approval",
+    {
+      title: "Request operator approval",
+      description: "Block a task on a visible operator approval request.",
+      inputSchema: {
+        taskId: z.string(),
+        requestedBy: z.string().optional(),
+        reason: z.string(),
+        requestedAction: z.string(),
+        nextStatus: z.string().optional()
+      }
+    },
+    async (input) => asText({ task: await store.requestOperatorApproval(input.taskId, input) })
+  );
+
+  server.registerTool(
+    "list_operator_approvals",
+    {
+      title: "List operator approvals",
+      description: "List tasks currently waiting for operator approval.",
+      inputSchema: {
+        projectId: z.string().optional(),
+        taskId: z.string().optional(),
+        status: z.string().optional()
+      }
+    },
+    async (input) => asText({ approvals: store.listOperatorApprovals(input) })
+  );
+
+  server.registerTool(
+    "decide_operator_approval",
+    {
+      title: "Decide operator approval",
+      description: "Approve, reject, or request changes on a pending operator approval.",
+      inputSchema: {
+        taskId: z.string(),
+        decision: z.enum(["approved", "rejected", "changes_requested"]),
+        decidedBy: z.string().optional(),
+        note: z.string().optional(),
+        nextStatus: z.string().optional()
+      }
+    },
+    async (input) => asText({ task: await store.decideOperatorApproval(input.taskId, input) })
+  );
+
+  server.registerTool(
     "add_comment",
     {
       title: "Add comment",

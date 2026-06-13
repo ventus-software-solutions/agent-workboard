@@ -315,7 +315,8 @@ describe("Agent Workboard API", () => {
   });
 
   it("exposes capability CRUD, filtering, and task completion links", async () => {
-    const project = (await request(app).post("/api/projects").send({ name: "Capability API", key: "CAPAPI" })).body.project;
+    const project = (await request(app).post("/api/projects").send({ name: "Capability API", key: "CAPAPI" }).expect(201)).body
+      .project;
     const task = (
       await request(app)
         .post("/api/tasks")
@@ -326,6 +327,7 @@ describe("Agent Workboard API", () => {
           role: "implementer",
           assignee: "implementer-01"
         })
+        .expect(201)
     ).body.task;
 
     const seeded = await request(app).get("/api/capabilities?q=MCP").expect(200);
@@ -395,6 +397,79 @@ describe("Agent Workboard API", () => {
       .expect(200);
 
     expect(completed.body.task.completion.capabilityIds).toEqual([created.body.capability.id]);
+  });
+
+  it("supports operator approval requests from in-progress tasks, queue listing, and approval decisions", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Approval API Project" }).expect(201)).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Commit verified branch",
+          status: "in_progress",
+          assignee: "implementer-01"
+        })
+        .expect(201)
+    ).body.task;
+    await request(app)
+      .post(`/api/tasks/${task.id}/comments`)
+      .send({ author: "implementer-01", body: "Diff summary and tests are posted." })
+      .expect(201);
+
+    const blocked = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval`)
+      .send({
+        requestedBy: "implementer-01",
+        reason: "Need operator approval before commit.",
+        requestedAction: "Approve commit `feat: approval queue`.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(blocked.body.task).toMatchObject({
+      status: "blocked",
+      blocker: {
+        type: "operator_approval",
+        status: "pending",
+        nextStatus: "review"
+      }
+    });
+
+    const queue = await request(app).get(`/api/operator-approvals?projectId=${project.id}`).expect(200);
+    expect(queue.body.approvals).toHaveLength(1);
+    expect(queue.body.approvals[0]).toMatchObject({
+      task: {
+        id: task.id
+      },
+      latestComment: {
+        body: "Diff summary and tests are posted."
+      }
+    });
+
+    const approved = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval/decision`)
+      .send({
+        decision: "approved",
+        decidedBy: "operator",
+        note: "Approved for review.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(approved.body.task).toMatchObject({
+      status: "review",
+      blocker: null,
+      approvalHistory: [
+        expect.objectContaining({
+          decision: "approved",
+          decidedBy: "operator"
+        }),
+        expect.objectContaining({
+          decision: "requested"
+        })
+      ]
+    });
   });
 
   it("claims a task through a stale-safe first-class endpoint", async () => {
@@ -488,6 +563,72 @@ describe("Agent Workboard API", () => {
     expect(current.activity[0]).toMatchObject({
       actor: "operator-b",
       type: "update.rejected"
+    });
+  });
+
+  it("rejects stale full task saves after operator approval request and decision mutations", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Approval Revision API Project" })).body.project;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Approval API revision guard",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-01"
+        })
+        .expect(201)
+    ).body.task;
+
+    const requested = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval`)
+      .send({
+        requestedBy: "implementer-01",
+        reason: "Need approval before review.",
+        requestedAction: "Approve review handoff.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(requested.body.task.revision).toBe(task.revision + 1);
+    const staleAfterRequest = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Stale API save after request",
+        actor: "operator-stale",
+        expectedRevision: task.revision
+      })
+      .expect(409);
+    expect(staleAfterRequest.body.error.details).toMatchObject({
+      taskId: task.id,
+      expectedRevision: task.revision,
+      currentRevision: requested.body.task.revision
+    });
+
+    const approved = await request(app)
+      .post(`/api/tasks/${task.id}/operator-approval/decision`)
+      .send({
+        decision: "approved",
+        decidedBy: "operator",
+        note: "Approved after stale save was rejected.",
+        nextStatus: "review"
+      })
+      .expect(200);
+
+    expect(approved.body.task.revision).toBe(requested.body.task.revision + 1);
+    const staleAfterDecision = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        title: "Stale API save after approval",
+        actor: "operator-stale",
+        expectedRevision: requested.body.task.revision
+      })
+      .expect(409);
+    expect(staleAfterDecision.body.error.details).toMatchObject({
+      taskId: task.id,
+      expectedRevision: requested.body.task.revision,
+      currentRevision: approved.body.task.revision
     });
   });
 

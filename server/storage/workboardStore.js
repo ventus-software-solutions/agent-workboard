@@ -16,6 +16,8 @@ export const PRIORITIES = ["low", "normal", "high", "urgent"];
 export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
 export const TALK_KINDS = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
 export const CAPABILITY_STATUSES = ["proposed", "planned", "in_progress", "review", "live", "broken", "deprecated", "superseded"];
+export const BLOCKER_TYPES = ["operator_approval", "dependency", "external_issue", "waiting_for_agent", "unclear_scope", "other"];
+export const OPERATOR_APPROVAL_DECISIONS = ["approved", "rejected", "changes_requested"];
 
 const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
@@ -63,6 +65,8 @@ const PRIORITY_IDS = new Set(PRIORITIES);
 const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
 const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
 const FULL_TASK_EDIT_FIELDS = ["title", "description", "assignee", "priority", "role", "labels"];
+const BLOCKER_TYPE_IDS = new Set(BLOCKER_TYPES);
+const OPERATOR_APPROVAL_DECISION_IDS = new Set(OPERATOR_APPROVAL_DECISIONS);
 
 const DEFAULT_CAPABILITY_SEEDS = [
   {
@@ -346,6 +350,8 @@ function defaultData() {
         assignee: "pm-agent",
         labels: ["planning"],
         completion: null,
+        blocker: null,
+        approvalHistory: [],
         createdAt,
         updatedAt: createdAt,
         revision: 1,
@@ -373,6 +379,8 @@ function defaultData() {
         assignee: "",
         labels: ["mvp", "workflow", "demo"],
         completion: null,
+        blocker: null,
+        approvalHistory: [],
         createdAt,
         updatedAt: createdAt,
         revision: 1,
@@ -501,6 +509,14 @@ export class WorkboardStore {
     return CAPABILITY_STATUSES;
   }
 
+  blockerTypes() {
+    return BLOCKER_TYPES;
+  }
+
+  operatorApprovalDecisions() {
+    return OPERATOR_APPROVAL_DECISIONS;
+  }
+
   migrateData() {
     let migrated = false;
     if (!Array.isArray(this.data.events)) {
@@ -562,6 +578,18 @@ export class WorkboardStore {
 
       if (task.status !== "done" && task.completion === undefined) {
         task.completion = null;
+        migrated = true;
+      }
+
+      if (task.blocker === undefined) {
+        task.blocker = null;
+        migrated = true;
+      } else if (task.blocker) {
+        task.blocker = normalizeTaskBlocker(task.blocker, { actor: task.assignee || "legacy", migrating: true });
+      }
+
+      if (!Array.isArray(task.approvalHistory)) {
+        task.approvalHistory = [];
         migrated = true;
       }
     }
@@ -1164,6 +1192,165 @@ export class WorkboardStore {
     };
   }
 
+  listOperatorApprovals(filters = {}) {
+    const projectId = normalizeText(filters.projectId);
+    const taskId = normalizeText(filters.taskId);
+    const status = normalizeText(filters.status) || "pending";
+
+    return this.data.tasks
+      .filter((task) => !projectId || task.projectId === projectId)
+      .filter((task) => !taskId || task.id === taskId)
+      .filter((task) => task.blocker?.type === "operator_approval")
+      .filter((task) => !status || task.blocker.status === status)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((task) => ({
+        task,
+        blocker: task.blocker,
+        latestComment: task.comments?.[0] || null,
+        approvalHistory: task.approvalHistory || []
+      }));
+  }
+
+  async requestOperatorApproval(taskId, input = {}) {
+    const task = this.getTask(taskId);
+    const requestedBy = normalizeText(input.requestedBy || input.actor || input.author) || "operator";
+    const requestedAt = normalizeText(input.requestedAt || input.now) || now();
+    const reason = normalizeText(input.reason);
+    const requestedAction = normalizeText(input.requestedAction || input.action);
+    const nextStatus = normalizeNextTaskStatus(input.nextStatus, "in_progress");
+
+    if (!reason) {
+      throw Object.assign(new Error("Operator approval reason is required."), { status: 400 });
+    }
+    if (!requestedAction) {
+      throw Object.assign(new Error("Operator approval requestedAction is required."), { status: 400 });
+    }
+    if (nextStatus === "done") {
+      throw Object.assign(new Error("Operator approval cannot move tasks directly to done."), { status: 400 });
+    }
+
+    task.status = "blocked";
+    task.blocker = {
+      type: "operator_approval",
+      status: "pending",
+      reason,
+      requestedAction,
+      nextStatus,
+      requestedBy,
+      requestedAt
+    };
+    task.approvalHistory = Array.isArray(task.approvalHistory) ? task.approvalHistory : [];
+    task.approvalHistory.unshift({
+      id: id("approval"),
+      decision: "requested",
+      blockerType: "operator_approval",
+      requestedBy,
+      requestedAt,
+      reason,
+      requestedAction,
+      nextStatus
+    });
+    task.updatedAt = requestedAt;
+    task.activity.unshift({
+      id: id("event"),
+      actor: requestedBy,
+      type: "approval.requested",
+      message: "Requested operator approval.",
+      createdAt: requestedAt
+    });
+    task.revision = nextTaskRevision(task);
+
+    await this.save();
+    return task;
+  }
+
+  async decideOperatorApproval(taskId, input = {}) {
+    const task = this.getTask(taskId);
+    if (task.blocker?.type !== "operator_approval" || task.blocker.status !== "pending") {
+      throw Object.assign(new Error("Task does not have a pending operator approval request."), { status: 400 });
+    }
+
+    const decision = normalizeText(input.decision);
+    if (!OPERATOR_APPROVAL_DECISION_IDS.has(decision)) {
+      throw Object.assign(new Error("Operator approval decision is invalid."), { status: 400 });
+    }
+
+    const decidedBy = normalizeText(input.decidedBy || input.actor) || "operator";
+    const decidedAt = normalizeText(input.decidedAt || input.now) || now();
+    const note = normalizeText(input.note || input.reason || input.body);
+    if (decision !== "approved" && !note) {
+      throw Object.assign(new Error("Rejected or requested-changes approvals require a note."), { status: 400 });
+    }
+
+    const requestedNextStatus = decision === "approved" ? task.blocker.nextStatus || "in_progress" : "ready";
+    const nextStatus = normalizeNextTaskStatus(input.nextStatus, requestedNextStatus);
+    if (nextStatus === "done") {
+      throw Object.assign(new Error("Operator approval decisions cannot move tasks directly to done."), { status: 400 });
+    }
+
+    const historyRecord = {
+      id: id("approval"),
+      blockerType: "operator_approval",
+      decision,
+      decidedBy,
+      decidedAt,
+      note,
+      nextStatus,
+      requestedBy: task.blocker.requestedBy,
+      requestedAt: task.blocker.requestedAt,
+      requestedAction: task.blocker.requestedAction,
+      reason: task.blocker.reason
+    };
+    task.approvalHistory = Array.isArray(task.approvalHistory) ? task.approvalHistory : [];
+    task.approvalHistory.unshift(historyRecord);
+
+    if (decision === "approved") {
+      task.status = nextStatus;
+      task.blocker = null;
+    } else if (decision === "changes_requested") {
+      task.status = nextStatus;
+      task.blocker =
+        nextStatus === "blocked"
+          ? {
+              ...task.blocker,
+              status: "changes_requested",
+              decidedBy,
+              decidedAt,
+              note
+            }
+          : null;
+    } else {
+      task.status = "blocked";
+      task.blocker = {
+        ...task.blocker,
+        status: "rejected",
+        decidedBy,
+        decidedAt,
+        note
+      };
+    }
+
+    task.updatedAt = decidedAt;
+    const commentBody = operatorApprovalDecisionComment(historyRecord);
+    task.comments.unshift({
+      id: id("comment"),
+      author: decidedBy,
+      body: commentBody,
+      createdAt: decidedAt
+    });
+    task.activity.unshift({
+      id: id("event"),
+      actor: decidedBy,
+      type: "approval.decided",
+      message: `Operator approval ${decision}.`,
+      createdAt: decidedAt
+    });
+    task.revision = nextTaskRevision(task);
+
+    await this.save();
+    return task;
+  }
+
   async createTask(input) {
     const projectId = normalizeText(input.projectId);
     const project = this.data.projects.find((candidate) => candidate.id === projectId);
@@ -1191,6 +1378,10 @@ export class WorkboardStore {
     if (completion) {
       this.validateCompletionCapabilityLinks(completion, projectId);
     }
+    if (input.blocker && status !== "blocked") {
+      throw Object.assign(new Error("Structured blockers can only be saved on blocked tasks."), { status: 400 });
+    }
+    const blocker = status === "blocked" && input.blocker ? normalizeTaskBlocker(input.blocker, { actor }) : null;
     const task = {
       id: id("task"),
       projectId,
@@ -1202,6 +1393,8 @@ export class WorkboardStore {
       assignee: normalizeText(input.assignee),
       labels: normalizeTaskLabels(input.labels),
       completion,
+      blocker,
+      approvalHistory: [],
       createdAt,
       updatedAt: createdAt,
       revision: 1,
@@ -1254,6 +1447,13 @@ export class WorkboardStore {
       ? readTaskEnumField(patch, "status", STATUS_IDS, task.status)
       : task.status;
     let nextCompletion = null;
+    const hasBlockerPatch = Object.prototype.hasOwnProperty.call(patch, "blocker");
+    const nextBlocker =
+      hasBlockerPatch && patch.blocker
+        ? normalizeTaskBlocker(patch.blocker, { actor: actorId })
+        : hasBlockerPatch
+          ? null
+          : task.blocker || null;
 
     if ("title" in patch) {
       normalizeTaskTitle(patch.title);
@@ -1300,6 +1500,10 @@ export class WorkboardStore {
       this.validateCompletionCapabilityLinks(nextCompletion, task.projectId);
     }
 
+    if (hasBlockerPatch && requestedStatus !== "blocked") {
+      throw Object.assign(new Error("Structured blockers can only be saved on blocked tasks."), { status: 400 });
+    }
+
     if ("title" in patch) {
       const next = normalizeTaskTitle(patch.title);
       if (task.title !== next) {
@@ -1330,6 +1534,10 @@ export class WorkboardStore {
         } else if (task.completion) {
           task.completion = null;
           changes.push("completion:cleared");
+        }
+        if (next !== "blocked" && task.blocker) {
+          task.blocker = null;
+          changes.push("blocker:cleared");
         }
       }
     }
@@ -1362,6 +1570,13 @@ export class WorkboardStore {
       if (JSON.stringify(task.labels) !== JSON.stringify(labels)) {
         task.labels = labels;
         changes.push("labels");
+      }
+    }
+
+    if (requestedStatus === "blocked" && hasBlockerPatch) {
+      if (JSON.stringify(task.blocker) !== JSON.stringify(nextBlocker)) {
+        task.blocker = nextBlocker;
+        changes.push(task.blocker ? `blocker:${task.blocker.type}` : "blocker:cleared");
       }
     }
 
@@ -2378,6 +2593,64 @@ function normalizeStringList(value) {
 function normalizeObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function normalizeNextTaskStatus(value, fallback = "in_progress") {
+  const normalized = normalizeText(value) || fallback;
+  if (!STATUS_IDS.has(normalized)) {
+    throw Object.assign(new Error("Operator approval nextStatus must be valid."), { status: 400 });
+  }
+  return normalized;
+}
+
+function normalizeTaskBlocker(value, { actor = "operator", migrating = false } = {}) {
+  const input = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const requestedType = normalizeText(input.type || input.blockerType).toLowerCase();
+  const type = BLOCKER_TYPE_IDS.has(requestedType) ? requestedType : migrating ? "other" : "";
+
+  if (!type) {
+    throw Object.assign(new Error("Blocker type is required and must be valid."), { status: 400 });
+  }
+
+  const reason = normalizeText(input.reason || input.message || input.note);
+  const requestedAction = normalizeText(input.requestedAction || input.action);
+  const requestedBy = normalizeText(input.requestedBy || input.actor || input.author) || normalizeText(actor) || "operator";
+  const requestedAt = normalizeText(input.requestedAt || input.createdAt || input.now) || now();
+  const status = normalizeText(input.status) || (type === "operator_approval" ? "pending" : "active");
+  const blocker = {
+    type,
+    status,
+    reason,
+    requestedBy,
+    requestedAt
+  };
+
+  if (requestedAction) blocker.requestedAction = requestedAction;
+  if (type === "operator_approval") {
+    blocker.requestedAction = requestedAction;
+    blocker.nextStatus = normalizeNextTaskStatus(input.nextStatus, "in_progress");
+  } else if (input.nextStatus) {
+    blocker.nextStatus = normalizeNextTaskStatus(input.nextStatus, "in_progress");
+  }
+
+  const decidedBy = normalizeText(input.decidedBy);
+  const decidedAt = normalizeText(input.decidedAt);
+  const note = normalizeText(input.note);
+  if (decidedBy) blocker.decidedBy = decidedBy;
+  if (decidedAt) blocker.decidedAt = decidedAt;
+  if (note) blocker.note = note;
+
+  return blocker;
+}
+
+function operatorApprovalDecisionComment(record) {
+  const lead =
+    record.decision === "approved"
+      ? `Operator approval approved; moved task to ${record.nextStatus}.`
+      : record.decision === "changes_requested"
+        ? `Operator requested changes; moved task to ${record.nextStatus}.`
+        : "Operator approval rejected; task remains blocked.";
+  return record.note ? `${lead} Note: ${record.note}` : lead;
 }
 
 function normalizePresenceState(value) {
