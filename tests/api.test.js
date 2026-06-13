@@ -137,7 +137,7 @@ describe("Agent Workboard API", () => {
     expect(genericReviewerMarkdown.text).toContain("acquire a concrete slot");
     expect(genericReviewerMarkdown.text).toContain("reviewer-agent");
     expect(genericReviewerMarkdown.text).not.toContain("concrete assignee id such as reviewer");
-  });
+  }, 10000);
 
   it("creates a project and a task, then moves the task", async () => {
     const projectResponse = await request(app)

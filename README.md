@@ -48,6 +48,12 @@ The API runs on `http://localhost:8080` and the Vite UI runs on `http://localhos
 npm test
 ```
 
+## GitHub Actions CI
+
+GitHub Actions CI runs on pull requests and pushes to `main`. It installs dependencies with `npm install`, then runs `npm test` and `npm run build`.
+
+The workflow does not require repository secrets, so external contributors can validate ordinary changes without release or deployment credentials.
+
 ## Architecture For Contributors
 
 See [Architecture Overview](docs/architecture.md) for how the Express API, JSON store, React UI, MCP server, Docker data mount, upload storage, and future auth/SQLite/agent registry work fit together.
