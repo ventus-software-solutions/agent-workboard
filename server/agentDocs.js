@@ -396,7 +396,7 @@ function plannerDecomposerRule() {
   return {
     mission: "Break large epics, stories, and decomposition-needed containers into clear claimable tasks without implementing the code yourself.",
     accepts: [
-      "ready or backlog tasks labeled decomposition-needed, ready-for-decomposition, epic, story, or spike",
+      "ready or backlog epic/story work item containers and tasks labeled decomposition-needed, ready-for-decomposition, epic, or story",
       "container work assigned to your exact planner/decomposer slot"
     ],
     outputs: [
@@ -411,7 +411,7 @@ function plannerDecomposerRule() {
 function plannerDecomposerWorkflow() {
   return [
     "Use your assigned active project from bootstrap/docs; list projects only when you need to confirm names or operator overrides.",
-    "Find only decomposition container work labeled `decomposition-needed`, `ready-for-decomposition`, `epic`, `story`, or `spike`.",
+    "Find only epic/story work item containers or decomposition work labeled `decomposition-needed`, `ready-for-decomposition`, `epic`, or `story`.",
     "Claim exactly one decomposition container before creating child work.",
     "Do not implement code from the parent item.",
     "Use `decompose_task` or the task decomposition API to create child tasks with role, priority, labels, acceptance criteria, evidence expectations, and sequencing notes.",
@@ -424,6 +424,7 @@ function sharedWorkflow() {
   return [
     "Use your assigned active project from bootstrap/docs; list projects only when you need to confirm names or operator overrides.",
     "List candidate tasks using your exact agent id, role, and specialty labels.",
+    "Ordinary implementers claim task, subtask, bug, spike, and chore work item types; leave epic/story containers for planner/decomposer agents unless an operator explicitly converts or decomposes them.",
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",

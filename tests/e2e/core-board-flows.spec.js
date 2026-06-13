@@ -258,6 +258,53 @@ test("saves comma-separated drawer labels as task label arrays", async ({ page }
     .toEqual(["alpha", "beta", "gamma"]);
 });
 
+test("shows, filters, creates, and edits work item types in the task UI", async ({ page }) => {
+  const projectName = uniqueName("E2E Work Type Project");
+  const projectKey = uniqueKey("TYP");
+  const epicTitle = uniqueName("Plan typed roadmap epic");
+  const taskTitle = uniqueName("Implement typed task");
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Project", exact: true }).click();
+  await page.locator(".dialog").getByLabel("Name").fill(projectName);
+  await page.locator(".dialog").getByLabel("Key").fill(projectKey);
+  await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await createTask(page, {
+    title: epicTitle,
+    role: "implementer",
+    priority: "high",
+    assignee: "",
+    labels: "frontend, roadmap",
+    description: "Container work should be visible but not claimable by implementers.",
+    workItemType: "epic"
+  });
+  await createTask(page, {
+    title: taskTitle,
+    role: "implementer",
+    priority: "normal",
+    assignee: "",
+    labels: "frontend",
+    description: "Default task type should remain claimable."
+  });
+
+  await expect(taskCard(page, epicTitle)).toContainText("Epic");
+  await expect(taskCard(page, taskTitle)).toContainText("Task");
+
+  await page.getByLabel("Work item type filter").selectOption("epic");
+  await expect(taskCard(page, epicTitle)).toBeVisible();
+  await expect(taskCard(page, taskTitle)).toHaveCount(0);
+
+  await page.getByLabel("Work item type filter").selectOption("");
+  await taskCard(page, taskTitle).click();
+  const drawer = page.locator(".drawer");
+  await drawer.getByLabel("Work item type").selectOption("bug");
+  await drawer.getByRole("button", { name: "Save" }).click();
+  await expect(drawer.locator(".saveErrorPanel")).toHaveCount(0);
+  await expect(taskCard(page, taskTitle)).toContainText("Bug");
+});
+
 test("collapses the desktop sidebar without resetting board context", async ({ page }) => {
   const projectName = uniqueName("E2E Sidebar Project");
   const projectKey = uniqueKey("NAV");
@@ -695,11 +742,14 @@ test("lets the operator resolve a pending approval from the board", async ({ pag
   await expect(page.locator(".kanbanColumn", { hasText: "Review" }).locator(".taskCard", { hasText: taskTitle })).toBeVisible();
 });
 
-async function createTask(page, { title, role, priority, assignee, labels, description }) {
+async function createTask(page, { title, role, priority, assignee, labels, description, workItemType = "" }) {
   await closeDrawerIfOpen(page);
   await page.getByRole("button", { name: "Task", exact: true }).click();
   const dialog = page.locator(".dialog");
   await dialog.getByLabel("Title").fill(title);
+  if (workItemType) {
+    await dialog.getByLabel("Work item type").selectOption(workItemType);
+  }
   await dialog.getByLabel("Role").selectOption(role);
   await dialog.getByLabel("Priority").selectOption(priority);
   await dialog.getByLabel("Assignee").fill(assignee);

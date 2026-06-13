@@ -14,7 +14,7 @@ export function buildProjectBackup({ project, tasks, events, exportedAt }) {
   };
 }
 
-export function normalizeProjectBackup(input, { statusIds, priorityIds, roleIds, completionTypeIds, now, id }) {
+export function normalizeProjectBackup(input, { statusIds, priorityIds, roleIds, workItemTypeIds, completionTypeIds, now, id }) {
   const source = normalizeObject(input);
   if (source.packageType !== PROJECT_BACKUP_PACKAGE_TYPE) {
     throw httpError(`Project backup packageType must be ${PROJECT_BACKUP_PACKAGE_TYPE}.`, 400, {
@@ -29,7 +29,7 @@ export function normalizeProjectBackup(input, { statusIds, priorityIds, roleIds,
     });
   }
 
-  const helpers = { statusIds, priorityIds, roleIds, completionTypeIds, now, id };
+  const helpers = { statusIds, priorityIds, roleIds, workItemTypeIds, completionTypeIds, now, id };
   const project = normalizeBackupProject(source.project, helpers);
   if (!Array.isArray(source.tasks)) {
     throw httpError("Project backup tasks must be an array.", 400, { field: "tasks" });
@@ -112,6 +112,7 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     status,
     priority: readEnumField(source, "priority", helpers.priorityIds, "normal", "Task"),
     role: readEnumField(source, "role", helpers.roleIds, "implementer", "Task"),
+    workItemType: readEnumField(source, "workItemType", helpers.workItemTypeIds, "task", "Task"),
     assignee: normalizeText(source.assignee),
     labels: normalizeTaskLabels(source.labels),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,

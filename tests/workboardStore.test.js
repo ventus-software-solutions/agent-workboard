@@ -167,6 +167,129 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("stores, filters, migrates, and validates work item types", async () => {
+    const project = await store.createProject({ name: "Work Item Type Project" });
+    const defaultTask = await store.createTask({
+      projectId: project.id,
+      title: "Default claimable work"
+    });
+    const epic = await store.createTask({
+      projectId: project.id,
+      title: "Roadmap container",
+      workItemType: "epic",
+      status: "ready",
+      role: "implementer",
+      labels: ["frontend"]
+    });
+
+    expect(defaultTask).toMatchObject({ workItemType: "task" });
+    expect(epic).toMatchObject({ workItemType: "epic" });
+    expect(store.listTasks({ projectId: project.id, workItemType: "epic" })).toMatchObject([
+      {
+        id: epic.id,
+        workItemType: "epic"
+      }
+    ]);
+    expect(store.listTasks({ projectId: project.id, q: "epic" }).map((task) => task.id)).toContain(epic.id);
+    let listError;
+    try {
+      store.listTasks({ projectId: project.id, workItemType: "idea" });
+    } catch (error) {
+      listError = error;
+    }
+    expect(listError).toMatchObject({
+      status: 400,
+      details: { field: "workItemType" }
+    });
+
+    const startingRevision = defaultTask.revision;
+    const bug = await store.updateTask(
+      defaultTask.id,
+      { workItemType: "bug", expectedRevision: startingRevision },
+      "operator-ui"
+    );
+    expect(bug).toMatchObject({ workItemType: "bug", revision: startingRevision + 1 });
+    expect(bug.activity[0].message).toContain("workItemType");
+
+    await expect(
+      store.createTask({
+        projectId: project.id,
+        title: "Unknown type",
+        workItemType: "idea"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "workItemType" }
+    });
+    await expect(
+      store.updateTask(defaultTask.id, { workItemType: "idea", expectedRevision: bug.revision }, "operator-ui")
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { field: "workItemType" }
+    });
+
+    const raw = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    delete raw.tasks.find((item) => item.id === epic.id).workItemType;
+    await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
+
+    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    await reloaded.init();
+    expect(reloaded.getTask(epic.id)).toMatchObject({ workItemType: "task" });
+  });
+
+  it("keeps non-claimable container types out of implementer queues while planner decomposers can claim them", async () => {
+    const project = await store.createProject({ name: "Work Item Claimability Project" });
+    const epic = await store.createTask({
+      projectId: project.id,
+      title: "Decompose the roadmap epic",
+      workItemType: "epic",
+      status: "ready",
+      role: "implementer",
+      labels: ["frontend", "workflow"]
+    });
+    const bug = await store.createTask({
+      projectId: project.id,
+      title: "Fix claimable bug",
+      workItemType: "bug",
+      status: "ready",
+      role: "implementer",
+      labels: ["frontend"]
+    });
+
+    const implementerNext = store.getNextTaskForAgent("implementer-frontend-1", {
+      projectId: project.id,
+      now: "2026-06-13T20:30:00.000Z"
+    });
+    expect(implementerNext.task).toMatchObject({ id: bug.id, workItemType: "bug" });
+    expect(implementerNext.candidates.map((task) => task.id)).not.toContain(epic.id);
+
+    await expect(
+      store.claimTask(epic.id, {
+        assignee: "implementer-frontend-1",
+        expectedStatus: "ready",
+        expectedAssignee: ""
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        reason: "work_item_type_not_claimable",
+        workItemType: "epic"
+      }
+    });
+
+    const plannerNext = store.getNextTaskForAgent("planner-agent", {
+      projectId: project.id,
+      now: "2026-06-13T20:30:00.000Z"
+    });
+    expect(plannerNext.task).toMatchObject({ id: epic.id, workItemType: "epic" });
+    expect(plannerNext.selection.claim).toMatchObject({
+      taskId: epic.id,
+      assignee: "planner-agent",
+      expectedStatus: "ready",
+      expectedAssignee: ""
+    });
+  });
+
   it("seeds searchable product capabilities", () => {
     const capabilities = store.listCapabilities({ q: "MCP" });
 

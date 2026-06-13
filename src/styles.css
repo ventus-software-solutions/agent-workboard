@@ -1594,6 +1594,7 @@ button {
 .priorityPill,
 .statusPill,
 .workflowPill,
+.workItemTypePill,
 .attachmentPill,
 .completionPill,
 .approvalPill {
@@ -1650,6 +1651,16 @@ button {
 .workflowPill {
   background: #312e4a;
   color: #d8d1ff;
+}
+
+.workItemTypePill {
+  background: #233744;
+  color: #bdeafa;
+}
+
+.workItemTypePill.container {
+  background: #3f3520;
+  color: #ffd991;
 }
 
 .approvalPill {

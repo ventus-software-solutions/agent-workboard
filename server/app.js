@@ -38,6 +38,7 @@ export function createApp({
       roles: store.roles(),
       statuses: store.statuses(),
       completionTypes: store.completionTypes(),
+      workItemTypes: store.workItemTypes(),
       capabilityStatuses: store.capabilityStatuses(),
       integrationStatus: integrationStatus(),
       blockerTypes: store.blockerTypes(),

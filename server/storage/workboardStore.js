@@ -15,6 +15,15 @@ export const STATUSES = [
 
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
 export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
+export const WORK_ITEM_TYPES = [
+  { id: "epic", label: "Epic", claimable: false, container: true },
+  { id: "story", label: "Story", claimable: false, container: true },
+  { id: "task", label: "Task", claimable: true, container: false },
+  { id: "subtask", label: "Subtask", claimable: true, container: false },
+  { id: "bug", label: "Bug", claimable: true, container: false },
+  { id: "spike", label: "Spike", claimable: true, container: false },
+  { id: "chore", label: "Chore", claimable: true, container: false }
+];
 export const TALK_KINDS = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
 export const CAPABILITY_STATUSES = ["proposed", "planned", "in_progress", "review", "live", "broken", "deprecated", "superseded"];
 export const BLOCKER_TYPES = ["operator_approval", "dependency", "external_issue", "waiting_for_agent", "unclear_scope", "other"];
@@ -26,7 +35,7 @@ const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
 const DOGFOOD_PROJECT_KEY = "DOGFOOD";
 const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
-const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story", "spike"]);
+const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story"]);
 const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
 
@@ -67,8 +76,10 @@ const STATUS_IDS = new Set(STATUSES.map((status) => status.id));
 const ROLE_IDS = new Set(ROLES.map((role) => role.id));
 const PRIORITY_IDS = new Set(PRIORITIES);
 const COMPLETION_TYPE_IDS = new Set(COMPLETION_TYPES);
+const WORK_ITEM_TYPE_IDS = new Set(WORK_ITEM_TYPES.map((type) => type.id));
+const CLAIMABLE_WORK_ITEM_TYPE_IDS = new Set(WORK_ITEM_TYPES.filter((type) => type.claimable).map((type) => type.id));
 const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
-const FULL_TASK_EDIT_FIELDS = ["title", "description", "assignee", "priority", "role", "labels"];
+const FULL_TASK_EDIT_FIELDS = ["title", "description", "assignee", "priority", "role", "labels", "workItemType"];
 const BLOCKER_TYPE_IDS = new Set(BLOCKER_TYPES);
 const OPERATOR_APPROVAL_DECISION_IDS = new Set(OPERATOR_APPROVAL_DECISIONS);
 
@@ -362,6 +373,7 @@ function defaultData() {
         status: "ready",
         priority: "high",
         role: "pm",
+        workItemType: "task",
         assignee: "pm-agent",
         labels: ["planning"],
         completion: null,
@@ -391,6 +403,7 @@ function defaultData() {
         status: "ready",
         priority: "high",
         role: "implementer",
+        workItemType: "task",
         assignee: "",
         labels: ["mvp", "workflow", "demo"],
         completion: null,
@@ -520,6 +533,10 @@ export class WorkboardStore {
     return COMPLETION_TYPES;
   }
 
+  workItemTypes() {
+    return WORK_ITEM_TYPES;
+  }
+
   capabilityStatuses() {
     return CAPABILITY_STATUSES;
   }
@@ -566,6 +583,11 @@ export class WorkboardStore {
       }
       if (!Array.isArray(task.labels)) {
         task.labels = [];
+        migrated = true;
+      }
+      const workItemType = normalizeWorkItemType(task.workItemType, { migrating: true });
+      if (task.workItemType !== workItemType) {
+        task.workItemType = workItemType;
         migrated = true;
       }
       if (!isValidTaskRevision(task.revision)) {
@@ -994,6 +1016,7 @@ export class WorkboardStore {
 
   listTasks(filters = {}) {
     const q = normalizeText(filters.q).toLowerCase();
+    const workItemType = normalizeOptionalWorkItemType(filters.workItemType);
     const labels = normalizeText(filters.labels)
       .split(",")
       .map((label) => label.trim())
@@ -1004,10 +1027,11 @@ export class WorkboardStore {
       .filter((task) => !filters.status || task.status === filters.status)
       .filter((task) => !filters.role || task.role === filters.role)
       .filter((task) => !filters.assignee || task.assignee === filters.assignee)
+      .filter((task) => !workItemType || task.workItemType === workItemType)
       .filter((task) => labels.every((label) => task.labels.includes(label)))
       .filter((task) => {
         if (!q) return true;
-        return [task.title, task.description, task.assignee, task.role, task.priority, ...task.labels]
+        return [task.title, task.description, task.assignee, task.role, task.priority, task.workItemType, ...task.labels]
           .join(" ")
           .toLowerCase()
           .includes(q);
@@ -1186,6 +1210,7 @@ export class WorkboardStore {
         status: task.status,
         priority: task.priority,
         role: task.role,
+        workItemType: task.workItemType,
         assignee: task.assignee,
         labels: task.labels,
         comments: task.comments,
@@ -1383,6 +1408,7 @@ export class WorkboardStore {
       statusIds: STATUS_IDS,
       priorityIds: PRIORITY_IDS,
       roleIds: ROLE_IDS,
+      workItemTypeIds: WORK_ITEM_TYPE_IDS,
       completionTypeIds: COMPLETION_TYPE_IDS,
       now,
       id
@@ -1482,6 +1508,7 @@ export class WorkboardStore {
     const status = readTaskEnumField(input, "status", STATUS_IDS, "backlog");
     const priority = readTaskEnumField(input, "priority", PRIORITY_IDS, "normal");
     const role = readTaskEnumField(input, "role", ROLE_IDS, "implementer");
+    const workItemType = normalizeWorkItemType(input.workItemType);
     const createdAt = now();
     const actor = normalizeText(input.actor) || "operator";
     const { hasCompletion, completionInput } = readCompletionInput(input);
@@ -1510,6 +1537,7 @@ export class WorkboardStore {
       status,
       priority,
       role,
+      workItemType,
       assignee: normalizeText(input.assignee),
       labels: normalizeTaskLabels(input.labels),
       completion,
@@ -1560,6 +1588,7 @@ export class WorkboardStore {
         status: child.status,
         priority: child.priority,
         role: child.role,
+        workItemType: child.workItemType,
         assignee: child.assignee,
         labels: child.labels,
         actor
@@ -1629,6 +1658,9 @@ export class WorkboardStore {
     }
     if ("role" in patch) {
       readTaskEnumField(patch, "role", ROLE_IDS, task.role);
+    }
+    if ("workItemType" in patch) {
+      normalizeWorkItemType(patch.workItemType);
     }
     if ("labels" in patch) {
       normalizeTaskLabels(patch.labels, { defaultValue: task.labels });
@@ -1728,6 +1760,14 @@ export class WorkboardStore {
       if (task.role !== next) {
         task.role = next;
         changes.push("role");
+      }
+    }
+
+    if ("workItemType" in patch) {
+      const next = normalizeWorkItemType(patch.workItemType);
+      if (task.workItemType !== next) {
+        task.workItemType = next;
+        changes.push("workItemType");
       }
     }
 
@@ -1836,6 +1876,19 @@ export class WorkboardStore {
         if (activeTask) {
           throw activeTaskClaimError(assignee, activeTask, profile.workMode);
         }
+      }
+
+      if (!taskIsEligibleForProfile(task, profile)) {
+        throw httpError(
+          `Work item type ${task.workItemType || "task"} is not directly claimable by ${profile.role} agent ${assignee}.`,
+          409,
+          {
+            reason: "work_item_type_not_claimable",
+            taskId: task.id,
+            workItemType: task.workItemType || "task",
+            claimableTypes: [...CLAIMABLE_WORK_ITEM_TYPE_IDS]
+          }
+        );
       }
 
       const expectedProjectId = normalizeText(input.projectId);
@@ -2697,6 +2750,22 @@ function readTaskEnumField(source, field, allowed, fallback) {
   return value;
 }
 
+function normalizeWorkItemType(value, { migrating = false } = {}) {
+  const normalized = normalizeText(value).toLowerCase() || "task";
+  if (WORK_ITEM_TYPE_IDS.has(normalized)) return normalized;
+  if (migrating) return "task";
+  throw httpError(`Task workItemType must be one of: ${[...WORK_ITEM_TYPE_IDS].join(", ")}.`, 400, {
+    field: "workItemType",
+    allowed: [...WORK_ITEM_TYPE_IDS],
+    value: normalized
+  });
+}
+
+function normalizeOptionalWorkItemType(value) {
+  if (value === undefined || value === null || value === "") return "";
+  return normalizeWorkItemType(value);
+}
+
 function normalizeTaskLabels(value, { defaultValue = [] } = {}) {
   if (value === undefined) {
     return [...defaultValue];
@@ -2746,6 +2815,7 @@ function normalizeDecompositionChildren(value, parent) {
       status: readTaskEnumField(child, "status", STATUS_IDS, "backlog"),
       priority: readTaskEnumField(child, "priority", PRIORITY_IDS, parent.priority || "normal"),
       role: readTaskEnumField(child, "role", ROLE_IDS, "implementer"),
+      workItemType: normalizeWorkItemType(child.workItemType),
       assignee: normalizeText(child.assignee),
       labels: normalizeTaskLabels(child.labels, { defaultValue: [] }),
       acceptanceCriteria: normalizeStringList(child.acceptanceCriteria || child.acceptance || child.criteria),
@@ -2863,12 +2933,14 @@ function isAllProjectsScope(input = {}) {
 function taskMatchesNextTaskScope(task, input = {}) {
   const projectId = normalizeText(input.projectId);
   const labels = normalizeLabels(input.labels);
+  const workItemType = normalizeOptionalWorkItemType(input.workItemType);
   const q = normalizeText(input.q).toLowerCase();
 
   if (projectId && task.projectId !== projectId) return false;
+  if (workItemType && task.workItemType !== workItemType) return false;
   if (labels.length > 0 && !labels.every((label) => task.labels.includes(label))) return false;
   if (q) {
-    const haystack = [task.title, task.description, task.assignee, task.role, task.priority, ...task.labels]
+    const haystack = [task.title, task.description, task.assignee, task.role, task.priority, task.workItemType, ...task.labels]
       .join(" ")
       .toLowerCase();
     if (!haystack.includes(q)) return false;
@@ -2878,6 +2950,7 @@ function taskMatchesNextTaskScope(task, input = {}) {
 }
 
 function isDecompositionTask(task) {
+  if (!CLAIMABLE_WORK_ITEM_TYPE_IDS.has(task.workItemType || "task")) return true;
   return task.labels.some((label) => DECOMPOSITION_LABELS.has(label));
 }
 

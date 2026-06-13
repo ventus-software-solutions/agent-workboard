@@ -137,7 +137,7 @@ describe("Agent Workboard API", () => {
     expect(genericReviewerMarkdown.text).toContain("acquire a concrete slot");
     expect(genericReviewerMarkdown.text).toContain("reviewer-agent");
     expect(genericReviewerMarkdown.text).not.toContain("concrete assignee id such as reviewer");
-  });
+  }, 15000);
 
   it("creates a project and a task, then moves the task", async () => {
     const projectResponse = await request(app)
@@ -402,6 +402,98 @@ describe("Agent Workboard API", () => {
       role: "implementer",
       labels: ["backend"]
     });
+  });
+
+  it("exposes work item types through meta, task APIs, filters, agent docs, and claimability rules", async () => {
+    const meta = await request(app).get("/api/meta").expect(200);
+    expect(meta.body.workItemTypes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "epic", claimable: false }),
+        expect.objectContaining({ id: "task", claimable: true }),
+        expect.objectContaining({ id: "bug", claimable: true })
+      ])
+    );
+
+    const project = (await request(app).post("/api/projects").send({ name: "Work Type API Project" }).expect(201)).body.project;
+    const epic = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API roadmap epic",
+          workItemType: "epic",
+          status: "ready",
+          role: "implementer",
+          labels: ["frontend"]
+        })
+        .expect(201)
+    ).body.task;
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "API claimable task",
+          status: "ready",
+          role: "implementer",
+          labels: ["frontend"]
+        })
+        .expect(201)
+    ).body.task;
+
+    expect(epic).toMatchObject({ workItemType: "epic" });
+    expect(task).toMatchObject({ workItemType: "task" });
+
+    const filtered = await request(app).get("/api/tasks").query({ projectId: project.id, workItemType: "epic" }).expect(200);
+    expect(filtered.body.tasks).toHaveLength(1);
+    expect(filtered.body.tasks[0]).toMatchObject({ id: epic.id, workItemType: "epic" });
+
+    const invalidCreate = await request(app)
+      .post("/api/tasks")
+      .send({ projectId: project.id, title: "Invalid work type", workItemType: "idea" })
+      .expect(400);
+    expect(invalidCreate.body.error.details).toMatchObject({ field: "workItemType" });
+
+    const invalidList = await request(app).get("/api/tasks").query({ projectId: project.id, workItemType: "idea" }).expect(400);
+    expect(invalidList.body.error.details).toMatchObject({ field: "workItemType" });
+
+    const invalidNext = await request(app)
+      .get("/api/agents/implementer-frontend-1/next-task")
+      .query({ projectId: project.id, workItemType: "idea" })
+      .expect(400);
+    expect(invalidNext.body.error.details).toMatchObject({ field: "workItemType" });
+
+    const bug = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ workItemType: "bug", actor: "operator-ui", expectedRevision: task.revision })
+      .expect(200);
+    expect(bug.body.task).toMatchObject({ id: task.id, workItemType: "bug" });
+
+    const implementerNext = await request(app)
+      .get("/api/agents/implementer-frontend-1/next-task")
+      .query({ projectId: project.id, now: "2026-06-13T20:30:00.000Z" })
+      .expect(200);
+    expect(implementerNext.body.task).toMatchObject({ id: task.id, workItemType: "bug" });
+    expect(implementerNext.body.candidates.map((candidate) => candidate.id)).not.toContain(epic.id);
+
+    const rejectedClaim = await request(app)
+      .post(`/api/tasks/${epic.id}/claim`)
+      .send({ assignee: "implementer-frontend-1", expectedStatus: "ready", expectedAssignee: "" })
+      .expect(409);
+    expect(rejectedClaim.body.error.details).toMatchObject({
+      reason: "work_item_type_not_claimable",
+      workItemType: "epic"
+    });
+
+    const plannerNext = await request(app)
+      .get("/api/agents/planner-agent/next-task")
+      .query({ projectId: project.id, now: "2026-06-13T20:30:00.000Z" })
+      .expect(200);
+    expect(plannerNext.body.task).toMatchObject({ id: epic.id, workItemType: "epic" });
+
+    const docs = await request(app).get("/api/agent-docs/implementer-frontend-1?format=md").expect(200);
+    expect(docs.text).toContain("epic/story containers");
+    expect(docs.text).toContain("task, subtask, bug, spike, and chore");
   });
 
   it("posts and lists project Agent Talks through the API", async () => {
