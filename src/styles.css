@@ -471,7 +471,7 @@ button {
 
 .talksPanel {
   display: grid;
-  grid-template-rows: auto auto minmax(320px, 1fr);
+  grid-template-rows: auto auto minmax(340px, 1fr);
   gap: 10px;
   min-height: min(650px, calc(100vh - 350px));
   padding: 12px;
@@ -2244,6 +2244,7 @@ button {
   }
 
   .talksPanel {
+    grid-template-rows: auto auto auto;
     min-height: 0;
     overflow: visible;
   }

@@ -445,6 +445,7 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await expect(taskCard(page, readyTitle)).toBeVisible();
   await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
 
+  await closeDrawerIfOpen(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tasksTab).toBeVisible();
   await expect(coordinationTab).toBeVisible();
