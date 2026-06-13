@@ -124,6 +124,37 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
   );
 
   server.registerTool(
+    "decompose_task",
+    {
+      title: "Decompose task",
+      description: "Create child tasks from a decomposition-needed parent and comment the child task ids on the parent.",
+      inputSchema: {
+        taskId: z.string(),
+        actor: z.string().optional(),
+        summary: z.string().optional(),
+        children: z
+          .array(
+            z.object({
+              title: z.string(),
+              description: z.string().optional(),
+              status: z.string().optional(),
+              role: z.string().optional(),
+              priority: z.string().optional(),
+              labels: z.array(z.string()).optional(),
+              assignee: z.string().optional(),
+              acceptanceCriteria: z.array(z.string()).optional(),
+              evidence: z.string().optional(),
+              sequencing: z.string().optional(),
+              dependencies: z.array(z.string()).optional()
+            })
+          )
+          .min(1)
+      }
+    },
+    async (input) => asText(await store.decomposeTask(input.taskId, input))
+  );
+
+  server.registerTool(
     "claim_task",
     {
       title: "Claim task",

@@ -45,6 +45,17 @@ describe("Agent Workboard MCP tools", () => {
       listProjects: vi.fn(() => []),
       listTasks: vi.fn(() => []),
       createTask: vi.fn(),
+      decomposeTask: vi.fn((taskId, input) => ({
+        parentTask: { id: taskId },
+        childTasks: input.children.map((child, index) => ({
+          id: `task_child_${index + 1}`,
+          ...child
+        })),
+        comment: {
+          id: "comment_decomposition",
+          body: "Created child tasks task_child_1 and task_child_2."
+        }
+      })),
       claimTask: vi.fn((taskId, input) => ({ id: taskId, ...input })),
       acquireAgentSlot: vi.fn((input) => ({
         acquired: true,
@@ -159,8 +170,7 @@ describe("Agent Workboard MCP tools", () => {
           key: "DOGFOOD"
         },
         integrationStatus: {
-          sourceOfTruth: expect.any(String),
-          baseRef: expect.any(String)
+          sourceOfTruth: expect.any(String)
         }
       }
     });
@@ -268,6 +278,60 @@ describe("Agent Workboard MCP tools", () => {
       report: {
         reason: "no_ready_work"
       }
+    });
+
+    const decomposeTask = registrations.find((registration) => registration.name === "decompose_task");
+    expect(
+      parseTextResult(
+        await decomposeTask.handler({
+          taskId: "task_parent",
+          actor: "planner-agent",
+          summary: "Split parent into backend and frontend work.",
+          children: [
+            {
+              title: "Backend planning child",
+              role: "implementer",
+              priority: "high",
+              labels: ["backend"],
+              acceptanceCriteria: ["Persist child work."]
+            },
+            {
+              title: "Frontend planning child",
+              role: "implementer",
+              priority: "normal",
+              labels: ["frontend"]
+            }
+          ]
+        })
+      )
+    ).toMatchObject({
+      childTasks: [
+        { id: "task_child_1", title: "Backend planning child" },
+        { id: "task_child_2", title: "Frontend planning child" }
+      ],
+      comment: {
+        id: "comment_decomposition"
+      }
+    });
+    expect(fakeStore.decomposeTask).toHaveBeenCalledWith("task_parent", {
+      taskId: "task_parent",
+      actor: "planner-agent",
+      summary: "Split parent into backend and frontend work.",
+      children: [
+        {
+          title: "Backend planning child",
+          role: "implementer",
+          priority: "high",
+          labels: ["backend"],
+          acceptanceCriteria: ["Persist child work."]
+        },
+        {
+          title: "Frontend planning child",
+          role: "implementer",
+          priority: "normal",
+          labels: ["frontend"]
+        }
+      ]
     });
 
     const listCapabilities = registrations.find((registration) => registration.name === "list_capabilities");
