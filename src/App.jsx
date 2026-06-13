@@ -55,6 +55,22 @@ const LIVE_POLL_INTERVAL_MS = 2500;
 const SIDEBAR_PREFERENCE_KEY = "agentWorkboard.sidebarCollapsed";
 const SIDEBAR_NARROW_QUERY = "(max-width: 920px)";
 
+function emptyWorktreeCleanup(error = "") {
+  return {
+    generatedAt: "",
+    mainRef: "main",
+    counts: {
+      total: 0,
+      cleanupReady: 0,
+      quarantined: 0,
+      active: 0,
+      unknown: 0
+    },
+    items: [],
+    error
+  };
+}
+
 function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -95,6 +111,7 @@ export function App() {
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
   const [staleWork, setStaleWork] = useState([]);
   const [staleWorkNotes, setStaleWorkNotes] = useState({});
+  const [worktreeCleanup, setWorktreeCleanup] = useState(() => emptyWorktreeCleanup());
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
   const [view, setView] = useState("board");
   const [workspaceTab, setWorkspaceTab] = useState("tasks");
@@ -167,12 +184,21 @@ export function App() {
     }
   }
 
+  async function fetchWorktreeCleanup() {
+    try {
+      const result = await api.worktreeCleanup();
+      return { ...emptyWorktreeCleanup(), ...result.report, error: "" };
+    } catch (nextError) {
+      return emptyWorktreeCleanup(nextError.message);
+    }
+  }
+
   async function loadAll(projectId = selectedProjectId) {
     setError("");
     const [metaResult, projectsResult, agentSlotsResult] = await Promise.all([api.meta(), api.projects(), api.agentSlots()]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, cleanupResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -183,9 +209,10 @@ export function App() {
           api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
           api.staleInProgressTasks({ projectId: nextProjectId }),
-          api.capabilities({ projectId: nextProjectId, ...capabilityFilters })
+          api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
+          fetchWorktreeCleanup()
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, emptyWorktreeCleanup()];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
@@ -194,6 +221,7 @@ export function App() {
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
+    setWorktreeCleanup(cleanupResult);
     setAgentSlots(agentSlotsResult);
     setLoading(false);
   }
@@ -273,6 +301,12 @@ export function App() {
     setAgentSlots(result);
   }
 
+  async function refreshWorktreeCleanup() {
+    const result = await fetchWorktreeCleanup();
+    setWorktreeCleanup(result);
+    return result;
+  }
+
   async function openLinkedTask(taskId) {
     try {
       setError("");
@@ -338,7 +372,9 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) => setError(nextError.message));
+    Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots(), refreshWorktreeCleanup()]).catch((nextError) =>
+      setError(nextError.message)
+    );
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -400,21 +436,26 @@ export function App() {
     const reviewTasks = projectTasks.filter((task) => task.status === "review");
     const testingTasks = projectTasks.filter((task) => task.status === "testing");
     const staleAgents = agentRegistry.agents.filter((agent) => agent.stale || agent.status === "paused");
+    const cleanupAttention =
+      (worktreeCleanup.counts?.cleanupReady || 0) +
+      (worktreeCleanup.counts?.quarantined || 0) +
+      (worktreeCleanup.counts?.unknown || 0);
     return {
       blockedTasks,
       reviewTasks,
       testingTasks,
       staleAgents,
-      count: staleWork.length + blockedTasks.length + reviewTasks.length + testingTasks.length + staleAgents.length
+      cleanupAttention,
+      count: staleWork.length + blockedTasks.length + reviewTasks.length + testingTasks.length + staleAgents.length + cleanupAttention
     };
-  }, [agentRegistry, projectTasks, staleWork]);
+  }, [agentRegistry, projectTasks, staleWork, worktreeCleanup]);
 
   const viewTitle = view === "capabilities" ? "Capability Registry" : view === "agents" ? "Agents" : selectedProject?.name || "No project";
 
   async function runMutation(action) {
     setError("");
     const result = await action();
-    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots()]);
+    await Promise.all([refreshTasks(), refreshTalks(), refreshCapabilities(), refreshAgentSlots(), refreshWorktreeCleanup()]);
     return result;
   }
 
@@ -698,6 +739,8 @@ export function App() {
             onStaleWorkNoteChange={(taskId, note) => setStaleWorkNotes((current) => ({ ...current, [taskId]: note }))}
             onRecoverStaleWork={recoverStaleWork}
             attention={coordinationAttention}
+            worktreeCleanup={worktreeCleanup}
+            onRefreshWorktreeCleanup={() => refreshWorktreeCleanup()}
           />
         ) : (
           <TasksWorkspace
@@ -889,13 +932,16 @@ function CoordinationWorkspace({
   staleWorkNotes,
   onStaleWorkNoteChange,
   onRecoverStaleWork,
-  attention
+  attention,
+  worktreeCleanup,
+  onRefreshWorktreeCleanup
 }) {
   return (
     <div className="coordinationWorkspace">
       <div className="coordinationSummary">
         <CoordinationStat icon={MessageSquarePlus} label="Talks" value={talks.length} />
         <CoordinationStat icon={AlertCircle} label="Stale Work" value={staleWork.length} />
+        <CoordinationStat icon={Archive} label="Cleanup" value={worktreeCleanup.counts?.cleanupReady || 0} />
         <CoordinationStat icon={Clock3} label="Blocked" value={attention.blockedTasks.length} />
         <CoordinationStat icon={ShieldCheck} label="Review" value={attention.reviewTasks.length} />
       </div>
@@ -927,6 +973,11 @@ function CoordinationWorkspace({
               <p>No stale in-progress work.</p>
             </section>
           )}
+          <WorktreeCleanupPanel
+            report={worktreeCleanup}
+            onRefresh={onRefreshWorktreeCleanup}
+            onSelectTask={onSelectTask}
+          />
           <CoordinationAttention attention={attention} onSelectTask={onSelectTask} />
         </div>
       </div>
@@ -942,6 +993,79 @@ function CoordinationStat({ icon: Icon, label, value }) {
       <strong>{value}</strong>
     </article>
   );
+}
+
+function WorktreeCleanupPanel({ report, onRefresh, onSelectTask }) {
+  const items = (report.items || []).filter((item) => item.status !== "active-keep");
+  const activeCount = report.counts?.active || 0;
+
+  return (
+    <section className="worktreeCleanupPanel" aria-label="Worktree cleanup queue">
+      <div className="worktreeCleanupHeader">
+        <div>
+          <div className="sectionLabel">Repository</div>
+          <h3>Worktree Cleanup</h3>
+        </div>
+        <button className="iconButton" onClick={onRefresh} title="Refresh cleanup report" aria-label="Refresh cleanup report">
+          <RefreshCw size={15} />
+        </button>
+      </div>
+
+      <div className="cleanupSummary">
+        <span>{report.counts?.cleanupReady || 0} ready</span>
+        <span>{report.counts?.quarantined || 0} quarantined</span>
+        <span>{report.counts?.unknown || 0} unknown</span>
+        {activeCount > 0 && <span>{activeCount} active</span>}
+      </div>
+
+      {report.error ? (
+        <p className="cleanupError">{report.error}</p>
+      ) : items.length > 0 ? (
+        <div className="cleanupList">
+          {items.slice(0, 6).map((item) => (
+            <article className={`cleanupCard cleanupStatus-${item.status}`} key={`${item.worktreePath}:${item.branch}`}>
+              <div className="cleanupCardHeader">
+                <span>{cleanupStatusLabel(item.status)}</span>
+                <small>
+                  {item.aheadMain} ahead, {item.behindMain} behind
+                </small>
+              </div>
+              {item.task ? (
+                <button className="linkButton cleanupTaskLink" onClick={() => onSelectTask(item.task.id)}>
+                  {item.task.title}
+                </button>
+              ) : (
+                <strong className="cleanupTaskLink">{item.branch}</strong>
+              )}
+              <div className="cleanupMeta">
+                <span>{item.branch}</span>
+                <span>{item.task?.id || "No task"}</span>
+                <span>{item.completion?.commitSha || item.head || "No commit"}</span>
+              </div>
+              <p>{item.reason}</p>
+              {item.cleanupEligible && (
+                <div className="cleanupCommands">
+                  <code>{item.commands.removeWorktree}</code>
+                  <code>{item.commands.deleteBranch}</code>
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : (
+        <p>No cleanup candidates.</p>
+      )}
+    </section>
+  );
+}
+
+function cleanupStatusLabel(status) {
+  if (status === "cleanup-ready") return "Ready";
+  if (status === "quarantined-dirty") return "Dirty";
+  if (status === "quarantined-unmerged") return "Unmerged";
+  if (status === "quarantined-not-done") return "Not done";
+  if (status === "unknown-task") return "Unknown";
+  return status;
 }
 
 function CoordinationAttention({ attention, onSelectTask }) {

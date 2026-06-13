@@ -490,7 +490,7 @@ button {
 
 .coordinationSummary {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
 }
 
@@ -855,6 +855,141 @@ button {
 .staleWorkActions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.worktreeCleanupPanel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #2f3741;
+  border-radius: 8px;
+  background: #151a20;
+}
+
+.worktreeCleanupPanel > p {
+  margin: 0;
+  color: #aeb9c6;
+  font-size: 13px;
+}
+
+.worktreeCleanupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.worktreeCleanupHeader h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.cleanupSummary,
+.cleanupMeta {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.cleanupSummary span,
+.cleanupMeta span {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #20262d;
+  color: #aeb9c6;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cleanupList {
+  display: grid;
+  gap: 8px;
+}
+
+.cleanupCard {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #303842;
+  border-radius: 8px;
+  background: #17191b;
+}
+
+.cleanupStatus-cleanup-ready {
+  border-color: #33685f;
+}
+
+.cleanupStatus-quarantined-dirty,
+.cleanupStatus-quarantined-unmerged,
+.cleanupStatus-quarantined-not-done {
+  border-color: #4a3b27;
+}
+
+.cleanupStatus-unknown-task {
+  border-color: #4a3030;
+}
+
+.cleanupCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cleanupCardHeader span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #dce4ee;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cleanupCardHeader small {
+  color: #9aa6b4;
+  white-space: nowrap;
+}
+
+.cleanupTaskLink {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #9ee7ff;
+  font-weight: 700;
+}
+
+.cleanupCard p,
+.cleanupError {
+  margin: 0;
+  color: #aeb9c6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cleanupError {
+  color: #ffb0a8;
+}
+
+.cleanupCommands {
+  display: grid;
+  gap: 5px;
+}
+
+.cleanupCommands code {
+  display: block;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid #2d343d;
+  border-radius: 6px;
+  background: #101418;
+  color: #dce4ee;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .agentsRegistry {

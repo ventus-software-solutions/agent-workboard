@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
 import { getIntegrationStatus } from "./integrationStatus.js";
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
+import { createWorktreeCleanupReport } from "./worktreeCleanup.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -16,7 +17,7 @@ const upload = multer({
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createApp({ store, integrationStatusProvider = getIntegrationStatus }) {
+export function createApp({ store, integrationStatusProvider = getIntegrationStatus, worktreeCleanupProvider = createWorktreeCleanupReport } = {}) {
   const app = express();
 
   app.use(express.json({ limit: "2mb" }));
@@ -218,6 +219,16 @@ export function createApp({ store, integrationStatusProvider = getIntegrationSta
   app.get("/api/tasks/stale-in-progress", (req, res, next) => {
     try {
       res.json(store.listStaleInProgressTasks(req.query));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get("/api/worktree-cleanup", async (req, res, next) => {
+    try {
+      const mainRef = typeof req.query.mainRef === "string" && req.query.mainRef.trim() ? req.query.mainRef.trim() : "main";
+      const report = await worktreeCleanupProvider({ store, mainRef });
+      res.json({ report });
     } catch (error) {
       next(error);
     }
