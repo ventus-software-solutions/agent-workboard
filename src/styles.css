@@ -483,11 +483,14 @@ button {
 
 .talksPanel {
   display: grid;
+  grid-template-rows: auto auto minmax(340px, 1fr);
   gap: 10px;
+  min-height: min(650px, calc(100vh - 350px));
   padding: 12px;
   border: 1px solid #2f3741;
   border-radius: 8px;
   background: #151a20;
+  overflow: hidden;
 }
 
 .coordinationWorkspace {
@@ -527,6 +530,7 @@ button {
 .coordinationGrid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.8fr);
+  align-items: stretch;
   gap: 12px;
   min-height: 0;
 }
@@ -534,9 +538,17 @@ button {
 .coordinationMain,
 .coordinationSide {
   display: grid;
-  align-content: start;
   gap: 12px;
   min-width: 0;
+  min-height: 0;
+}
+
+.coordinationMain {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.coordinationSide {
+  align-content: start;
 }
 
 .coordinationPanel,
@@ -616,15 +628,68 @@ button {
 }
 
 .talksHeader {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr);
+  display: flex;
+  justify-content: space-between;
   gap: 12px;
-  align-items: end;
+  align-items: center;
 }
 
 .talksHeader h3 {
   margin: 2px 0 0;
   font-size: 16px;
+}
+
+.talksHeaderMeta,
+.talkComposerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.talksHeaderMeta {
+  flex-wrap: wrap;
+}
+
+.talksHeaderMeta > span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #26303a;
+  color: #c7d3df;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.talksHeaderMeta .ghostButton,
+.talkComposerActions .primaryButton {
+  min-height: 32px;
+}
+
+.talksControlDeck {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.55fr) minmax(420px, 1.45fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.talkFilterPanel,
+.talkComposerPanel {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #2c343d;
+  border-radius: 8px;
+  background: #11161b;
+}
+
+.talkComposerActions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .talkFilters,
@@ -634,7 +699,7 @@ button {
 }
 
 .talkFilters {
-  grid-template-columns: minmax(130px, 0.8fr) minmax(120px, 0.8fr) minmax(180px, 1.4fr);
+  grid-template-columns: 1fr;
 }
 
 .talkFilters input,
@@ -650,21 +715,24 @@ button {
 }
 
 .talkComposer {
-  grid-template-columns: minmax(120px, 0.75fr) minmax(120px, 0.75fr) minmax(180px, 1fr) minmax(150px, 1fr) minmax(260px, 2fr) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
 }
 
 .talkComposer textarea {
-  min-height: 38px;
-  max-height: 90px;
+  grid-column: 1 / -1;
+  min-height: 76px;
+  max-height: 130px;
   resize: vertical;
 }
 
 .talkList {
   display: grid;
+  align-content: start;
   gap: 8px;
-  max-height: 210px;
+  min-height: 0;
   overflow: auto;
+  padding-right: 4px;
 }
 
 .talkMessage {
@@ -2215,10 +2283,37 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .talksHeader,
+  .talksPanel {
+    grid-template-rows: auto auto auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
   .talkFilters,
   .talkComposer {
     grid-template-columns: 1fr;
+  }
+
+  .talksHeader,
+  .talkComposerHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .talksHeaderMeta {
+    justify-content: flex-start;
+  }
+
+  .talksControlDeck {
+    grid-template-columns: 1fr;
+  }
+
+  .talkComposerActions .primaryButton {
+    width: 100%;
+  }
+
+  .talkList {
+    overflow: visible;
   }
 
   .staleWorkCard {

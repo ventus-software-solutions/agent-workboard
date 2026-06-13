@@ -410,21 +410,52 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await expect(page.locator(".kanbanBoard")).toHaveCount(0);
   await expect(page.locator(".talksPanel")).toBeVisible();
   await expect(page.locator(".talksPanel")).toContainText("Coordination belongs away from the roomy board.");
+  await expect(page.locator(".talksControlDeck")).toBeVisible();
+  await expect(page.getByLabel("Talk kind filter")).toBeVisible();
+  await expect(page.getByLabel("Talk message")).toBeVisible();
   await expect(page.getByTestId("coordination-attention")).toContainText(blockedTitle);
   await expect(page.getByTestId("coordination-attention")).toContainText(reviewTitle);
   await expect(page.getByTestId("stale-work-card").filter({ hasText: staleTitle })).toBeVisible();
   await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
+
+  const talkListBox = await page.locator(".talkList").boundingBox();
+  const talkComposerBox = await page.locator(".talkComposerPanel").boundingBox();
+  expect(talkListBox?.height ?? 0).toBeGreaterThan(320);
+  expect(talkListBox?.height ?? 0).toBeGreaterThan((talkComposerBox?.height ?? 0) * 1.5);
+
+  await page.getByLabel("Talk kind filter").selectOption("update");
+  await page.getByLabel("Talk agent filter").fill("implementer-2");
+  await expect(page.locator(".talksPanel")).toContainText("Coordination belongs away from the roomy board.");
+  await page.getByLabel("Talk agent filter").fill("missing-agent");
+  await expect(page.locator(".talkEmpty")).toBeVisible();
+  await page.getByRole("button", { name: /Clear/ }).click();
+  await expect(page.locator(".talksPanel")).toContainText("Coordination belongs away from the roomy board.");
+
+  await page.getByLabel("Talk author").fill("operator-ui");
+  await page.getByLabel("Talk kind", { exact: true }).selectOption("question");
+  await page.getByLabel("Related talk task").selectOption({ label: readyTitle });
+  await page.getByLabel("Talk mentions").fill("implementer-2");
+  await page.getByLabel("Talk message").fill("Can the feed stay readable after posting?");
+  await page.getByRole("button", { name: /Post/ }).click();
+  await expect(page.locator(".talksPanel")).toContainText("Can the feed stay readable after posting?");
+  await expect(page.locator(".talksPanel")).toContainText("@implementer-2");
 
   await tasksTab.click();
   await expect(tasksTab).toHaveAttribute("aria-selected", "true");
   await expect(taskCard(page, readyTitle)).toBeVisible();
   await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
 
+  await closeDrawerIfOpen(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(tasksTab).toBeVisible();
   await expect(coordinationTab).toBeVisible();
   const tabOverflow = await page.locator(".workspaceTabs").evaluate((tabs) => tabs.scrollWidth > tabs.clientWidth + 1);
   expect(tabOverflow).toBe(false);
+
+  await coordinationTab.click();
+  await expect(page.locator(".talksControlDeck")).toBeVisible();
+  const talksOverflow = await page.locator(".talksPanel").evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
+  expect(talksOverflow).toBe(false);
 });
 
 test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {
