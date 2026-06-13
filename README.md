@@ -60,6 +60,8 @@ The MCP server exposes project/task listing, task creation, slot acquisition, ne
 
 Every agent can get its operating instructions from the board itself.
 
+For copy-paste continuous worker prompts, see [continuous agent prompt templates](docs/continuous-agent-prompts.md).
+
 For a PM agent:
 
 ```text
