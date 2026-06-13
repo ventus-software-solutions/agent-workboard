@@ -299,6 +299,90 @@ test("uses an off-canvas sidebar on mobile with keyboard and outside-click close
   await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
 });
 
+test("splits tasks and coordination while preserving board state", async ({ page }) => {
+  const projectName = uniqueName("E2E Workspace Tabs Project");
+  const projectKey = uniqueKey("TAB");
+  const readyTitle = uniqueName("Build roomy tasks workspace");
+  const blockedTitle = uniqueName("Resolve blocked coordination");
+  const reviewTitle = uniqueName("Review workspace tab shell");
+  const staleTitle = uniqueName("Recover missing slot owner");
+  const draftTitle = "Unsaved workspace tab draft";
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  for (const task of [
+    { title: readyTitle, status: "ready", assignee: "implementer-2", priority: "high" },
+    { title: blockedTitle, status: "blocked", assignee: "implementer-2", priority: "high" },
+    { title: reviewTitle, status: "review", assignee: "reviewer-agent", priority: "normal" },
+    { title: staleTitle, status: "in_progress", assignee: "missing-slot-agent", priority: "high" }
+  ]) {
+    const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+      data: {
+        projectId: project.id,
+        role: "implementer",
+        description: "Created for workspace tab coverage.",
+        ...task
+      }
+    });
+    expect(taskResponse.ok()).toBe(true);
+    if (task.title === readyTitle) {
+      const { task: readyTask } = await taskResponse.json();
+      const talkResponse = await page.request.post(`${apiBaseURL}/api/projects/${project.id}/talks`, {
+        data: {
+          authorAgentId: "implementer-2",
+          kind: "update",
+          relatedTaskId: readyTask.id,
+          body: "Coordination belongs away from the roomy board."
+        }
+      });
+      expect(talkResponse.ok()).toBe(true);
+    }
+  }
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  const tasksTab = page.getByRole("tab", { name: /Tasks/ });
+  const coordinationTab = page.getByRole("tab", { name: /Coordination/ });
+  await expect(tasksTab).toHaveAttribute("aria-selected", "true");
+  await expect(coordinationTab).toContainText(/Coordination/);
+  await expect(page.locator(".kanbanBoard")).toBeVisible();
+  await expect(page.locator(".talksPanel")).toHaveCount(0);
+
+  const boardBox = await page.locator(".kanbanBoard").boundingBox();
+  expect(boardBox?.height ?? 0).toBeGreaterThan(480);
+
+  await taskCard(page, readyTitle).click();
+  const drawer = page.locator(".drawer");
+  await drawer.getByLabel("Title").fill(draftTitle);
+
+  await coordinationTab.click();
+  await expect(coordinationTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".kanbanBoard")).toHaveCount(0);
+  await expect(page.locator(".talksPanel")).toBeVisible();
+  await expect(page.locator(".talksPanel")).toContainText("Coordination belongs away from the roomy board.");
+  await expect(page.getByTestId("coordination-attention")).toContainText(blockedTitle);
+  await expect(page.getByTestId("coordination-attention")).toContainText(reviewTitle);
+  await expect(page.getByTestId("stale-work-card").filter({ hasText: staleTitle })).toBeVisible();
+  await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
+
+  await tasksTab.click();
+  await expect(tasksTab).toHaveAttribute("aria-selected", "true");
+  await expect(taskCard(page, readyTitle)).toBeVisible();
+  await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(tasksTab).toBeVisible();
+  await expect(coordinationTab).toBeVisible();
+  const tabOverflow = await page.locator(".workspaceTabs").evaluate((tabs) => tabs.scrollWidth > tabs.clientWidth + 1);
+  expect(tabOverflow).toBe(false);
+});
+
 test("surfaces stale in-progress work and requeues it from the board", async ({ page }) => {
   const projectName = uniqueName("E2E Stale Work Project");
   const projectKey = uniqueKey("STL");
@@ -326,6 +410,7 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   await page.goto(baseURL);
   await page.getByRole("button", { name: new RegExp(projectName) }).click();
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await page.getByRole("tab", { name: /Coordination/ }).click();
 
   const staleCard = page.getByTestId("stale-work-card").filter({ hasText: staleTitle });
   await expect(staleCard).toBeVisible();
@@ -337,6 +422,7 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   await staleCard.getByRole("button", { name: "Requeue" }).click();
 
   await expect(staleCard).toHaveCount(0);
+  await page.getByRole("tab", { name: /Tasks/ }).click();
   await expect(page.locator(".kanbanColumn", { hasText: "Ready" }).locator(".taskCard", { hasText: staleTitle })).toBeVisible();
 
   const updatedTaskResponse = await page.request.get(`${apiBaseURL}/api/tasks/${task.id}`);
