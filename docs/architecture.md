@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Agent Workboard is a local-first React and Express application with a shared JSON-backed store. The browser UI, HTTP API, and MCP server all operate on the same project, task, capability, agent slot, presence, and Agent Talks data.
+Agent Workboard is a local-first React and Express application with a shared SQLite-backed store. The browser UI, HTTP API, and MCP server all operate on the same project, task, capability, agent slot, presence, and Agent Talks data.
 
 ## Runtime Shape
 
@@ -8,13 +8,14 @@ Agent Workboard is a local-first React and Express application with a shared JSO
 Browser UI (React/Vite)
   -> HTTP API (Express)
       -> WorkboardStore
-          -> workboard.json
+          -> workboard.sqlite
+          -> optional imported workboard.json
           -> uploads/
 
 Agent MCP client
   -> stdio MCP server
       -> WorkboardStore
-          -> same workboard.json and uploads/
+          -> same workboard.sqlite and uploads/
 ```
 
 The important design choice is that workflow rules live in the store, not separately in the UI, API routes, or MCP handlers. If a task transition, validation rule, completion record, capability link, agent slot, or talk message must behave the same for every caller, implement it in `server/storage/workboardStore.js` and expose it through the route or tool layer.
@@ -59,29 +60,33 @@ Change this layer when you need to:
 
 After API changes, update `src/lib/api.js`, MCP tools if agents need the behavior, and tests in `tests/api.test.js` or targeted store tests.
 
-## JSON Store And Workflow Rules
+## Store And Workflow Rules
 
-`server/storage/workboardStore.js` is the domain model and persistence layer. It defines:
+`server/storage/workboardStore.js` is the domain model. Persistence is delegated to `server/storage/persistence.js`, which supports the default SQLite backend and the legacy JSON backend. The store defines:
 
 - status, role, priority, completion, talk kind, and capability status enums
 - default seeded projects, tasks, capabilities, agent types, and agent slots
-- migrations for older JSON data
+- migrations for older stored data
 - project, task, capability, Agent Talks, presence, and agent slot operations
 - claim, next-task, completion record, stale work, and capability-link rules
 - comment and attachment metadata updates
-- persistence to `workboard.json`
+- persistence through the selected storage adapter
 
-The store writes to `${WORKBOARD_DATA_DIR}/workboard.json`, or `.workboard-data/workboard.json` in local development. It serializes writes through `save()` and uses a filesystem lock for claim paths that need stale-safe read-modify-write behavior across processes. File writes go through a temporary JSON file and rename.
+The HTTP API, Docker runtime, and MCP server default to `WORKBOARD_STORAGE=sqlite`, writing `${WORKBOARD_DATA_DIR}/workboard.sqlite`, or `.workboard-data/workboard.sqlite` in local development. On first SQLite startup, an existing `workboard.json` snapshot is imported and left in place as a rollback file. The legacy JSON backend remains available with `WORKBOARD_STORAGE=json` and writes through a temporary JSON file and rename.
+
+SQLite persistence uses the `sqlite3` command instead of a native npm dependency. The Docker image installs it. Local development machines need `sqlite3` on `PATH`, or `SQLITE3_BIN` can point at a specific binary.
+
+The store serializes writes through `save()` and uses a filesystem lock for claim paths that need stale-safe read-modify-write behavior across processes. Keep workflow rules in `WorkboardStore`; storage adapters should only load and save board state.
 
 Change this layer when you need to:
 
 - add fields to projects, tasks, comments, attachments, talk messages, capabilities, presence, agent slots, or completion records
 - enforce validation that must apply to UI, API, and MCP callers
 - change workflow transitions, task selection, queue sorting, or reviewer rules
-- migrate existing local JSON data
+- migrate existing local data
 - alter default seed data for new boards
 
-When adding or changing fields, update the normalization and migration paths first. Then update HTTP routes, MCP schemas, UI payloads, and tests. Keep `workboard.json` backward compatible where practical because local operators may already have data in `.workboard-data/`.
+When adding or changing fields, update the normalization and migration paths first. Then update HTTP routes, MCP schemas, UI payloads, and tests. Keep JSON snapshot compatibility where practical because local operators may already have `workboard.json` data in `.workboard-data/`.
 
 ## React UI
 
@@ -124,7 +129,10 @@ The data directory is intentionally outside the image:
 
 ```text
 .workboard-data/
-  workboard.json
+  workboard.sqlite
+  workboard.sqlite-shm
+  workboard.sqlite-wal
+  workboard.json      # optional imported rollback snapshot
   uploads/
 ```
 
@@ -165,8 +173,6 @@ If storage moves away from the local filesystem, keep the task metadata shape st
 ## Future Work Placement
 
 Auth and access control should start at the Express boundary, because every browser request enters through `server/app.js`. Once identity exists, pass the actor or principal into store methods so task activity, completion records, comments, and talk messages remain audit-friendly. MCP will need a parallel trust model instead of silently bypassing auth.
-
-SQLite should replace the persistence internals of `WorkboardStore` without moving workflow rules out of the store. A practical migration path is to keep public store methods stable, add a storage adapter under `server/storage/`, migrate `workboard.json` into tables on startup or with a script, then update tests to cover both data migration and locking/concurrency behavior.
 
 Agent registry work belongs in both store data and UI derivation. Persistent slot/type definitions, leases, presence, and next-task rules belong in `server/storage/workboardStore.js`. Operator-facing grouping and display logic belongs in `src/lib/agentRegistry.js` and the coordination components in `src/App.jsx`. MCP and agent docs should be updated whenever new registry fields affect how agents claim or report work.
 

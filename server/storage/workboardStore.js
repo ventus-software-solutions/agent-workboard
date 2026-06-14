@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
+import { createWorkboardPersistence } from "./persistence.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -483,10 +484,11 @@ function defaultData() {
 }
 
 export class WorkboardStore {
-  constructor({ dataDir }) {
+  constructor({ dataDir, storageMode = process.env.WORKBOARD_STORAGE || "json", sqliteCommand = process.env.SQLITE3_BIN }) {
     this.dataDir = dataDir;
-    this.dbPath = path.join(dataDir, "workboard.json");
-    this.lockPath = path.join(dataDir, "workboard.json.lock");
+    this.persistence = createWorkboardPersistence({ dataDir, storageMode, sqliteCommand });
+    this.dbPath = this.persistence.path;
+    this.lockPath = this.persistence.lockPath;
     this.uploadsDir = path.join(dataDir, "uploads");
     this.data = null;
     this.writeQueue = Promise.resolve();
@@ -494,18 +496,21 @@ export class WorkboardStore {
 
   async init() {
     await mkdir(this.uploadsDir, { recursive: true });
-    try {
-      const raw = await readFile(this.dbPath, "utf8");
-      this.data = JSON.parse(raw);
-      if (this.migrateData()) {
-        await this.save();
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-      this.data = defaultData();
-      this.rebuildTaskRelationshipDerivatives();
+    const persistedData = await this.persistence.read();
+    let needsSave = false;
+
+    if (persistedData) {
+      this.data = persistedData;
+    } else {
+      this.data = (await this.persistence.readLegacyData?.()) || defaultData();
+      needsSave = true;
+    }
+
+    if (this.migrateData()) {
+      needsSave = true;
+    }
+
+    if (needsSave) {
       await this.save();
     }
   }
@@ -518,15 +523,15 @@ export class WorkboardStore {
   }
 
   async readData() {
-    const raw = await readFile(this.dbPath, "utf8");
-    return JSON.parse(raw);
+    const data = await this.persistence.read();
+    if (!data) {
+      throw Object.assign(new Error("Workboard data is not initialized."), { status: 500 });
+    }
+    return data;
   }
 
   async writeData(data) {
-    await mkdir(this.dataDir, { recursive: true });
-    const tmpPath = `${this.dbPath}.${randomUUID()}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(data, null, 2));
-    await rename(tmpPath, this.dbPath);
+    await this.persistence.write(data);
   }
 
   async withWriteLock(callback) {

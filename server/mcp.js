@@ -442,7 +442,8 @@ export function createWorkboardMcpServer({ store, baseUrl = "http://localhost:80
 
 async function main() {
   const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");
-  const store = new WorkboardStore({ dataDir });
+  const storageMode = process.env.WORKBOARD_STORAGE || "sqlite";
+  const store = new WorkboardStore({ dataDir, storageMode });
   await store.init();
   const server = createWorkboardMcpServer({ store });
   await server.connect(new StdioServerTransport());

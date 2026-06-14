@@ -31,7 +31,7 @@ Open `http://localhost:8088`.
 
 Docker Compose publishes `127.0.0.1:8088:8080` on the host. The container process sets `WORKBOARD_HOST=0.0.0.0` only inside the container so Docker can forward the loopback-only host port.
 
-Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
+Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The default runtime store is `.workboard-data/workboard.sqlite`; on first SQLite startup, an existing `.workboard-data/workboard.json` is imported and left in place as a rollback snapshot. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
 
 ## Run In Development
 
@@ -41,6 +41,10 @@ npm run dev
 ```
 
 The API runs on `http://localhost:8080` and the Vite UI runs on `http://localhost:5174`. Both bind to loopback by default.
+
+## Storage
+
+Agent Workboard defaults to SQLite for the HTTP API, Docker runtime, and MCP server. SQLite persistence requires the `sqlite3` command to be available on `PATH`; the Docker image installs it automatically. To use the legacy JSON file store for local rollback or debugging, set `WORKBOARD_STORAGE=json`.
 
 ## Test
 
@@ -56,7 +60,7 @@ The workflow does not require repository secrets, so external contributors can v
 
 ## Architecture For Contributors
 
-See [Architecture Overview](docs/architecture.md) for how the Express API, JSON store, React UI, MCP server, Docker data mount, upload storage, and future auth/SQLite/agent registry work fit together.
+See [Architecture Overview](docs/architecture.md) for how the Express API, SQLite-backed store, React UI, MCP server, Docker data mount, upload storage, and future auth/agent registry work fit together.
 
 ## MCP
 
@@ -137,7 +141,8 @@ Example local MCP command:
       "command": "node",
       "args": ["C:/git/agent-workboard/server/mcp.js"],
       "env": {
-        "WORKBOARD_DATA_DIR": "C:/git/agent-workboard/.workboard-data"
+        "WORKBOARD_DATA_DIR": "C:/git/agent-workboard/.workboard-data",
+        "WORKBOARD_STORAGE": "sqlite"
       }
     }
   }
