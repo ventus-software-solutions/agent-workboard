@@ -16,7 +16,7 @@ ENV WORKBOARD_CLEANUP_MUTATIONS=false
 
 WORKDIR /app
 COPY package*.json ./
-RUN apk add --no-cache git \
+RUN apk add --no-cache git sqlite \
   && git config --system --add safe.directory /workspace
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist

@@ -9,6 +9,7 @@ services:
       PORT: 8080
       WORKBOARD_HOST: "0.0.0.0"
       WORKBOARD_DATA_DIR: /data
+      WORKBOARD_STORAGE: sqlite
       WORKBOARD_REPO_DIR: /workspace
       WORKBOARD_CLEANUP_MUTATIONS: "false"
     volumes:

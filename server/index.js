@@ -5,8 +5,9 @@ import { WorkboardStore } from "./storage/workboardStore.js";
 
 const listenConfig = readListenConfig(process.env);
 const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");
+const storageMode = process.env.WORKBOARD_STORAGE || "sqlite";
 
-const store = new WorkboardStore({ dataDir });
+const store = new WorkboardStore({ dataDir, storageMode });
 await store.init();
 
 const app = createApp({ store });
