@@ -4,6 +4,11 @@ Agent Workboard is early and intentionally small. Keep changes focused, tested, 
 
 ## Local Setup
 
+Requires Node.js 20.11 or newer. The default SQLite store shells out to the `sqlite3`
+command, so install it and make sure it is on `PATH` before running the tests; without it
+the SQLite persistence tests fail with `spawn sqlite3 ENOENT`. To skip SQLite entirely,
+set `WORKBOARD_STORAGE=json`.
+
 ```bash
 npm install
 npm test
@@ -17,6 +22,13 @@ docker compose up --build
 ```
 
 Open `http://localhost:8088`.
+
+## Before Opening A Pull Request
+
+- Run `npm test` and `npm run build`.
+- Keep examples, fixtures, and docs free of machine-specific absolute paths.
+- Do not commit `mcp.json`; copy `mcp.example.json` and fill in your own paths.
+- Report suspected vulnerabilities privately, per [SECURITY.md](SECURITY.md), instead of opening an issue.
 
 ## Contribution Shape
 

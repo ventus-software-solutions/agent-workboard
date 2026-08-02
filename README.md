@@ -175,10 +175,11 @@ Example local MCP command:
 - `GET /api/agent-docs`
 - `GET /api/agent-docs/:agentId`
 
-## Open Source Status
+## Contributing
 
-This project is prepared for open-source release under the MIT license. Before publishing, the next useful pass is a security review for auth, project isolation, and hosted/team deployment assumptions.
+Agent Workboard is open source under the [MIT license](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md)
+for local setup and the shape of a good pull request, and [SECURITY.md](SECURITY.md) for the threat
+model and private vulnerability reporting.
 
-For the first source release process, use the [v0.1.0 release checklist](docs/release-v0.1.0.md).
-
-See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary, pre-OSS-launch requirements, and later hosted/team candidates.
+See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary and later
+hosted/team candidates, and the [v0.1.0 release checklist](docs/release-v0.1.0.md) for the release process.
