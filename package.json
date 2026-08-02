@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:api\" \"npm:dev:web\"",
-    "dev:api": "set WORKBOARD_DATA_DIR=.workboard-data&& node --watch server/index.js",
+    "dev:api": "node --watch server/index.js",
     "dev:web": "vite --host 127.0.0.1 --port 5174",
     "build": "vite build",
     "start": "node server/index.js",

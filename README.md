@@ -128,9 +128,11 @@ Example:
 
 ```bash
 git fetch origin main
-git worktree add C:/git/wt-agent-workboard-implementer-01-claim-api -b implementer-01/claim-api origin/main
-cd C:/git/wt-agent-workboard-implementer-01-claim-api
+git worktree add ../wt-agent-workboard-implementer-01-claim-api -b implementer-01/claim-api origin/main
+cd ../wt-agent-workboard-implementer-01-claim-api
 ```
+
+Worktrees are created as siblings of the repository checkout by default. Set `WORKBOARD_WORKTREE_ROOT` to place them somewhere else; the API, MCP tools, and agent docs all emit worktree commands rooted at that path.
 
 Example local MCP command:
 
@@ -139,9 +141,9 @@ Example local MCP command:
   "mcpServers": {
     "agent-workboard": {
       "command": "node",
-      "args": ["C:/git/agent-workboard/server/mcp.js"],
+      "args": ["/absolute/path/to/agent-workboard/server/mcp.js"],
       "env": {
-        "WORKBOARD_DATA_DIR": "C:/git/agent-workboard/.workboard-data",
+        "WORKBOARD_DATA_DIR": "/absolute/path/to/agent-workboard/.workboard-data",
         "WORKBOARD_STORAGE": "sqlite"
       }
     }

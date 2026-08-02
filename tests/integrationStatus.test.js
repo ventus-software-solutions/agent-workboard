@@ -71,6 +71,8 @@ describe("integration status guidance", () => {
       behind: 0
     });
     expect(status.worktreeCommand).toContain("origin/main");
+    expect(status.worktreeCommand).toContain("../wt-agent-workboard-<agent-id>-<slug>");
+    expect(status.worktreeCommand).not.toMatch(/\b[A-Za-z]:\//);
   });
 
   it("pauses branch guidance when local and origin have diverged", () => {

@@ -1,3 +1,5 @@
+import { worktreePath } from "./worktreePaths.js";
+
 const ROLE_RULES = {
   pm: {
     mission: "Turn operator goals into clear, prioritized, well-scoped tasks for the agent team.",
@@ -454,9 +456,10 @@ function reviewerMergeRules() {
 function worktreeDiscipline(agentId = "<agent-id>", integrationStatus = null) {
   const safeAgentId = String(agentId || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
   const baseRef = integrationStatus?.baseRef || "origin/main";
+  const worktreeTarget = worktreePath(safeAgentId, "<slug>");
   const worktreeExample = integrationStatus?.baseRef
-    ? `git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> -b ${safeAgentId}/<slug> ${baseRef}`
-    : `do not run git worktree add C:/git/wt-agent-workboard-${safeAgentId}-<slug> until local main and origin/main are reconciled`;
+    ? `git worktree add ${worktreeTarget} -b ${safeAgentId}/<slug> ${baseRef}`
+    : `do not run git worktree add ${worktreeTarget} until local main and origin/main are reconciled`;
   return [
     "Before editing code, check `git status --short --branch` and confirm you are not doing implementation work directly on `main`.",
     `Use a task branch named like \`${safeAgentId}/<short-task-slug>\` or another operator-approved branch name.`,
