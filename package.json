@@ -1,0 +1,60 @@
+{
+  "name": "agent-workboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first workboard for assigning projects and tasks to AI agents.",
+  "license": "MIT",
+  "author": "Ventus Software Solutions",
+  "type": "module",
+  "keywords": [
+    "ai-agents",
+    "coding-agents",
+    "kanban",
+    "task-board",
+    "mcp",
+    "model-context-protocol",
+    "developer-tools",
+    "self-hosted",
+    "local-first",
+    "react",
+    "express"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ventus-software-solutions/agent-workboard.git"
+  },
+  "homepage": "https://github.com/ventus-software-solutions/agent-workboard#readme",
+  "bugs": {
+    "url": "https://github.com/ventus-software-solutions/agent-workboard/issues"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "node --watch server/index.js",
+    "dev:web": "vite --host 127.0.0.1 --port 5174",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "mcp": "node server/mcp.js",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "lucide-react": "^1.18.0",
+    "multer": "^2.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^10.0.3",
+    "supertest": "^7.2.2",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  }
+}
