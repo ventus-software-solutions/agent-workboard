@@ -34,7 +34,7 @@ describe("Agent Workboard API", () => {
       localHead: "localsha",
       originHead: "originsha",
       summary: "Local main is 2 commits ahead of origin/main; use local main for dogfood worktrees until push debt is cleared.",
-      worktreeCommand: "git worktree add C:/git/wt-agent-workboard-<agent-id>-<slug> -b <agent-id>/<slug> main",
+      worktreeCommand: "git worktree add ../wt-agent-workboard-<agent-id>-<slug> -b <agent-id>/<slug> main",
       recoveryActions: ["Run git push origin main when non-interactive credentials are available."]
     };
     app = createApp({ store, integrationStatusProvider: () => integrationStatus });

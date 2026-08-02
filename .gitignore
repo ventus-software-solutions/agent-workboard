@@ -7,3 +7,6 @@ coverage/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Local MCP client config; copy mcp.example.json and keep machine paths out of git.
+mcp.json

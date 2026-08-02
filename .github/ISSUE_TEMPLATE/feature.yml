@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a general-purpose capability for the board, API, or MCP surface.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      {
+        label: Problem,
+        description: What operator or agent problem needs solving?,
+      }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      {
+        label: Proposed outcome,
+        description: Include API/MCP compatibility and security implications.,
+      }
+    validations: { required: true }
+  - type: checkboxes
+    id: parity
+    attributes:
+      label: Interface parity
+      description: Agent-facing behavior should be reachable without the browser UI.
+      options:
+        - label: This change keeps every agent-relevant action available through the API or MCP, or explains why it is UI-only.

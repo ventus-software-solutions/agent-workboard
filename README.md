@@ -33,6 +33,20 @@ Docker Compose publishes `127.0.0.1:8088:8080` on the host. The container proces
 
 Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The default runtime store is `.workboard-data/workboard.sqlite`; on first SQLite startup, an existing `.workboard-data/workboard.json` is imported and left in place as a rollback snapshot. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
 
+## Run From The Published Image
+
+Tagged releases publish a multi-arch image to GitHub Container Registry:
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:8088:8080 \
+  -v "$PWD/.workboard-data:/data" \
+  -e WORKBOARD_HOST=0.0.0.0 \
+  ghcr.io/ventus-software-solutions/agent-workboard:latest
+```
+
+Keep the `127.0.0.1:` prefix on the port publish unless you have deliberately decided to expose the board; see [Local Security Boundary](#local-security-boundary) and [SECURITY.md](SECURITY.md).
+
 ## Run In Development
 
 ```bash
@@ -128,9 +142,11 @@ Example:
 
 ```bash
 git fetch origin main
-git worktree add C:/git/wt-agent-workboard-implementer-01-claim-api -b implementer-01/claim-api origin/main
-cd C:/git/wt-agent-workboard-implementer-01-claim-api
+git worktree add ../wt-agent-workboard-implementer-01-claim-api -b implementer-01/claim-api origin/main
+cd ../wt-agent-workboard-implementer-01-claim-api
 ```
+
+Worktrees are created as siblings of the repository checkout by default. Set `WORKBOARD_WORKTREE_ROOT` to place them somewhere else; the API, MCP tools, and agent docs all emit worktree commands rooted at that path.
 
 Example local MCP command:
 
@@ -139,9 +155,9 @@ Example local MCP command:
   "mcpServers": {
     "agent-workboard": {
       "command": "node",
-      "args": ["C:/git/agent-workboard/server/mcp.js"],
+      "args": ["/absolute/path/to/agent-workboard/server/mcp.js"],
       "env": {
-        "WORKBOARD_DATA_DIR": "C:/git/agent-workboard/.workboard-data",
+        "WORKBOARD_DATA_DIR": "/absolute/path/to/agent-workboard/.workboard-data",
         "WORKBOARD_STORAGE": "sqlite"
       }
     }
@@ -173,10 +189,11 @@ Example local MCP command:
 - `GET /api/agent-docs`
 - `GET /api/agent-docs/:agentId`
 
-## Open Source Status
+## Contributing
 
-This project is prepared for open-source release under the MIT license. Before publishing, the next useful pass is a security review for auth, project isolation, and hosted/team deployment assumptions.
+Agent Workboard is open source under the [MIT license](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md)
+for local setup and the shape of a good pull request, and [SECURITY.md](SECURITY.md) for the threat
+model and private vulnerability reporting.
 
-For the first source release process, use the [v0.1.0 release checklist](docs/release-v0.1.0.md).
-
-See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary, pre-OSS-launch requirements, and later hosted/team candidates.
+See the [Ventus OSS-to-commercial roadmap](docs/roadmap.md) for the local-first boundary and later
+hosted/team candidates, and the [v0.1.0 release checklist](docs/release-v0.1.0.md) for the release process.

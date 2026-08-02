@@ -1,0 +1,50 @@
+name: Bug report
+description: Report a reproducible defect using synthetic data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, board exports, task attachments, or personal data. Use a private security advisory for vulnerabilities.
+  - type: input
+    id: version
+    attributes: { label: Version or commit, placeholder: 0.1.0 }
+    validations: { required: true }
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - Browser UI
+        - HTTP API
+        - MCP server
+        - Docker / deployment
+        - Docs
+    validations: { required: true }
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage backend
+      options:
+        - sqlite (default)
+        - json (WORKBOARD_STORAGE=json)
+    validations: { required: true }
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Node version
+      placeholder: Ubuntu 24.04, Node 22.13.0
+    validations: { required: true }
+  - type: textarea
+    id: reproduction
+    attributes:
+      { label: Reproduction, description: Minimal steps and synthetic input. }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected behavior }
+    validations: { required: true }
+  - type: textarea
+    id: actual
+    attributes: { label: Actual behavior }
+    validations: { required: true }

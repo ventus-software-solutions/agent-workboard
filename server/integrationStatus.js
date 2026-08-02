@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { worktreePath } from "./worktreePaths.js";
 
 const DEFAULT_LOCAL_REF = "main";
 const DEFAULT_REMOTE_REF = "origin/main";
@@ -56,7 +57,7 @@ export function buildIntegrationStatus({
     pushDebt,
     summary: state.summary,
     worktreeCommand: state.baseRef
-      ? `git worktree add C:/git/wt-agent-workboard-<agent-id>-<slug> -b <agent-id>/<slug> ${state.baseRef}`
+      ? `git worktree add ${worktreePath()} -b <agent-id>/<slug> ${state.baseRef}`
       : "Pause before creating a worktree: reconcile local main and origin/main first.",
     recoveryActions: recoveryActions({ pushDebt, sourceOfTruth: state.sourceOfTruth, localRef, remoteRef })
   };
