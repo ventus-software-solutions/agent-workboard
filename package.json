@@ -50,11 +50,11 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
-    "@vitejs/plugin-react": "^6.0.2",
-    "concurrently": "^10.0.3",
+    "@playwright/test": "^1.62.1",
+    "@vitejs/plugin-react": "^6.0.5",
+    "concurrently": "^10.0.4",
     "supertest": "^7.2.2",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
   }
 }
