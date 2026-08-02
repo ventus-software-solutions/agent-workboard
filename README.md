@@ -33,6 +33,20 @@ Docker Compose publishes `127.0.0.1:8088:8080` on the host. The container proces
 
 Data is stored in `.workboard-data/`, which is gitignored and bind-mounted into the container. The default runtime store is `.workboard-data/workboard.sqlite`; on first SQLite startup, an existing `.workboard-data/workboard.json` is imported and left in place as a rollback snapshot. The same directory is used by the local MCP example so the browser UI and MCP tools operate on the same board.
 
+## Run From The Published Image
+
+Tagged releases publish a multi-arch image to GitHub Container Registry:
+
+```bash
+docker run --rm \
+  -p 127.0.0.1:8088:8080 \
+  -v "$PWD/.workboard-data:/data" \
+  -e WORKBOARD_HOST=0.0.0.0 \
+  ghcr.io/ventus-software-solutions/agent-workboard:latest
+```
+
+Keep the `127.0.0.1:` prefix on the port publish unless you have deliberately decided to expose the board; see [Local Security Boundary](#local-security-boundary) and [SECURITY.md](SECURITY.md).
+
 ## Run In Development
 
 ```bash
