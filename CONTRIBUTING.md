@@ -32,6 +32,8 @@ GitHub Actions CI runs `npm install`, `npm test`, and `npm run build` on every p
 - Do not commit `mcp.json`; copy `mcp.example.json` and fill in your own paths.
 - Report suspected vulnerabilities privately, per [SECURITY.md](SECURITY.md), instead of opening an issue.
 
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). By participating you agree to uphold it.
+
 ## Contribution Shape
 
 - One logical change per pull request.
