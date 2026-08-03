@@ -6,6 +6,8 @@ You get a browser UI to see and steer the work. Your agents get an HTTP API and 
 
 It runs on your machine with one command. There is no account, no cloud service, and no telemetry.
 
+![The Agent Workboard board view, showing tasks across backlog, ready, in progress, review, testing, blocked, and done columns](docs/assets/board.png)
+
 ## Quick Start
 
 ```bash
@@ -34,6 +36,8 @@ docker run --rm \
 - An evidence gate on `done`: a task cannot be closed without a completion record saying how it was finished.
 - An MCP server, so agents work the board through tools instead of scraping the UI.
 
+![A task open in the detail drawer, showing status transitions, the completion record control, assignee, priority, and dependency links](docs/assets/task-detail.png)
+
 ## Point Your Agents At It
 
 Add the MCP server to your agent's config:
@@ -59,6 +63,10 @@ You are implementer. Read http://localhost:8088/api/agent-docs/implementer?forma
 ```
 
 That doc is generated per agent: its role, which tasks it may claim, how to report progress, and what "done" requires. Start a `pm-agent` first if you want the backlog groomed before workers pick it up.
+
+The Agents view shows the slots you have configured, which are occupied, and what each specializes in:
+
+![The Agents view, showing configured agent slots grouped by role with desired counts, specialties, and free or occupied status](docs/assets/agents.png)
 
 See **[docs/agent-protocol.md](docs/agent-protocol.md)** for the full agent contract and endpoint reference, the **[spawning guide](docs/agent-spawning.md)** for running a pool of agents, and **[prompt templates](docs/continuous-agent-prompts.md)** for copy-paste continuous workers.
 

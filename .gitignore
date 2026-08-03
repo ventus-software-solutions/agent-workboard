@@ -2,6 +2,8 @@ node_modules/
 dist/
 .workboard-data/
 coverage/
+test-results/
+playwright-report/
 .env
 *.log
 *.sqlite
