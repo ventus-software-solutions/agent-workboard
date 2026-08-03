@@ -2600,21 +2600,28 @@ describe("WorkboardStore", () => {
       now: "2026-06-12T15:20:01.000Z"
     });
 
-    expect(stale.tasks.map((item) => item.task.id)).toEqual([missingSlotTask.id, expiredHeartbeatTask.id]);
-    expect(stale.tasks[0]).toMatchObject({
+    // Both stale tasks are created in the same tick, so lastProgressAt can tie and
+    // the title tiebreak decides the order. Assert on identity rather than position.
+    expect(stale.tasks.map((item) => item.task.id).sort()).toEqual([missingSlotTask.id, expiredHeartbeatTask.id].sort());
+    expect(stale.tasks.map((item) => item.task.id)).not.toContain(freshTask.id);
+
+    const missingSlotEntry = stale.tasks.find((item) => item.task.id === missingSlotTask.id);
+    const expiredHeartbeatEntry = stale.tasks.find((item) => item.task.id === expiredHeartbeatTask.id);
+
+    expect(missingSlotEntry).toMatchObject({
       reason: "missing_slot",
       assignee: "implementer-backend-99",
       canAcknowledge: false,
       suggestedActions: ["comment", "requeue", "block"]
     });
-    expect(stale.tasks[1]).toMatchObject({
+    expect(expiredHeartbeatEntry).toMatchObject({
       reason: "expired_heartbeat",
       assignee: "implementer-backend-1",
       canAcknowledge: true,
       suggestedActions: ["comment", "requeue", "block", "acknowledge"]
     });
-    expect(stale.tasks[1].lastProgressAt).toBe(expiredHeartbeatTask.updatedAt);
-    expect(stale.tasks[1].freshness).toMatchObject({
+    expect(expiredHeartbeatEntry.lastProgressAt).toBe(expiredHeartbeatTask.updatedAt);
+    expect(expiredHeartbeatEntry.freshness).toMatchObject({
       leaseFresh: false,
       presenceFreshActive: false,
       ownerProgressFresh: false,
