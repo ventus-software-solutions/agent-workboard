@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -8,6 +8,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WorkboardStore } from "../server/storage/workboardStore.js";
 
 const execFileAsync = promisify(execFile);
+
+// SQLite persistence shells out to the sqlite3 binary. Skip rather than fail when
+// it is missing, so a contributor's first `npm test` is not red for a reason that
+// has nothing to do with their change. CI installs sqlite3 explicitly so these
+// never silently skip there.
+const sqliteCommand = process.env.SQLITE3_BIN || "sqlite3";
+const sqliteProbe = spawnSync(sqliteCommand, ["-version"], { stdio: "ignore" });
+const hasSqlite3 = !sqliteProbe.error && sqliteProbe.status === 0;
+
+if (!hasSqlite3) {
+  console.warn(
+    `[skipped] SQLite persistence tests: "${sqliteCommand}" is not on PATH. ` +
+      `Install sqlite3, or set SQLITE3_BIN to its location, to run them.`
+  );
+}
 
 let tempDir;
 
@@ -19,7 +34,7 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("WorkboardStore SQLite persistence", () => {
+describe.skipIf(!hasSqlite3)("WorkboardStore SQLite persistence", () => {
   it("persists new board data in SQLite and reloads it", async () => {
     const store = new WorkboardStore({ dataDir: tempDir, storageMode: "sqlite" });
     await store.init();
