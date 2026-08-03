@@ -18,6 +18,9 @@ permissions:
   packages: write
   id-token: write
   attestations: write
+  # attest-build-provenance v4 also writes an artifact metadata storage record.
+  # Without this the attestation still publishes, but every run warns.
+  artifact-metadata: write
 
 concurrency:
   group: image-publish
