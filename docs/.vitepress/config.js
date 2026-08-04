@@ -46,6 +46,13 @@ export default defineConfig({
   },
 
   head: [
+    [
+      "meta",
+      {
+        name: "google-site-verification",
+        content: "8-PB46iJ7WM95Fz3TPYh4hQu9iipsXszv4O3fj9XoaI"
+      }
+    ],
     ["meta", { name: "author", content: "Ventus Software Solutions" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:site_name", content: "Agent Workboard" }],
