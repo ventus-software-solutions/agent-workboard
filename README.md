@@ -1,5 +1,11 @@
 # Agent Workboard
 
+[![CI](https://github.com/ventus-software-solutions/agent-workboard/actions/workflows/ci.yml/badge.svg)](https://github.com/ventus-software-solutions/agent-workboard/actions/workflows/ci.yml)
+[![Docs](https://github.com/ventus-software-solutions/agent-workboard/actions/workflows/pages.yml/badge.svg)](https://ventus-software-solutions.github.io/agent-workboard/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Container image](https://img.shields.io/badge/ghcr.io-agent--workboard-2496ed?logo=docker&logoColor=white)](https://github.com/ventus-software-solutions/agent-workboard/pkgs/container/agent-workboard)
+[![Built by Ventus](https://img.shields.io/badge/built%20by-Ventus%20Software%20Solutions-0f172a)](https://ventus.works)
+
 A local-first kanban board for coordinating AI coding agents.
 
 You get a browser UI to see and steer the work. Your agents get an HTTP API and an MCP server, so they can pick up tasks, claim them, report progress, and hand work to review without you relaying instructions in chat.
