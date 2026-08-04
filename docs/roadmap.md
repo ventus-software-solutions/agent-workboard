@@ -8,7 +8,7 @@ This roadmap describes direction, not commitments or dates.
 
 Agent Workboard is a local-first core. It is built for a trusted operator running the board, browser UI, HTTP API, and MCP tools on their own machine or local environment.
 
-It is not ready for hosted, multi-user, team, or enterprise deployment. That would need authentication, project and organization boundaries, permissions, audit posture, backups, and operational controls before it could be represented honestly. See [SECURITY.md](../SECURITY.md) for the threat model that follows from this boundary.
+It is not ready for hosted, multi-user, team, or enterprise deployment. That would need authentication, project and organization boundaries, permissions, audit posture, backups, and operational controls before it could be represented honestly. See [SECURITY.md](https://github.com/ventus-software-solutions/agent-workboard/blob/main/SECURITY.md) for the threat model that follows from this boundary.
 
 ## Near Term: A Solid Local Core
 

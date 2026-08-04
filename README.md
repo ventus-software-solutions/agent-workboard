@@ -6,6 +6,8 @@ You get a browser UI to see and steer the work. Your agents get an HTTP API and 
 
 It runs on your machine with one command. There is no account, no cloud service, and no telemetry.
 
+Documentation site: <https://ventus-software-solutions.github.io/agent-workboard/>
+
 ![The Agent Workboard board view, showing tasks across backlog, ready, in progress, review, testing, blocked, and done columns](docs/assets/board.png)
 
 ## Quick Start
@@ -115,6 +117,8 @@ npm run build
 [CONTRIBUTING.md](CONTRIBUTING.md) covers prerequisites and what a good pull request looks like.
 
 ## Docs
+
+Published at <https://ventus-software-solutions.github.io/agent-workboard/>, built from `docs/` by [.github/workflows/pages.yml](.github/workflows/pages.yml). Run it locally with `npm run docs:dev`.
 
 - [Architecture](docs/architecture.md) — how the API, store, UI, and MCP server fit together.
 - [Agent protocol](docs/agent-protocol.md) — bootstrap, slots, claiming, evidence, endpoint reference.

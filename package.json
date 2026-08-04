@@ -23,7 +23,7 @@
     "type": "git",
     "url": "git+https://github.com/ventus-software-solutions/agent-workboard.git"
   },
-  "homepage": "https://github.com/ventus-software-solutions/agent-workboard#readme",
+  "homepage": "https://ventus-software-solutions.github.io/agent-workboard/",
   "bugs": {
     "url": "https://github.com/ventus-software-solutions/agent-workboard/issues"
   },
@@ -35,6 +35,9 @@
     "dev:api": "node --watch server/index.js",
     "dev:web": "vite --host 127.0.0.1 --port 5174",
     "build": "vite build",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "start": "node server/index.js",
     "mcp": "node server/mcp.js",
     "test": "vitest run",
@@ -55,6 +58,7 @@
     "concurrently": "^10.0.3",
     "supertest": "^7.2.2",
     "vite": "^8.0.16",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.8"
   }
 }
