@@ -2471,6 +2471,128 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("reports role-specific upstream signals with activity-scaled recheck hints", async () => {
+    const project = await store.createProject({ name: "Standing Agent Signals", key: "SIGNALS" });
+    for (const status of ["backlog", "ready", "in_progress", "review", "testing", "done"]) {
+      await store.createTask({
+        projectId: project.id,
+        title: `${status} signal task`,
+        status,
+        role: "implementer",
+        ...(status === "done"
+          ? {
+              completion: {
+                completionType: "no-code",
+                completedBy: "test",
+                completedAt: "2026-06-12T14:00:00.000Z",
+                notes: "Signal fixture"
+              }
+            }
+          : {})
+      });
+    }
+
+    const implementer = store.getNextTaskForAgent("implementer-backend-1", { projectId: project.id });
+    const reviewer = store.getNextTaskForAgent("reviewer-agent", { projectId: project.id });
+    const tester = store.getNextTaskForAgent("test-agent", { projectId: project.id });
+
+    expect(implementer).toMatchObject({
+      upstreamSignal: {
+        role: "implementer",
+        statuses: ["ready", "backlog"],
+        counts: { ready: 1, backlog: 1 },
+        total: 2,
+        active: true,
+        recheckAfterSeconds: 90
+      },
+      recheckAfterSeconds: 90
+    });
+    expect(reviewer.upstreamSignal).toMatchObject({
+      role: "reviewer",
+      statuses: ["in_progress", "ready"],
+      counts: { in_progress: 1, ready: 1 },
+      total: 2
+    });
+    expect(tester.upstreamSignal).toMatchObject({
+      role: "tester",
+      statuses: ["review", "in_progress"],
+      counts: { review: 1, in_progress: 1 },
+      total: 2
+    });
+
+    const quietProject = await store.createProject({ name: "Quiet Signals", key: "QUIET" });
+    expect(store.getNextTaskForAgent("test-agent", { projectId: quietProject.id })).toMatchObject({
+      upstreamSignal: { total: 0, active: false, recheckAfterSeconds: 180 },
+      recheckAfterSeconds: 180
+    });
+
+    const busyProject = await store.createProject({ name: "Busy Signals", key: "BUSY" });
+    for (let index = 0; index < 5; index += 1) {
+      await store.createTask({
+        projectId: busyProject.id,
+        title: `Busy review ${index}`,
+        status: "review",
+        role: "implementer"
+      });
+    }
+    expect(store.getNextTaskForAgent("test-agent", { projectId: busyProject.id })).toMatchObject({
+      upstreamSignal: { total: 5, recheckAfterSeconds: 60 },
+      recheckAfterSeconds: 60
+    });
+  });
+
+  it("reports waiting presence while upstream work is still moving toward the role", async () => {
+    const project = await store.createProject({ name: "Waiting Tester", key: "WAIT" });
+    await store.createTask({
+      projectId: project.id,
+      title: "Implementation approaching test",
+      status: "in_progress",
+      role: "implementer"
+    });
+
+    const report = await store.reportNoEligibleWork("test-agent", {
+      reason: "no_testing_work_yet",
+      message: "Waiting for implementation to reach testing.",
+      filters: { projectId: project.id, role: "tester" },
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    expect(report).toMatchObject({
+      upstreamSignal: {
+        role: "tester",
+        statuses: ["review", "in_progress"],
+        counts: { review: 0, in_progress: 1 },
+        total: 1,
+        active: true,
+        recheckAfterSeconds: 120
+      },
+      recheckAfterSeconds: 120,
+      presence: {
+        state: "waiting",
+        status: "waiting",
+        stale: false,
+        offline: false,
+        upstreamSignal: { total: 1 }
+      },
+      report: {
+        reason: "no_testing_work_yet",
+        recheckAfterSeconds: 120,
+        upstreamSignal: { total: 1 }
+      }
+    });
+
+    expect(store.listAgentSlots({ now: "2026-06-12T15:00:00.000Z" }).slots.find((slot) => slot.id === "test-agent")).toMatchObject({
+      active: true,
+      available: false,
+      presenceFresh: true,
+      presence: {
+        state: "waiting",
+        status: "waiting",
+        upstreamSignal: { total: 1 }
+      }
+    });
+  });
+
   it("records agent presence and no-eligible-work reports", async () => {
     const team = await store.createProject({ name: "Team Board", key: "TEAM" });
     const active = await store.updateAgentPresence("mcp-agent", {
@@ -2509,11 +2631,18 @@ describe("WorkboardStore", () => {
       agentId: "mcp-agent",
       state: "idle",
       status: "idle",
-      message: "No eligible MCP tasks remain."
+      message: "No eligible MCP tasks remain.",
+      upstreamSignal: {
+        total: 0,
+        active: false,
+        recheckAfterSeconds: 180
+      }
     });
     expect(report.report).toMatchObject({
       reason: "no_ready_work",
-      filters: { role: "implementer", labels: ["mcp"] }
+      filters: { role: "implementer", labels: ["mcp"] },
+      upstreamSignal: { total: 0 },
+      recheckAfterSeconds: 180
     });
 
     const saved = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));

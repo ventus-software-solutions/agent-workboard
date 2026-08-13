@@ -5,6 +5,7 @@ const STATUS_LABELS = {
   assigned: "Assigned",
   stale: "Stale",
   active: "Active",
+  waiting: "Waiting",
   idle: "Idle",
   paused: "Paused"
 };
@@ -15,9 +16,10 @@ const STATUS_RANK = {
   review: 2,
   assigned: 3,
   stale: 4,
-  active: 5,
-  idle: 6,
-  paused: 7
+  waiting: 5,
+  active: 6,
+  idle: 7,
+  paused: 8
 };
 
 export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } = {}) {
@@ -94,6 +96,7 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
       historical: historicalGroupAgents.length,
       busy: groupAgents.filter((agent) => agent.status === "busy").length,
       blocked: groupAgents.filter((agent) => agent.status === "blocked").length,
+      waiting: groupAgents.filter((agent) => agent.status === "waiting").length,
       idle: groupAgents.filter((agent) => agent.status === "idle").length
     };
   });
@@ -107,6 +110,7 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     historicalAssigneeCount: historicalAgents.length,
     busyAgents: agents.filter((agent) => agent.status === "busy").length,
     blockedAgents: agents.filter((agent) => agent.status === "blocked").length,
+    waitingAgents: agents.filter((agent) => agent.status === "waiting").length,
     idleAgents: agents.filter((agent) => agent.status === "idle").length
   };
 }
@@ -171,6 +175,8 @@ function finalizeAgent(agent) {
     active: Boolean(agent.slot?.active),
     paused: Boolean(agent.slot?.paused),
     stale: Boolean(agent.slot?.stale),
+    waiting: agent.slot?.presence?.state === "waiting" && agent.slot?.presence?.status === "waiting",
+    upstreamSignal: agent.slot?.presence?.upstreamSignal || null,
     available: Boolean(agent.slot?.available),
     withinCapacity: agent.slot?.withinCapacity !== false,
     currentTask,
@@ -196,6 +202,7 @@ function agentStatus({ agent, currentTask, openTasks, blockedTaskCount, reviewTa
   if (reviewTaskCount > 0) return "review";
   if (openTasks.length > 0) return "assigned";
   if (agent.slot?.stale) return "stale";
+  if (agent.slot?.presence?.state === "waiting" && agent.slot?.presence?.status === "waiting") return "waiting";
   if (agent.slot?.active) return "active";
   return "idle";
 }

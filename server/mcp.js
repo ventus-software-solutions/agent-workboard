@@ -273,13 +273,14 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       description: "Heartbeat or update an agent's visible work state.",
       inputSchema: {
         agentId: z.string(),
-        state: z.enum(["active", "idle", "paused"]).optional(),
+        state: z.enum(["active", "waiting", "idle", "paused"]).optional(),
         currentTaskId: z.string().optional(),
         currentTask: z.string().optional(),
         projectId: z.string().optional(),
         activeProjectId: z.string().optional(),
         workMode: z.string().optional(),
         message: z.string().optional(),
+        upstreamSignal: z.any().optional(),
         now: z.string().optional()
       }
     },

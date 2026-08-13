@@ -24,13 +24,15 @@ The generated doc covers the agent's role and mission, which tasks it may accept
 
 A generic worker acquires a concrete slot before claiming work. Saying "I am implementer" and calling `POST /api/bootstrap` or MCP `acquire_agent_slot` assigns the next free matching slot, such as `implementer-backend-1`.
 
-Slots hold a lease. Agents heartbeat with `update_presence` and report an empty queue with `report_no_eligible_work`, which is how the board distinguishes a working agent from a stalled one.
+Slots hold a lease. Agents heartbeat with `update_presence` and report an empty queue with `report_no_eligible_work`, which is how the board distinguishes a working agent from a stalled one. A fresh `waiting` heartbeat keeps a standing agent visible while it waits for upstream work.
 
 ## Getting The Next Task
 
 After acquiring a slot, call MCP `get_next_task` or `GET /api/agents/:agentId/next-task`.
 
 The helper does not claim implicitly. It returns a `selection.claim` payload to pass to `claim_task`, or `selection.review` metadata for reviewer agents handling existing `status=review` tasks without overwriting the original assignee.
+
+Next-task and no-eligible-work responses also return `upstreamSignal` and `recheckAfterSeconds`. When no task is eligible but the signal total is positive, report `state=waiting` with that signal, wait for the hint using the runtime's wait mechanism, and re-poll. Stop only when the signal reaches zero or the operator pauses the worker.
 
 ## Claiming
 
