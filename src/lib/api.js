@@ -87,6 +87,8 @@ export const api = {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/tasks/stale-in-progress${params.size ? `?${params}` : ""}`);
   },
+  recoverStaleTask: (taskId, recovery) =>
+    request(`/api/tasks/${taskId}/stale-recovery`, { method: "POST", body: JSON.stringify(recovery) }),
   operatorApprovals: (filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
     return request(`/api/operator-approvals${params.size ? `?${params}` : ""}`);

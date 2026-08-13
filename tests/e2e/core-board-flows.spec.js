@@ -886,6 +886,17 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   await page.goto(baseURL);
   await page.getByRole("button", { name: new RegExp(projectName) }).click();
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  const inboxCard = page.locator(".operatorAttentionItem.attentionKind-stalled").filter({ hasText: staleTitle });
+  await expect(inboxCard).toBeVisible();
+  await expect(inboxCard).toContainText("What happened:");
+  await expect(inboxCard).toContainText("Why it matters:");
+  await expect(inboxCard).toContainText("Do this:");
+  await expect(inboxCard).toContainText("has no recoverable owner");
+  await expect(inboxCard).toContainText("then spawn an implementer");
+  await expect(inboxCard).not.toContainText("missing_slot");
+  await expect(inboxCard.locator(".operatorPromptPreview")).toContainText("agent-docs/implementer");
+
   await page.getByRole("tab", { name: /Coordination/ }).click();
 
   const staleCard = page.getByTestId("stale-work-card").filter({ hasText: staleTitle });

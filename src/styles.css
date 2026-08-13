@@ -2573,6 +2573,38 @@ button {
   line-height: 1.4;
 }
 
+.operatorActionSentences {
+  display: grid;
+  gap: 5px;
+}
+
+.operatorActionSentences p {
+  margin: 0;
+  color: #c5ced8;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.operatorActionSentences strong {
+  color: #f0f4f7;
+}
+
+.actionNoticeBanner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 18px 12px;
+  padding: 10px 12px;
+  border: 1px solid #356d52;
+  border-radius: 8px;
+  background: #173526;
+  color: #c9f4d9;
+}
+
+.actionNoticeBanner .iconButton {
+  margin-left: auto;
+}
+
 .operatorAttentionActions {
   display: flex;
   align-items: center;

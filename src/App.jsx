@@ -184,6 +184,7 @@ export function App() {
     return window.matchMedia(SIDEBAR_NARROW_QUERY).matches;
   });
   const [error, setError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshState, setRefreshState] = useState({
     status: "connecting",
@@ -403,11 +404,22 @@ export function App() {
     }
   }
 
-  async function handleReleaseAgent(agentId) {
+  async function handleReleaseAgent(agent) {
+    const agentId = agent.id;
     setError("");
     setAgentControlPending(agentId);
     try {
-      const result = await api.releaseAgentSlot(agentId, { actor: "operator" });
+      const result = await api.releaseAgentSlot(agentId, {
+        actor: "operator",
+        expectedRuntimeId: agent.lease?.runtimeId || "",
+        expectedAcquiredAt: agent.lease?.acquiredAt || ""
+      });
+      setActionNotice(
+        result.notice ||
+          (result.applied
+            ? `Released ${agentId}${result.returnedTasks?.length ? ` and returned ${result.returnedTasks.length} task(s) to ready` : ""}.`
+            : "Nothing was changed.")
+      );
       await refreshAgentSlots();
       if (selectedProjectId) {
         const refreshed = await api.tasks({ projectId: selectedProjectId });
@@ -663,30 +675,18 @@ export function App() {
     };
 
     try {
-      await runMutation(async () => {
-        const body = note || defaultNotes[action];
-        let currentTask = item.task;
-        if (body) {
-          const response = await api.addComment(item.task.id, { author: "operator-ui", body });
-          currentTask = response.task || currentTask;
-        }
-        if (action === "requeue") {
-          await api.updateTask(item.task.id, {
-            status: "ready",
-            assignee: "",
-            actor: "operator-ui",
-            expectedRevision: currentTask.revision
-          });
-        } else if (action === "block") {
-          await api.updateTask(item.task.id, { status: "blocked", actor: "operator-ui" });
-        } else if (action === "acknowledge") {
-          await api.updatePresence(item.assignee, {
-            state: "active",
-            currentTaskId: item.task.id,
-            message: body || "Ownership acknowledged from operator UI."
-          });
-        }
-      });
+      setActionNotice("");
+      const result = await runMutation(() =>
+        api.recoverStaleTask(item.task.id, {
+          action,
+          note: note || defaultNotes[action],
+          actor: "operator-ui",
+          expectedRevision: item.claim?.revision ?? item.task.revision,
+          expectedAssignee: item.claim?.assignee ?? item.assignee,
+          expectedClaimedAt: item.claim?.claimedAt || ""
+        })
+      );
+      setActionNotice(result.notice || (result.applied ? "Recovery applied." : "Nothing changed."));
       setStaleWorkNotes((current) => {
         const next = { ...current };
         delete next[item.task.id];
@@ -930,6 +930,16 @@ export function App() {
           <div className="errorBanner">
             <AlertCircle size={18} />
             <span>{error}</span>
+          </div>
+        )}
+
+        {actionNotice && (
+          <div className="actionNoticeBanner" role="status">
+            <CheckCircle2 size={18} />
+            <span>{actionNotice}</span>
+            <button className="iconButton" aria-label="Dismiss notice" onClick={() => setActionNotice("")}>
+              <X size={15} />
+            </button>
           </div>
         )}
 
@@ -1909,7 +1919,7 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
       : "No in-progress tasks claimed by this slot.";
     // eslint-disable-next-line no-alert
     if (window.confirm(`Force-release agent slot ${agent.id}? This ignores its lease. ${detail}`)) {
-      onReleaseAgent(agent.id);
+      onReleaseAgent(agent);
     }
   }
 
@@ -2307,7 +2317,11 @@ function OperatorAttentionPanel({
                     )}
                     {action.downstreamCount > 1 && <span>{action.downstreamCount - 1} downstream</span>}
                   </div>
-                  <p>{action.detail}</p>
+                  <div className="operatorActionSentences">
+                    <p><strong>What happened:</strong> {action.what}</p>
+                    <p><strong>Why it matters:</strong> {action.why}</p>
+                    <p><strong>Do this:</strong> {action.doThis}</p>
+                  </div>
                   {action.kind === "approval" && (
                     <label className="operatorApprovalNote">
                       Decision note
@@ -2320,7 +2334,7 @@ function OperatorAttentionPanel({
                       />
                     </label>
                   )}
-                  {action.prompt && action.kind === "role_gap" && <code className="operatorPromptPreview">{action.prompt}</code>}
+                  {action.spawnPrompt && <code className="operatorPromptPreview">{action.spawnPrompt}</code>}
                   {action.commands?.length > 0 && action.remedy === "copy_commands" && (
                     <div className="operatorCleanupCommands">
                       {action.commands.map((command) => (
@@ -2330,6 +2344,12 @@ function OperatorAttentionPanel({
                   )}
                 </div>
                 <div className="operatorAttentionActions">
+                  {action.spawnPrompt && action.kind !== "role_gap" && (
+                    <button className="attentionSecondaryAction" onClick={() => copyAction(action, action.spawnPrompt)}>
+                      <Copy size={14} />
+                      <span>{copiedActionId === action.id ? "Copied" : `Copy ${action.spawnRole} prompt`}</span>
+                    </button>
+                  )}
                   {action.remedy === "decide" && (
                     <>
                       <button className="attentionPrimaryAction" disabled={actionBusy} onClick={() => decide(action, "approved")}>

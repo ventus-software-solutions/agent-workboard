@@ -215,6 +215,14 @@ function finalizeAgent(agent) {
     status,
     statusLabel: STATUS_LABELS[status] || titleize(status),
     active: Boolean(agent.slot?.active),
+    lease: agent.slot?.lease
+      ? {
+          runtimeId: agent.slot.lease.runtimeId || "",
+          heartbeatAt: agent.slot.lease.heartbeatAt || "",
+          acquiredAt: agent.slot.lease.acquiredAt || "",
+          expiresAt: agent.slot.lease.expiresAt || ""
+        }
+      : null,
     activeProjectId: agent.slot?.activeProjectId || "",
     presenceFresh,
     leaseFresh,
