@@ -954,6 +954,62 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   expect(hasHorizontalOverflow).toBe(false);
 });
 
+test("reports Fill a seat clipboard fallbacks truthfully", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__clipboardMode = "reject";
+    window.__copyFallbackResult = true;
+    window.__fallbackCopies = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      get() {
+        if (window.__clipboardMode === "missing") return undefined;
+        return {
+          writeText: async () => {
+            throw new Error("Clipboard permission denied");
+          }
+        };
+      }
+    });
+    Document.prototype.execCommand = function execCommand(command) {
+      if (command !== "copy" || !window.__copyFallbackResult) return false;
+      const textareas = document.querySelectorAll("textarea");
+      window.__fallbackCopies.push(textareas[textareas.length - 1]?.value || "");
+      return true;
+    };
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+
+  const implementerRole = page.locator(".roleSummary", { hasText: "Implementer Agent" });
+  await implementerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await implementerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(implementerRole.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__fallbackCopies.at(-1)))
+    .toContain("You are implementer. Read");
+
+  await page.evaluate(() => {
+    window.__clipboardMode = "missing";
+  });
+  const reviewerRole = page.locator(".roleSummary", { hasText: "Reviewer Agent" });
+  await reviewerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await reviewerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(reviewerRole.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__fallbackCopies.at(-1)))
+    .toContain("You are reviewer. Read");
+
+  await page.evaluate(() => {
+    window.__copyFallbackResult = false;
+  });
+  const testerRole = page.locator(".roleSummary", { hasText: "Test Agent" });
+  await testerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await testerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(testerRole.getByRole("button", { name: "Copy failed" })).toBeVisible();
+  await expect(testerRole.getByRole("button", { name: "Copied" })).toHaveCount(0);
+});
+
 test("Busy reveals a task-only current worker outside collapsed history", async ({ page }) => {
   const projectName = uniqueName("E2E Task-only Busy Agent Project");
   const projectKey = uniqueKey("TBA");

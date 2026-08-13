@@ -1,3 +1,5 @@
+import { countClaimableReadyTasks } from "./agentBootstrap.js";
+
 const STATUS_LABELS = {
   busy: "Busy",
   blocked: "Blocked",
@@ -22,7 +24,7 @@ const STATUS_RANK = {
   paused: 8
 };
 
-export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } = {}) {
+export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [], workItemTypes = [] } = {}) {
   const types = Array.isArray(agentSlots.types) ? agentSlots.types : [];
   const slots = Array.isArray(agentSlots.slots) ? agentSlots.slots : [];
   const typeById = new Map(types.map((type) => [type.id, type]));
@@ -92,7 +94,10 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     const visibleAgents = groupAgents.filter((agent) => agent.presenceFresh || agent.problem);
     const hiddenAgents = groupAgents.filter((agent) => !visibleAgents.includes(agent));
     const roleTypes = typeSummaries.filter((type) => type.role === role);
-    const queuedWork = tasks.filter((task) => task.role === role && ["ready", "backlog"].includes(task.status)).length;
+    const queuedWork = countClaimableReadyTasks(
+      tasks.filter((task) => task.role === role),
+      workItemTypes
+    );
     return {
       role,
       label: roleById.get(role)?.label || titleize(role),

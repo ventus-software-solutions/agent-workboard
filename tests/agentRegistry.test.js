@@ -8,6 +8,13 @@ const roles = [
   { id: "tester", label: "Test Agent" }
 ];
 
+const workItemTypes = [
+  { id: "epic", claimable: false },
+  { id: "story", claimable: false },
+  { id: "task", claimable: true },
+  { id: "bug", claimable: true }
+];
+
 const agentSlots = {
   types: [
     {
@@ -245,10 +252,38 @@ describe("agent registry derivation", () => {
           }
         ]
       },
-      tasks: [{ id: "task-ready", title: "Verify release", role: "tester", status: "ready", assignee: "" }]
+      tasks: [{ id: "task-ready", title: "Verify release", role: "tester", status: "ready", workItemType: "task", assignee: "" }],
+      workItemTypes
     });
 
     expect(registry.groups[0]).toMatchObject({ active: 0, queuedWork: 1, needsAttention: true });
+  });
+
+  it("does not warn for backlog or non-claimable ready containers", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "tester", label: "Test Agent" }],
+      agentSlots: {
+        types: [{ id: "tester", role: "tester", capacity: 1, slotIds: ["test-agent"] }],
+        slots: [
+          {
+            id: "test-agent",
+            typeId: "tester",
+            role: "tester",
+            withinCapacity: true,
+            available: true,
+            presenceFresh: false,
+            leaseFresh: false
+          }
+        ]
+      },
+      tasks: [
+        { id: "task-backlog", title: "Future test idea", role: "tester", status: "backlog", workItemType: "task" },
+        { id: "epic-ready", title: "Test program", role: "tester", status: "ready", workItemType: "epic" }
+      ],
+      workItemTypes
+    });
+
+    expect(registry.groups[0]).toMatchObject({ active: 0, queuedWork: 0, needsAttention: false });
   });
 
   it("keeps a task-only current worker visible as a stalled problem agent", () => {

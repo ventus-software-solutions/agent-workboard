@@ -35,6 +35,7 @@ import {
 import { api } from "./lib/api.js";
 import { buildAgentBootstrapPrompt, buildAgentRegistry } from "./lib/agentRegistry.js";
 import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
+import { copyTextToClipboard } from "./lib/clipboard.js";
 import { buildOperatorAttention } from "./lib/operatorAttention.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
@@ -567,8 +568,8 @@ export function App() {
   }, [capabilities]);
 
   const agentRegistry = useMemo(
-    () => buildAgentRegistry({ agentSlots, tasks: projectTasks, roles: meta.roles }),
-    [agentSlots, projectTasks, meta.roles]
+    () => buildAgentRegistry({ agentSlots, tasks: projectTasks, roles: meta.roles, workItemTypes: meta.workItemTypes }),
+    [agentSlots, projectTasks, meta.roles, meta.workItemTypes]
   );
 
   const operatorAttention = useMemo(
@@ -1646,6 +1647,7 @@ function RoleIcon({ role }) {
 function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, onUpdateAgentTypeCapacity, onReleaseAgent, updatingAgentId }) {
   const [promptRole, setPromptRole] = useState("");
   const [copiedRole, setCopiedRole] = useState("");
+  const [copyFailedRole, setCopyFailedRole] = useState("");
   const groups = registry.groups;
 
   if (groups.length === 0) {
@@ -1654,11 +1656,19 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
 
   async function copyPrompt(role) {
     const prompt = buildAgentBootstrapPrompt(role, window.location.origin);
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(prompt);
-    }
-    setCopiedRole(role);
-    window.setTimeout(() => setCopiedRole((current) => (current === role ? "" : current)), 1600);
+    const copied = await copyTextToClipboard(prompt);
+    setCopiedRole(copied ? role : "");
+    setCopyFailedRole(copied ? "" : role);
+    window.setTimeout(() => {
+      setCopiedRole((current) => (current === role ? "" : current));
+      setCopyFailedRole((current) => (current === role ? "" : current));
+    }, 1600);
+  }
+
+  function copyPromptLabel(role) {
+    if (copiedRole === role) return "Copied";
+    if (copyFailedRole === role) return "Copy failed";
+    return "Copy prompt";
   }
 
   return (
@@ -1707,7 +1717,7 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
               <code>{buildAgentBootstrapPrompt(group.role, window.location.origin)}</code>
               <button type="button" className="ghostButton" onClick={() => copyPrompt(group.role)}>
                 <ClipboardList size={15} />
-                <span>{copiedRole === group.role ? "Copied" : "Copy prompt"}</span>
+                <span aria-live="polite">{copyPromptLabel(group.role)}</span>
               </button>
             </div>
           )}
