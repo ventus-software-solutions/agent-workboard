@@ -651,6 +651,8 @@ export class TasksdirWorkboardPersistence {
         }
       );
     }
+
+    return { tasksdirDiagnostics: { unmappedValues: this.collectUnmappedValues() } };
   }
 
   restoreSidecar(task) {
@@ -673,14 +675,16 @@ export class TasksdirWorkboardPersistence {
     await mkdir(dirPath, { recursive: true });
     const doc = newTaskDoc(plan.nextView, plan.task.id);
     await atomicWrite(filePath, serializeTaskFile(doc));
-    await this.cacheEntry(folder, filePath, doc, plan.nextView, plan.task.id);
+    const entry = await this.cacheEntry(folder, filePath, doc, plan.nextView, plan.task.id);
+    applyViewToTask(plan.task, entry.view);
   }
 
   async patchTaskFile(plan) {
     const { entry } = plan;
     applyViewToDoc(entry.doc, entry.view, plan.nextView);
     await atomicWrite(entry.filePath, serializeTaskFile(entry.doc));
-    await this.cacheEntry(entry.folder, entry.filePath, entry.doc, plan.nextView, entry.id);
+    const cached = await this.cacheEntry(entry.folder, entry.filePath, entry.doc, plan.nextView, entry.id);
+    applyViewToTask(plan.task, cached.view);
   }
 
   resolveFallbackProjectId(opsData) {
@@ -692,10 +696,11 @@ export class TasksdirWorkboardPersistence {
 
   async cacheEntry(folder, filePath, doc, view, id) {
     const fileStat = await stat(filePath);
-    const { mapping } = mapFileTask(doc, folder, { fallbackTimestamp: view.createdAt });
-    const entry = { folder, filePath, fingerprint: `${fileStat.mtimeMs}:${fileStat.size}`, doc, view, mapping, id };
+    const { view: mappedView, mapping } = mapFileTask(doc, folder, { fallbackTimestamp: view.createdAt });
+    const entry = { folder, filePath, fingerprint: `${fileStat.mtimeMs}:${fileStat.size}`, doc, view: mappedView, mapping, id };
     this.entries.set(folder, entry);
     this.byId.set(id, entry);
+    return entry;
   }
 
   dropEntry(entry) {

@@ -109,7 +109,20 @@ export class ProjectDataSourcePersistence {
       };
 
       try {
-        await withDirectoryLock(this.projectLockPath(project), () => adapter.write(projectData));
+        const result = await withDirectoryLock(this.projectLockPath(project), () => adapter.write(projectData));
+        const readyDataSource = withHealth(project.dataSource, {
+          status: "ready",
+          message: "",
+          warnings: cloneArray(result?.tasksdirDiagnostics?.unmappedValues),
+          checkedAt: new Date().toISOString()
+        });
+        project.dataSource = readyDataSource;
+        const storedProject = data.projects.find((candidate) => candidate.id === project.id);
+        if (storedProject) storedProject.dataSource = clone(readyDataSource);
+        for (const canonicalTask of projectData.tasks) {
+          const storedTask = data.tasks.find((candidate) => candidate.id === canonicalTask.id);
+          if (storedTask) Object.assign(storedTask, clone(canonicalTask));
+        }
       } catch (error) {
         if ((error?.status || 500) >= 500) {
           const storedProject = data.projects.find((candidate) => candidate.id === project.id);

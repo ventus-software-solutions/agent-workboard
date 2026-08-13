@@ -231,6 +231,32 @@ describe("per-project tasks-directory persistence", () => {
         labels: ["unmapped-value"]
       })
     ]);
+
+    const futureTask = store.getTask("future-task");
+    const corrected = await store.updateTask(
+      futureTask.id,
+      {
+        status: "ready",
+        workItemType: "bug",
+        priority: "normal",
+        expectedRevision: futureTask.revision
+      },
+      "operator"
+    );
+    expect(corrected).toMatchObject({
+      status: "ready",
+      workItemType: "bug",
+      priority: "normal",
+      labels: []
+    });
+    expect(store.getProject(project.id).dataSource.health).toMatchObject({ status: "ready", warnings: [] });
+    await expect(readFile(path.join(taskDir, "task.md"), "utf8")).resolves.toMatch(
+      /status: ready[\s\S]*type: bug[\s\S]*priority: normal/
+    );
+
+    const refreshed = await store.refreshProjectDataSource(project.id);
+    expect(refreshed.dataSource.health).toMatchObject({ status: "ready", warnings: [] });
+    expect(store.getTask(futureTask.id).labels).toEqual([]);
   });
 
   it("keeps stale-file CAS failures inside the folder-backed project revision space", async () => {
