@@ -159,6 +159,49 @@ describe("per-project tasks-directory persistence", () => {
     expect(store.getTask(healthyTask.id).title).toBe("Sibling remains writable");
   });
 
+  it("isolates unsafe touch hints while a healthy folder project still lists collisions", async () => {
+    const unsafeTasksDir = path.join(dataDir, "unsafe-touch-tasks");
+    const healthyTasksDir = path.join(dataDir, "healthy-touch-tasks");
+    await mkdir(path.join(unsafeTasksDir, "unsafe"), { recursive: true });
+    await mkdir(path.join(healthyTasksDir, "healthy-glob"), { recursive: true });
+    await mkdir(path.join(healthyTasksDir, "healthy-file"), { recursive: true });
+    await writeFile(
+      path.join(unsafeTasksDir, "unsafe", "task.md"),
+      '---\nid: unsafe\ntitle: Unsafe touch\nstatus: ready\ntype: task\nboard:\n  touches: ["src/**"]\n---\nBody\n'
+    );
+    await writeFile(
+      path.join(healthyTasksDir, "healthy-glob", "task.md"),
+      '---\nid: healthy-glob\ntitle: Healthy glob\nstatus: ready\ntype: task\nboard:\n  touches: ["src/**"]\n---\nBody\n'
+    );
+    await writeFile(
+      path.join(healthyTasksDir, "healthy-file", "task.md"),
+      '---\nid: healthy-file\ntitle: Healthy file\nstatus: ready\ntype: task\nboard:\n  touches: ["src/App.jsx"]\n---\nBody\n'
+    );
+
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const unsafeProject = await store.createProject({ name: "Unsafe touch project", dataSource: { tasksDir: unsafeTasksDir } });
+    const healthyProject = await store.createProject({ name: "Healthy touch project", dataSource: { tasksDir: healthyTasksDir } });
+
+    await writeFile(
+      path.join(unsafeTasksDir, "unsafe", "task.md"),
+      '---\nid: unsafe\ntitle: Unsafe touch\nstatus: ready\ntype: task\nboard:\n  touches: ["../outside.js"]\n---\nBody\n'
+    );
+
+    const degraded = await store.refreshProjectDataSource(unsafeProject.id);
+    expect(degraded.dataSource.health).toMatchObject({
+      status: "error",
+      code: "INVALID_TASK_FILE",
+      message: expect.stringContaining("touches path hints must stay within the repository")
+    });
+    expect(store.listTasks({ projectId: unsafeProject.id })).toEqual([]);
+
+    const healthy = store.listTasks({ projectId: healthyProject.id });
+    expect(healthy).toHaveLength(2);
+    expect(healthy.map((task) => task.touches)).toEqual(expect.arrayContaining([["src/**"], ["src/App.jsx"]]));
+    expect(healthy.every((task) => task.collision.detected)).toBe(true);
+  });
+
   it("keeps stale-file CAS failures inside the folder-backed project revision space", async () => {
     const store = new WorkboardStore({ dataDir, storageMode: "json" });
     await store.init();

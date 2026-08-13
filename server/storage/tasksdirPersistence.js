@@ -20,6 +20,7 @@ import {
   setValue
 } from "./frontmatterTaskFile.js";
 import { normalizeVerificationTarget, verificationTargetRequiredError } from "./verificationTarget.js";
+import { normalizeTaskTouches } from "../../shared/taskTouches.js";
 
 const BOARD_STATUSES = new Set(["backlog", "ready", "in_progress", "review", "testing", "blocked", "done"]);
 const BOARD_TYPES = new Set(["epic", "story", "task", "subtask", "bug", "spike", "chore"]);
@@ -160,7 +161,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
   const priority = BOARD_PRIORITIES.has(rawPriority) ? rawPriority : null;
 
   const labels = [...new Set([...readLabels(getValue(doc, "labels")), ...extraLabels])];
-  const touches = readLabels(getBoardValue(doc, "touches"));
+  const touches = normalizeTaskTouches(readLabels(getBoardValue(doc, "touches")));
 
   const boardRevision = Number.parseInt(getBoardValue(doc, "revision"), 10);
   const revision = Number.isInteger(boardRevision) && boardRevision >= 1 ? boardRevision : 1;
@@ -271,7 +272,7 @@ export function fileViewFromBoardTask(task) {
     workItemType: asText(task.workItemType) || "task",
     priority: BOARD_PRIORITIES.has(task.priority) ? task.priority : null,
     labels: Array.isArray(task.labels) ? task.labels.map((item) => asText(item)).filter(Boolean) : [],
-    touches: Array.isArray(task.touches) ? task.touches.map((item) => asText(item)).filter(Boolean) : [],
+    touches: normalizeTaskTouches(task.touches),
     description: asText(task.description),
     role: asText(task.role) || DEFAULT_ROLE,
     revision: Number.isInteger(task.revision) && task.revision >= 1 ? task.revision : 1,
@@ -695,9 +696,18 @@ export class TasksdirWorkboardPersistence {
       if (!entry || entry.fingerprint !== fingerprint) {
         const raw = await readFile(filePath, "utf8");
         const doc = parseValidatedTaskFile(raw, filePath);
-        const { id, view } = mapFileTask(doc, folder, {
-          fallbackTimestamp: entry?.view.createdAt || nowIso()
-        });
+        let mapped;
+        try {
+          mapped = mapFileTask(doc, folder, {
+            fallbackTimestamp: entry?.view.createdAt || nowIso()
+          });
+        } catch (error) {
+          throw storageError(`Invalid task file ${filePath}: ${error.message}`, {
+            code: "INVALID_TASK_FILE",
+            filePath
+          });
+        }
+        const { id, view } = mapped;
         entry = { folder, filePath, fingerprint, doc, view, id };
         this.entries.set(folder, entry);
       }

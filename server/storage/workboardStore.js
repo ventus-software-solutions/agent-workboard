@@ -764,8 +764,9 @@ export class WorkboardStore {
         task.labels = [];
         migrated = true;
       }
-      if (!Array.isArray(task.touches)) {
-        task.touches = [];
+      const touches = normalizeTaskTouchesForMigration(task.touches);
+      if (JSON.stringify(task.touches) !== JSON.stringify(touches)) {
+        task.touches = touches;
         migrated = true;
       }
       const workItemType = normalizeWorkItemType(task.workItemType, { migrating: true });
@@ -4143,6 +4144,22 @@ function normalizeTaskRelationshipsForMigration(task) {
     blockedBy: normalizeRelationshipIdListForMigration(task.blockedBy),
     parentTaskId: normalizeOptionalTaskId(task.parentTaskId)
   };
+}
+
+function normalizeTaskTouchesForMigration(value) {
+  if (!Array.isArray(value)) return [];
+  const normalized = [];
+  for (const item of value) {
+    try {
+      for (const hint of normalizeTaskTouches([item])) {
+        if (!normalized.includes(hint)) normalized.push(hint);
+      }
+    } catch {
+      // Persisted state predating touches validation must not make the board
+      // unreadable. Keep valid hints and discard only unsafe legacy entries.
+    }
+  }
+  return normalized.slice(0, 24);
 }
 
 function normalizeRelationshipIdList(value, field) {

@@ -373,9 +373,21 @@ describe("WorkboardStore", () => {
     expect(updated.touches).toEqual(["src/App.jsx"]);
     expect(store.describeTask(store.getTask(first.id)).collision.detected).toBe(false);
 
+    const raw = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    raw.tasks.find((task) => task.id === first.id).touches = [
+      "./src/App.jsx",
+      "../outside.js",
+      "src/App.jsx"
+    ];
+    await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
+
     const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await reloaded.init();
     expect(reloaded.getTask(first.id).touches).toEqual(["src/App.jsx"]);
+    expect(() => reloaded.listTasks({ projectId: project.id })).not.toThrow();
+
+    const migrated = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    expect(migrated.tasks.find((task) => task.id === first.id).touches).toEqual(["src/App.jsx"]);
   });
 
   it("stores, validates, derives, and gates task relationships", async () => {
