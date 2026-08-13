@@ -2246,6 +2246,7 @@ function OperatorAttentionPanel({
 function attentionIcon(kind) {
   if (kind === "approval") return UserRoundCheck;
   if (kind === "merge") return GitMerge;
+  if (kind === "review_changes") return AlertCircle;
   if (kind === "blocker") return AlertCircle;
   if (kind === "stalled") return WifiOff;
   if (kind === "grooming") return ClipboardList;

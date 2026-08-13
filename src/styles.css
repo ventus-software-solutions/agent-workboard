@@ -2304,7 +2304,8 @@ button {
 }
 
 .attentionKind-blocker .operatorAttentionIcon,
-.attentionKind-stalled .operatorAttentionIcon {
+.attentionKind-stalled .operatorAttentionIcon,
+.attentionKind-review_changes .operatorAttentionIcon {
   background: #4b292e;
   color: #ffc0c8;
 }
