@@ -1187,6 +1187,9 @@ test("round-trips workspace, task, agent, and filter state through deep links an
   const projectName = uniqueName("E2E Deep Link Project");
   const projectKey = uniqueKey("URL");
   const taskTitle = uniqueName("Open this task from a deep link");
+  const secondProjectName = uniqueName("E2E Deep Link Second Project");
+  const secondProjectKey = uniqueKey("URB");
+  const secondTaskTitle = uniqueName("Open the second project task");
   const projectResult = await postJson(page, "/api/projects", { name: projectName, key: projectKey });
   const taskResult = await postJson(page, "/api/tasks", {
     projectId: projectResult.project.id,
@@ -1196,6 +1199,15 @@ test("round-trips workspace, task, agent, and filter state through deep links an
     role: "implementer",
     priority: "normal",
     assignee: "implementer-frontend-1"
+  });
+  const secondProjectResult = await postJson(page, "/api/projects", { name: secondProjectName, key: secondProjectKey });
+  const secondTaskResult = await postJson(page, "/api/tasks", {
+    projectId: secondProjectResult.project.id,
+    title: secondTaskTitle,
+    description: "Cross-project deep-link browser coverage.",
+    status: "ready",
+    role: "implementer",
+    priority: "normal"
   });
 
   await page.goto(baseURL);
@@ -1225,6 +1237,25 @@ test("round-trips workspace, task, agent, and filter state through deep links an
   await taskCard(page, taskTitle).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(taskResult.task.id);
   const directUrl = page.url();
+
+  await page.getByPlaceholder("Agent").fill("");
+  await page.getByPlaceholder("Search tasks").fill("");
+  await page.getByRole("button", { name: new RegExp(secondProjectName) }).click();
+  await expect(page.getByRole("heading", { name: secondProjectName })).toBeVisible();
+  await taskCard(page, secondTaskTitle).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(secondTaskResult.task.id);
+  await page.goBack();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("project")).toBe(projectResult.project.id);
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(taskResult.task.id);
+  await expect(page.locator(".drawer").getByRole("heading", { name: taskTitle })).toBeVisible();
+  await page.goForward();
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: secondProjectName })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("project")).toBe(secondProjectResult.project.id);
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(secondTaskResult.task.id);
+  await expect(page.locator(".drawer").getByRole("heading", { name: secondTaskTitle })).toBeVisible();
 
   const directPage = await page.context().newPage();
   await directPage.goto(directUrl);

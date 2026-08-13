@@ -186,6 +186,7 @@ export function App() {
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
   const [view, setView] = useState(initialRoute.view);
   const [workspaceTab, setWorkspaceTab] = useState(initialRoute.workspaceTab);
+  const [routeProjectHydrating, setRouteProjectHydrating] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
@@ -580,6 +581,7 @@ export function App() {
       setSelectedTaskId(route.taskId);
       setFilters(route.filters);
       if (nextProjectId !== selectedProjectId) {
+        setRouteProjectHydrating(true);
         setSelectedProjectId(nextProjectId);
       } else if (!loading && nextProjectId) {
         refreshTasks(route.filters).catch((nextError) => setError(nextError.message));
@@ -590,10 +592,10 @@ export function App() {
   }, [loading, projects, selectedProjectId]);
 
   useEffect(() => {
-    if (loading || !selectedTaskId) return;
+    if (loading || routeProjectHydrating || !selectedTaskId) return;
     if (projectTasks.some((task) => task.id === selectedTaskId)) return;
     selectTask("", "replace");
-  }, [loading, projectTasks, selectedTaskId]);
+  }, [loading, projectTasks, routeProjectHydrating, selectedTaskId]);
 
   useEffect(() => {
     if (!window.matchMedia) return undefined;
@@ -629,6 +631,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
+    let cancelled = false;
     Promise.all([
       refreshTasks(),
       refreshTalks(),
@@ -636,7 +639,14 @@ export function App() {
       refreshCapabilities(),
       refreshAgentSlots(),
       refreshIntegrationStatus()
-    ]).catch((nextError) => setError(nextError.message));
+    ])
+      .catch((nextError) => setError(nextError.message))
+      .finally(() => {
+        if (!cancelled) setRouteProjectHydrating(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProjectId]);
 
   useEffect(() => {
