@@ -553,7 +553,8 @@ export function App() {
   const capabilityStats = useMemo(() => {
     const live = capabilities.filter((capability) => capability.status === "live").length;
     const attention = capabilities.filter((capability) => ["broken", "planned", "in_progress", "review"].includes(capability.status)).length;
-    return { live, attention };
+    const drift = capabilities.filter((capability) => capability.statusDrift?.detected).length;
+    return { live, attention, drift };
   }, [capabilities]);
 
   const agentRegistry = useMemo(
@@ -830,7 +831,13 @@ export function App() {
             ) : view === "capabilities" ? (
               <>
                 <Stat icon={CheckCircle2} label="Live" value={capabilityStats.live} />
-                <Stat icon={AlertCircle} label="Attention" value={capabilityStats.attention} />
+                <Stat
+                  icon={AlertCircle}
+                  label="Attention"
+                  value={capabilityStats.attention}
+                  sublabel={`${capabilityStats.drift} status drift`}
+                  title="Capabilities needing attention, including non-live capabilities whose linked implementation tasks are already done."
+                />
               </>
             ) : view === "agents" ? (
               <>
@@ -2407,7 +2414,7 @@ function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
   return (
     <div className="capabilityRegistry">
       {capabilities.map((capability) => (
-        <article className="capabilityCard" key={capability.id}>
+        <article className={`capabilityCard ${capability.statusDrift?.detected ? "hasStatusDrift" : ""}`} key={capability.id}>
           <div className="capabilityHeader">
             <div>
               <div className="capabilityTitleRow">
@@ -2422,8 +2429,22 @@ function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
 
           <div className="capabilityMeta">
             <span>{capability.ownerAgent || capability.ownerRole || "No owner"}</span>
-            {capability.lastVerifiedAt && <span>Verified {new Date(capability.lastVerifiedAt).toLocaleString()}</span>}
+            <span>
+              {capability.lastVerifiedAt
+                ? `Verified ${new Date(capability.lastVerifiedAt).toLocaleString()}`
+                : "Never verified"}
+            </span>
           </div>
+
+          {capability.statusDrift?.detected && (
+            <div className="capabilityDriftWarning" role="status" aria-label="Capability status drift">
+              <AlertCircle size={17} />
+              <div>
+                <strong>Status may be stale</strong>
+                <span>{capability.statusDrift.summary}</span>
+              </div>
+            </div>
+          )}
 
           {capability.surfaces.length > 0 && (
             <div className="tagRow">
@@ -2437,9 +2458,20 @@ function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
             <div className="capabilityLinkedTasks">
               <div className="sectionLabel">Linked Tasks</div>
               {capability.relatedTaskIds.map((taskId) => (
-                <button key={taskId} className="ghostButton" onClick={() => onOpenTask(taskId)}>
+                <button
+                  key={taskId}
+                  className="ghostButton capabilityTaskLink"
+                  aria-label={`Open linked task ${taskTitle(tasks, taskId)}`}
+                  onClick={() => onOpenTask(taskId)}
+                >
                   <Link2 size={14} />
-                  <span>{taskTitle(tasks, taskId)}</span>
+                  <span className="capabilityTaskIdentity">
+                    <span>{taskTitle(tasks, taskId)}</span>
+                    <small>{taskId}</small>
+                  </span>
+                  <span className={`capabilityTaskStatus ${linkedTaskStatus(capability, tasks, taskId)}`}>
+                    {linkedTaskStatus(capability, tasks, taskId)}
+                  </span>
                 </button>
               ))}
             </div>
@@ -2478,8 +2510,15 @@ function CapabilityRegistry({ capabilities, tasks, onOpenTask }) {
 }
 
 function taskTitle(tasks, taskId) {
+  const linkedTask = tasks.find((candidate) => candidate.id === taskId);
+  return linkedTask?.title || taskId;
+}
+
+function linkedTaskStatus(capability, tasks, taskId) {
+  const describedTask = capability.linkedTasks?.find((candidate) => candidate.id === taskId);
+  if (describedTask) return describedTask.status;
   const task = tasks.find((candidate) => candidate.id === taskId);
-  return task?.title || taskId;
+  return task?.status || "missing";
 }
 
 function capabilityName(capabilities, capabilityId) {

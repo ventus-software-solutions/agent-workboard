@@ -1916,6 +1916,11 @@ button {
   background: #1b2026;
 }
 
+.capabilityCard.hasStatusDrift {
+  border-color: #8a672b;
+  box-shadow: inset 3px 0 0 #d8a643;
+}
+
 .capabilityHeader {
   display: grid;
   gap: 10px;
@@ -2010,6 +2015,32 @@ button {
   font-size: 13px;
 }
 
+.capabilityDriftWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #765b2b;
+  border-radius: 7px;
+  background: #342919;
+  color: #f7d897;
+}
+
+.capabilityDriftWarning div {
+  display: grid;
+  gap: 3px;
+}
+
+.capabilityDriftWarning strong,
+.capabilityDriftWarning span {
+  line-height: 1.35;
+}
+
+.capabilityDriftWarning span {
+  color: #e2c99a;
+  font-size: 13px;
+}
+
 .tagRow,
 .capabilityLinkedTasks {
   display: flex;
@@ -2025,6 +2056,45 @@ button {
 
 .capabilityLinkedTasks {
   align-items: flex-start;
+}
+
+.capabilityTaskLink {
+  max-width: 100%;
+}
+
+.capabilityTaskIdentity {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.capabilityTaskIdentity > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.capabilityTaskIdentity small {
+  color: #8f9ca9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.capabilityTaskStatus {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #303944;
+  color: #cbd5df;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.capabilityTaskStatus.done {
+  background: #203b31;
+  color: #bdf2d1;
+}
+
+.capabilityTaskStatus.missing {
+  background: #4a242b;
+  color: #ffb1bf;
 }
 
 .capabilityNotes {

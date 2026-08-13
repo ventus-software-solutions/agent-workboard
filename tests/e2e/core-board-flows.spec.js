@@ -1146,6 +1146,74 @@ test("lets the operator resolve a pending approval from the board", async ({ pag
   await expect(page.locator(".kanbanColumn", { hasText: "Review" }).locator(".taskCard", { hasText: taskTitle })).toBeVisible();
 });
 
+test("flags capability status drift and opens its completed linked task", async ({ page }) => {
+  const projectName = uniqueName("E2E Capability Drift Project");
+  const projectKey = uniqueKey("CDR");
+  const taskTitle = uniqueName("Ship capability behavior");
+  const capabilityName = uniqueName("Capability awaiting status update");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: taskTitle,
+      status: "review",
+      role: "implementer",
+      assignee: "implementer-agent"
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+  const { task } = await taskResponse.json();
+
+  const capabilityResponse = await page.request.post(`${apiBaseURL}/api/capabilities`, {
+    data: {
+      id: `cap_e2e_drift_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      projectId: project.id,
+      name: capabilityName,
+      status: "planned",
+      ownerRole: "implementer",
+      relatedTaskIds: [task.id]
+    }
+  });
+  expect(capabilityResponse.ok()).toBe(true);
+  const { capability } = await capabilityResponse.json();
+
+  const completionResponse = await page.request.patch(`${apiBaseURL}/api/tasks/${task.id}`, {
+    data: {
+      status: "done",
+      actor: "reviewer-agent",
+      completion: {
+        completionType: "merged",
+        commitSha: "e2e1234",
+        capabilityIds: [capability.id]
+      }
+    }
+  });
+  expect(completionResponse.ok()).toBe(true);
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+
+  const card = page.locator(".capabilityCard", { hasText: capabilityName });
+  await expect(card).toBeVisible();
+  await expect(card.getByLabel("Capability status drift")).toContainText("Status may be stale");
+  await expect(card.getByLabel("Capability status drift")).toContainText("still planned");
+  await expect(card.locator(".capabilityTaskStatus")).toHaveText("done");
+  await expect(card.locator(".capabilityTaskIdentity small")).toHaveText(task.id);
+
+  const linkedTaskButton = card.getByRole("button", { name: `Open linked task ${taskTitle}` });
+  await linkedTaskButton.focus();
+  await linkedTaskButton.press("Enter");
+  await expect(page.locator(".drawer")).toContainText(taskTitle);
+});
+
 async function createTask(page, { title, role, priority, assignee, labels, description, workItemType = "" }) {
   await closeDrawerIfOpen(page);
   await page.getByRole("button", { name: "Task", exact: true }).click();

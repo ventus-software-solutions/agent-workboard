@@ -1084,17 +1084,6 @@ describe("Agent Workboard API", () => {
         expect(response.body.capabilities).toHaveLength(1);
       });
 
-    await request(app)
-      .patch(`/api/capabilities/${created.body.capability.id}`)
-      .send({ status: "live", verificationEvidence: ["API test verified registry CRUD."] })
-      .expect(200)
-      .expect((response) => {
-        expect(response.body.capability).toMatchObject({
-          status: "live",
-          live: true
-        });
-      });
-
     const completed = await request(app)
       .patch(`/api/tasks/${task.id}`)
       .send({
@@ -1109,6 +1098,45 @@ describe("Agent Workboard API", () => {
       .expect(200);
 
     expect(completed.body.task.completion.capabilityIds).toEqual([created.body.capability.id]);
+
+    await request(app)
+      .get(`/api/capabilities/${created.body.capability.id}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          status: "planned",
+          linkedTasks: [
+            {
+              id: task.id,
+              title: "Publish capability endpoint",
+              status: "done",
+              completionType: "merged",
+              missing: false
+            }
+          ],
+          statusDrift: {
+            detected: true,
+            reason: "completed_task_non_live",
+            completedTaskIds: [task.id]
+          }
+        });
+        expect(response.body.capability.statusDrift.summary).toContain("still planned");
+      });
+
+    await request(app)
+      .patch(`/api/capabilities/${created.body.capability.id}`)
+      .send({ status: "live", verificationEvidence: ["API test verified registry CRUD."] })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          status: "live",
+          live: true,
+          statusDrift: {
+            detected: false,
+            completedTaskIds: [task.id]
+          }
+        });
+      });
   });
 
   it("supports operator approval requests from in-progress tasks, queue listing, and approval decisions", async () => {
