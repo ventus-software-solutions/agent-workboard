@@ -76,6 +76,8 @@ The HTTP API, Docker runtime, and MCP server default to `WORKBOARD_STORAGE=sqlit
 
 SQLite persistence uses the `sqlite3` command instead of a native npm dependency. The Docker image installs it. Local development machines need `sqlite3` on `PATH`, or `SQLITE3_BIN` can point at a specific binary.
 
+`WORKBOARD_STORAGE=tasksdir` (in `server/storage/tasksdirPersistence.js`, frontmatter handling in `server/storage/frontmatterTaskFile.js`) persists work items as one folder per task (`task.md` with YAML frontmatter and a markdown body) in the git-tracked directory named by `WORKBOARD_TASKS_DIR`. Mutations rewrite only the affected task file atomically, unknown frontmatter keys and the body round-trip byte-for-byte, external edits are re-read on mtime/size change and reconciled key-by-key (a same-key conflict rejects the write as a 409 stale error), and the adapter never runs git. Non-work-item state — agent slots, presence, talks, capabilities, projects, plus a per-task sidecar for comments, attachments, activity, and approval history — stays in the ops snapshot store (`WORKBOARD_OPS_STORAGE`, default `json`) under `WORKBOARD_DATA_DIR`.
+
 The store serializes writes through `save()` and uses a filesystem lock for claim paths that need stale-safe read-modify-write behavior across processes. Keep workflow rules in `WorkboardStore`; storage adapters should only load and save board state.
 
 Change this layer when you need to:

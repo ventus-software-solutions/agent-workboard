@@ -487,11 +487,20 @@ export class WorkboardStore {
     dataDir,
     storageMode = process.env.WORKBOARD_STORAGE || "json",
     sqliteCommand = process.env.SQLITE3_BIN,
-    defaultProjectKey = process.env.WORKBOARD_DEFAULT_PROJECT_KEY
+    defaultProjectKey = process.env.WORKBOARD_DEFAULT_PROJECT_KEY,
+    tasksDir = process.env.WORKBOARD_TASKS_DIR,
+    opsStorageMode = process.env.WORKBOARD_OPS_STORAGE
   }) {
     this.dataDir = dataDir;
     this.defaultProjectKey = defaultProjectKey ? slugify(defaultProjectKey, "") : "";
-    this.persistence = createWorkboardPersistence({ dataDir, storageMode, sqliteCommand });
+    this.persistence = createWorkboardPersistence({
+      dataDir,
+      storageMode,
+      sqliteCommand,
+      tasksDir,
+      opsStorageMode,
+      defaultProjectKey: this.defaultProjectKey
+    });
     this.dbPath = this.persistence.path;
     this.lockPath = this.persistence.lockPath;
     this.uploadsDir = path.join(dataDir, "uploads");
@@ -508,6 +517,10 @@ export class WorkboardStore {
       this.data = persistedData;
     } else {
       this.data = (await this.persistence.readLegacyData?.()) || defaultData();
+      if (this.persistence.workItemsExternal) {
+        // Work items live in the external tasks dir; never seed demo tasks into it.
+        this.data.tasks = [];
+      }
       needsSave = true;
     }
 
@@ -517,14 +530,22 @@ export class WorkboardStore {
 
     if (needsSave) {
       await this.save();
+      if (this.persistence.workItemsExternal && !persistedData) {
+        // First boot composes work items from the tasks dir once ops state exists.
+        this.data = await this.readData();
+        this.migrateData();
+      }
     }
   }
 
   async save() {
-    this.writeQueue = this.writeQueue.then(async () => {
+    // A rejected write (e.g. a tasksdir stale-file 409) must fail its caller
+    // without poisoning the queue for every later save.
+    const attempt = this.writeQueue.then(async () => {
       await this.writeData(this.data);
     });
-    return this.writeQueue;
+    this.writeQueue = attempt.catch(() => {});
+    return attempt;
   }
 
   async readData() {
