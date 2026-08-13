@@ -25,6 +25,7 @@ const KNOWN_BOARD_KEYS = new Set([
   "createdAt",
   "updatedAt",
   "completion",
+  "verificationTarget",
   "blocker",
   "dependsOn",
   "blockedBy",

@@ -6,6 +6,7 @@ import { TasksdirWorkboardPersistence } from "./tasksdirPersistence.js";
 import { canonicalizeProjectDataSource, pathIdentity } from "./projectDataSource.js";
 
 const PROJECT_SIDECARS_KEY = "projectTasksdirSidecars";
+const PROJECT_METADATA_KEY = "projectTasksdirMetadata";
 const LOCK_RETRY_MS = 20;
 const LOCK_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 30_000;
@@ -29,6 +30,7 @@ export class ProjectDataSourcePersistence {
   async read() {
     const data = await this.ops.read();
     if (!data) return null;
+    this.needsMigrationSave = false;
 
     const projects = cloneArray(data.projects);
     for (const project of projects) {
@@ -37,13 +39,15 @@ export class ProjectDataSourcePersistence {
     const externalProjectIds = new Set(projects.filter(hasTasksDirectory).map((project) => project.id));
     const tasks = cloneArray(data.tasks).filter((task) => !externalProjectIds.has(task.projectId));
     const sidecarsByProject = objectValue(data[PROJECT_SIDECARS_KEY]);
+    const metadataByProject = objectValue(data[PROJECT_METADATA_KEY]);
 
     for (const project of projects) {
       if (!hasTasksDirectory(project)) continue;
-      const bridge = this.bridgeFor(project, data, sidecarsByProject[project.id]);
+      const bridge = this.bridgeFor(project, data, sidecarsByProject[project.id], metadataByProject[project.id]);
       const adapter = this.adapterFor(project, bridge);
       try {
         const projectData = await adapter.read();
+        if (adapter.needsMigrationSave) this.needsMigrationSave = true;
         const projectTasks = cloneArray(projectData?.tasks);
         const occupiedIds = new Set(tasks.map((task) => task.id));
         const collisions = projectTasks.map((task) => task.id).filter((taskId) => occupiedIds.has(taskId));
@@ -73,7 +77,8 @@ export class ProjectDataSourcePersistence {
       ...data,
       projects,
       tasks,
-      [PROJECT_SIDECARS_KEY]: clone(sidecarsByProject)
+      [PROJECT_SIDECARS_KEY]: clone(sidecarsByProject),
+      [PROJECT_METADATA_KEY]: clone(metadataByProject)
     };
   }
 
@@ -82,15 +87,18 @@ export class ProjectDataSourcePersistence {
     const externalProjects = projects.filter(hasTasksDirectory);
     const externalProjectIds = new Set(externalProjects.map((project) => project.id));
     const previousSidecars = objectValue(data[PROJECT_SIDECARS_KEY]);
+    const previousMetadata = objectValue(data[PROJECT_METADATA_KEY]);
     const nextSidecars = {};
+    const nextMetadata = {};
 
     for (const project of externalProjects) {
       if (project.dataSource?.health?.status === "error") {
         nextSidecars[project.id] = clone(objectValue(previousSidecars[project.id]));
+        nextMetadata[project.id] = clone(objectValue(previousMetadata[project.id]));
         continue;
       }
 
-      const bridge = this.bridgeFor(project, data, previousSidecars[project.id]);
+      const bridge = this.bridgeFor(project, data, previousSidecars[project.id], previousMetadata[project.id]);
       const adapter = this.adapterFor(project, bridge);
       const projectData = {
         ...data,
@@ -115,21 +123,27 @@ export class ProjectDataSourcePersistence {
           await this.ops.write({
             ...data,
             tasks: cloneArray(data.tasks).filter((task) => !externalProjectIds.has(task.projectId)),
-            [PROJECT_SIDECARS_KEY]: clone(previousSidecars)
+            [PROJECT_SIDECARS_KEY]: clone(previousSidecars),
+            [PROJECT_METADATA_KEY]: clone(previousMetadata)
           });
         }
         throw projectStorageError(project, error);
       }
       nextSidecars[project.id] = clone(objectValue(bridge.snapshot?.tasksdirSidecars));
+      nextMetadata[project.id] = {
+        verificationTargetGateVersion: bridge.snapshot?.tasksdirVerificationTargetGateVersion === 1 ? 1 : 0
+      };
     }
 
     const opsData = {
       ...data,
       projects,
       tasks: cloneArray(data.tasks).filter((task) => !externalProjectIds.has(task.projectId)),
-      [PROJECT_SIDECARS_KEY]: nextSidecars
+      [PROJECT_SIDECARS_KEY]: nextSidecars,
+      [PROJECT_METADATA_KEY]: nextMetadata
     };
     await this.ops.write(opsData);
+    this.needsMigrationSave = false;
   }
 
   adapterFor(project, bridge) {
@@ -143,18 +157,20 @@ export class ProjectDataSourcePersistence {
     const adapter = new TasksdirWorkboardPersistence({
       tasksDir,
       ops: bridge,
-      defaultProjectKey: project.key || this.defaultProjectKey
+      defaultProjectKey: project.key || this.defaultProjectKey,
+      deferInitialGate: true
     });
     this.adapters.set(project.id, { tasksDir, tasksDirKey: pathIdentity(tasksDir), adapter, bridge });
     return adapter;
   }
 
-  bridgeFor(project, data, sidecars) {
+  bridgeFor(project, data, sidecars, metadata) {
     const snapshot = {
       ...data,
       projects: [project],
       tasks: [],
-      tasksdirSidecars: clone(objectValue(sidecars))
+      tasksdirSidecars: clone(objectValue(sidecars)),
+      tasksdirVerificationTargetGateVersion: objectValue(metadata).verificationTargetGateVersion
     };
     const cached = this.adapters.get(project.id);
     if (cached?.tasksDirKey === pathIdentity(project.dataSource.tasksDir)) {

@@ -19,6 +19,7 @@ import {
   setBoardValue,
   setValue
 } from "./frontmatterTaskFile.js";
+import { normalizeVerificationTarget, verificationTargetRequiredError } from "./verificationTarget.js";
 
 const BOARD_STATUSES = new Set(["backlog", "ready", "in_progress", "review", "testing", "blocked", "done"]);
 const BOARD_TYPES = new Set(["epic", "story", "task", "subtask", "bug", "spike", "chore"]);
@@ -39,6 +40,7 @@ const VIEW_KEYS = [
   "createdAt",
   "updatedAt",
   "completion",
+  "verificationTarget",
   "blocker",
   "dependsOn",
   "blockedBy",
@@ -88,6 +90,24 @@ function readLabels(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseVerificationTarget(value) {
+  try {
+    return normalizeVerificationTarget(value);
+  } catch {
+    return null;
+  }
+}
+
+function invalidExternalVerificationTarget(taskId, filePath) {
+  const error = verificationTargetRequiredError();
+  return Object.assign(error, {
+    status: 409,
+    reason: "verification_target_required",
+    taskId,
+    filePath
+  });
 }
 
 // D: legacy mapping table from the task spec. Read-side only — files are never
@@ -175,6 +195,9 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     completion = null;
   }
 
+  const boardVerificationTarget = getBoardValue(doc, "verificationTarget");
+  const verificationTarget = status === "testing" ? parseVerificationTarget(boardVerificationTarget) : null;
+
   const boardBlocker = getBoardValue(doc, "blocker");
   const blocker = status === "blocked" && boardBlocker && typeof boardBlocker === "object" ? boardBlocker : null;
 
@@ -195,6 +218,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     createdAt,
     updatedAt,
     completion,
+    verificationTarget,
     blocker,
     dependsOn,
     blockedBy,
@@ -250,6 +274,10 @@ export function fileViewFromBoardTask(task) {
     createdAt: asText(task.createdAt),
     updatedAt: asText(task.updatedAt),
     completion: task.completion && typeof task.completion === "object" ? JSON.parse(JSON.stringify(task.completion)) : null,
+    verificationTarget:
+      task.verificationTarget && typeof task.verificationTarget === "object"
+        ? JSON.parse(JSON.stringify(task.verificationTarget))
+        : null,
     blocker: task.blocker && typeof task.blocker === "object" ? JSON.parse(JSON.stringify(task.blocker)) : null,
     dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn.map(String) : [],
     blockedBy: Array.isArray(task.blockedBy) ? task.blockedBy.map(String) : [],
@@ -280,6 +308,7 @@ export function boardTaskFromView(id, view, projectId) {
     childTaskIds: [],
     dependencyStatus: emptyDependencyStatus(),
     completion: view.completion ? { ...view.completion } : null,
+    verificationTarget: view.verificationTarget ? { ...view.verificationTarget } : null,
     blocker: view.blocker ? { ...view.blocker } : null,
     approvalHistory: [],
     reviewedBy: "",
@@ -307,6 +336,7 @@ function applyViewToTask(task, view) {
   task.createdAt = view.createdAt;
   task.updatedAt = view.updatedAt;
   task.completion = view.completion ? { ...view.completion } : null;
+  task.verificationTarget = view.verificationTarget ? { ...view.verificationTarget } : null;
   task.blocker = view.blocker ? { ...view.blocker } : null;
   task.dependsOn = [...view.dependsOn];
   task.blockedBy = [...view.blockedBy];
@@ -334,6 +364,9 @@ export function applyViewToDoc(doc, baseView, nextView) {
   if (!sameValue(baseView.updatedAt, nextView.updatedAt)) setBoardValue(doc, "updatedAt", nextView.updatedAt);
   if (!sameValue(baseView.completion, nextView.completion)) {
     setBoardValue(doc, "completion", nextView.completion ? JSON.stringify(nextView.completion) : "");
+  }
+  if (!sameValue(baseView.verificationTarget, nextView.verificationTarget)) {
+    setBoardValue(doc, "verificationTarget", nextView.verificationTarget ? JSON.stringify(nextView.verificationTarget) : "");
   }
   if (!sameValue(baseView.blocker, nextView.blocker)) {
     setBoardValue(doc, "blocker", nextView.blocker ? JSON.stringify(nextView.blocker) : "");
@@ -391,7 +424,7 @@ function newTaskDoc(view, id, newline = "\n") {
 }
 
 export class TasksdirWorkboardPersistence {
-  constructor({ tasksDir, ops, defaultProjectKey = "" }) {
+  constructor({ tasksDir, ops, defaultProjectKey = "", deferInitialGate = false }) {
     const normalized = asText(tasksDir);
     if (!normalized) {
       throw storageError(
@@ -408,12 +441,18 @@ export class TasksdirWorkboardPersistence {
     this.entries = new Map(); // folder -> { folder, filePath, fingerprint, doc, view, id }
     this.byId = new Map(); // task id -> entry
     this.sidecarCache = new Map(); // task id -> last persisted sidecar (rollback base for stale rejects)
+    this.initialCompositionPending = Boolean(deferInitialGate);
+    this.needsMigrationSave = false;
   }
 
   async read() {
     const opsData = await this.ops.read();
     await this.scanTaskFiles();
-    if (!opsData) return null;
+    if (!opsData) {
+      this.initialCompositionPending = this.byId.size > 0;
+      this.needsMigrationSave = false;
+      return null;
+    }
 
     if (Array.isArray(opsData.tasks) && opsData.tasks.length > 0 && !process.env.WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS) {
       throw storageError(
@@ -425,10 +464,16 @@ export class TasksdirWorkboardPersistence {
       opsData.tasksdirSidecars && typeof opsData.tasksdirSidecars === "object" && !Array.isArray(opsData.tasksdirSidecars)
         ? opsData.tasksdirSidecars
         : {};
+    const verificationTargetMigration = opsData.tasksdirVerificationTargetGateVersion !== 1;
+    this.needsMigrationSave = verificationTargetMigration;
+    this.initialCompositionPending = verificationTargetMigration && this.byId.size > 0;
     const fallbackProjectId = this.resolveFallbackProjectId(opsData);
     const tasks = [];
     this.sidecarCache = new Map();
     for (const entry of this.byId.values()) {
+      if (!verificationTargetMigration && entry.view.status === "testing" && !entry.view.verificationTarget) {
+        throw invalidExternalVerificationTarget(entry.id, entry.filePath);
+      }
       const sidecar = sidecars[entry.id] || {};
       const task = boardTaskFromView(entry.id, entry.view, asText(sidecar.projectId) || fallbackProjectId);
       task.comments = cloneArray(sidecar.comments);
@@ -480,6 +525,25 @@ export class TasksdirWorkboardPersistence {
       const freshDoc = parseValidatedTaskFile(raw, plan.entry.filePath);
       const baseView = plan.entry.view;
       const { view: freshView } = mapFileTask(freshDoc, plan.entry.folder, { fallbackTimestamp: baseView.createdAt });
+      if (freshView.status === "testing" && !freshView.verificationTarget) {
+        applyViewToTask(plan.task, baseView);
+        this.restoreSidecar(plan.task);
+        plan.task.activity.unshift({
+          id: eventId(),
+          actor: "tasksdir",
+          type: "update.rejected",
+          message: "Rejected external testing transition without a verification target.",
+          createdAt: nowIso()
+        });
+        plan.type = "conflict";
+        conflicted.push({
+          taskId: plan.task.id,
+          conflicts: ["verificationTarget"],
+          reason: "verification_target_required",
+          message: `Task ${plan.task.id} entered testing externally without a verification target.`
+        });
+        continue;
+      }
       const { merged, conflicts } = threeWayMergeViews(baseView, plan.nextView, freshView);
       const externalKeys = VIEW_KEYS.filter((key) => !sameValue(baseView[key], freshView[key]));
       plan.entry.doc = freshDoc;
@@ -523,17 +587,22 @@ export class TasksdirWorkboardPersistence {
       else if (plan.type === "patch") await this.patchTaskFile(plan);
     }
 
-    const opsData = buildOpsData(data);
+    const establishVerificationTargetGate = !(this.initialCompositionPending && tasks.length === 0);
+    const opsData = buildOpsData(data, { establishVerificationTargetGate });
     await this.ops.write(opsData);
+    if (establishVerificationTargetGate) {
+      this.initialCompositionPending = false;
+      this.needsMigrationSave = false;
+    }
     this.sidecarCache = new Map(Object.entries(opsData.tasksdirSidecars).map(([id, sidecar]) => [id, clone(sidecar)]));
 
     if (conflicted.length > 0) {
       const first = conflicted[0];
       throw Object.assign(
-        new Error(`Task ${first.taskId} was modified externally in the tasks directory. Reload and retry.`),
+        new Error(first.message || `Task ${first.taskId} was modified externally in the tasks directory. Reload and retry.`),
         {
           status: 409,
-          reason: "stale_task_file",
+          reason: first.reason || "stale_task_file",
           taskId: first.taskId,
           conflicts: first.conflicts,
           conflictedTaskIds: conflicted.map((item) => item.taskId)
@@ -645,13 +714,16 @@ export class TasksdirWorkboardPersistence {
   }
 }
 
-function buildOpsData(data) {
+function buildOpsData(data, { establishVerificationTargetGate = true } = {}) {
   const sidecars = {};
   for (const task of Array.isArray(data.tasks) ? data.tasks : []) {
     sidecars[task.id] = sidecarOfTask(task);
   }
   const { tasks, tasksdirSidecars, ...rest } = data;
-  return { ...rest, tasks: [], tasksdirSidecars: sidecars };
+  const result = { ...rest, tasks: [], tasksdirSidecars: sidecars };
+  if (establishVerificationTargetGate) result.tasksdirVerificationTargetGateVersion = 1;
+  else delete result.tasksdirVerificationTargetGateVersion;
+  return result;
 }
 
 function sidecarOfTask(task) {

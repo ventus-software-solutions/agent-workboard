@@ -1,3 +1,5 @@
+import { normalizeVerificationTarget } from "./verificationTarget.js";
+
 export const PROJECT_BACKUP_PACKAGE_TYPE = "agent-workboard.project-backup";
 export const PROJECT_BACKUP_PACKAGE_VERSION = 1;
 
@@ -104,11 +106,19 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     ? source.completion
     : source.completionRecord;
   const hasCompletion = completionInput !== undefined && completionInput !== null;
+  const hasVerificationTarget = source.verificationTarget !== undefined && source.verificationTarget !== null;
   if (status === "done" && !hasCompletion) {
     throw httpError("Done tasks in a project backup require a completion record.", 400, { field: "tasks.completion", index, taskId });
   }
   if (status !== "done" && hasCompletion) {
     throw httpError("Completion records can only be imported on done tasks.", 400, { field: "tasks.completion", index, taskId });
+  }
+  if (status !== "testing" && hasVerificationTarget) {
+    throw httpError("Verification targets can only be imported on testing tasks.", 400, {
+      field: "tasks.verificationTarget",
+      index,
+      taskId
+    });
   }
 
   const createdAt = normalizeText(source.createdAt) || helpers.now();
@@ -135,6 +145,10 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     reviewVerdict: normalizeReviewVerdict(source.reviewVerdict),
     labels: normalizeTaskLabels(source.labels),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,
+    verificationTarget:
+      status === "testing"
+        ? normalizeVerificationTarget(source.verificationTarget, { migrating: !hasVerificationTarget })
+        : null,
     createdAt,
     updatedAt: normalizeText(source.updatedAt) || createdAt,
     revision: isValidTaskRevision(source.revision) ? source.revision : 1,

@@ -385,6 +385,13 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         status: z.string(),
         pullRequestUrl: z.string().optional(),
         branch: z.string().optional(),
+        verificationTarget: z
+          .object({
+            commitSha: z.string().optional(),
+            mergedTo: z.string().optional(),
+            artifactNote: z.string().optional()
+          })
+          .optional(),
         completion: z
           .object({
             completionType: z.string(),
@@ -446,7 +453,14 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         decision: z.enum(["approved", "rejected", "changes_requested"]),
         decidedBy: z.string().optional(),
         note: z.string().optional(),
-        nextStatus: z.string().optional()
+        nextStatus: z.string().optional(),
+        verificationTarget: z
+          .object({
+            commitSha: z.string().optional(),
+            mergedTo: z.string().optional(),
+            artifactNote: z.string().optional()
+          })
+          .optional()
       }
     },
     async (input) => asText({ task: await store.decideOperatorApproval(input.taskId, input) })

@@ -63,6 +63,32 @@ describe("frontmatter round-trip", () => {
   });
 });
 
+describe("testing verification targets", () => {
+  it("round-trips the structured target through board frontmatter", () => {
+    const doc = docFromFrontmatter([
+      "id: verify-target",
+      'title: "Verify deployed build"',
+      "owner: unassigned",
+      "status: review",
+      "type: task",
+      "priority: high",
+      "labels:"
+    ]);
+    const { view } = mapFileTask(doc, "verify-target");
+    const verificationTarget = {
+      commitSha: "abc123",
+      mergedTo: "main",
+      artifactNote: "https://deploy.example.test"
+    };
+
+    applyViewToDoc(doc, view, { ...view, status: "testing", verificationTarget });
+    const reparsed = mapFileTask(parseTaskFile(serializeTaskFile(doc)), "verify-target").view;
+
+    expect(reparsed.status).toBe("testing");
+    expect(reparsed.verificationTarget).toEqual(verificationTarget);
+  });
+});
+
 describe("legacy status/type/priority mapping", () => {
   const base = ["id: t1", 'title: "T"', "owner: unassigned", "priority: unset", "labels:"];
 

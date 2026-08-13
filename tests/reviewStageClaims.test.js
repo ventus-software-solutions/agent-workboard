@@ -69,6 +69,7 @@ describe("review and testing stage claims", () => {
       projectId: project.id,
       title: "Do not self-test this implementation",
       status: "testing",
+      verificationTarget: { artifactNote: "Self-test fixture deployment" },
       assignee: "test-agent"
     });
 
@@ -162,6 +163,7 @@ describe("review and testing stage claims", () => {
       projectId: project.id,
       title: "Cannot bypass testing resolution",
       status: "testing",
+      verificationTarget: { commitSha: "abc123", mergedTo: "main" },
       assignee: "implementer-agent"
     });
     await store.claimTaskStage(testingTask.id, { agentId: "test-agent", expectedStatus: "testing" });
@@ -185,6 +187,7 @@ describe("review and testing stage claims", () => {
       projectId: project.id,
       title: "Verify running system",
       status: "testing",
+      verificationTarget: { artifactNote: "Running-system fixture" },
       assignee: "implementer-agent"
     });
     const next = store.getNextTaskForAgent("test-agent", { projectId: project.id });

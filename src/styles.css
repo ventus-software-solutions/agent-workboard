@@ -2476,6 +2476,7 @@ button {
 .attachmentPill,
 .completionPill,
 .stageOwnerPill,
+.verificationTargetPill,
 .changesRequestedPill,
 .reviewApprovedPill,
 .approvalPill {
@@ -2523,6 +2524,16 @@ button {
   color: #9dd9ff;
   border-color: rgba(88, 176, 230, 0.45);
   background: rgba(29, 91, 128, 0.2);
+}
+
+.verificationTargetPill {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid rgb(143 121 222 / 48%);
+  background: rgb(79 58 145 / 28%);
+  color: #d9ceff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .changesRequestedPill {
@@ -3342,6 +3353,29 @@ button {
   border: 1px solid #335146;
   border-radius: 8px;
   background: #1c2a25;
+}
+
+.verificationTargetRecord {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid rgb(143 121 222 / 48%);
+  border-radius: 8px;
+  background: rgb(79 58 145 / 18%);
+}
+
+.verificationTargetRecord p {
+  margin: 0;
+  color: #c8c2dc;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.verificationTargetRecord code {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #e7e0ff;
 }
 
 .completionRecord.needsAudit {

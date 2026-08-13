@@ -42,4 +42,16 @@ describe("MCP tool handlers", () => {
       branch: "implementer/task-links"
     });
   });
+
+  it("includes a verification target when moving to testing", () => {
+    const verificationTarget = { commitSha: "abc1234", mergedTo: "main" };
+
+    expect(
+      buildUpdateTaskStatusPatch({
+        taskId: "task_123",
+        status: "testing",
+        verificationTarget
+      })
+    ).toEqual({ status: "testing", verificationTarget });
+  });
 });

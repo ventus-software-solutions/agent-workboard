@@ -1076,6 +1076,11 @@ export function App() {
                 setError("Add a completion record in the task details before marking done.");
                 return;
               }
+              if (status === "testing" && task.status !== "testing") {
+                setSelectedTaskId(task.id);
+                setError("Add a verification target in the task details before moving to testing.");
+                return;
+              }
               mutate(() => api.updateTask(task.id, { status, actor: "operator-ui" }));
             }}
           />
@@ -2889,6 +2894,11 @@ function TaskCard({
         {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
         {task.reviewedBy && <span className="stageOwnerPill">Review: {task.reviewedBy}</span>}
         {task.testedBy && <span className="stageOwnerPill">Testing: {task.testedBy}</span>}
+        {task.status === "testing" && task.verificationTarget && (
+          <span className="verificationTargetPill" title={verificationTargetTitle(task.verificationTarget)}>
+            Verify {verificationTargetLabel(task.verificationTarget)}
+          </span>
+        )}
         {task.reviewVerdict?.decision === "request_changes" && (
           <span className="changesRequestedPill">Changes requested ({task.reviewVerdict.findingsCount})</span>
         )}
@@ -2951,6 +2961,8 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
   const [liveUpdateNotice, setLiveUpdateNotice] = useState(false);
   const [showCompletionForm, setShowCompletionForm] = useState(false);
   const [completionDraft, setCompletionDraft] = useState(() => defaultCompletionDraft(task));
+  const [showVerificationForm, setShowVerificationForm] = useState(false);
+  const [verificationDraft, setVerificationDraft] = useState(() => defaultVerificationDraft(task));
   const taskVersionRef = useRef({ id: task.id, revision: task.revision, updatedAt: task.updatedAt });
   const relationshipOptions = tasks.filter((candidate) => candidate.projectId === task.projectId && candidate.id !== task.id);
 
@@ -2968,7 +2980,9 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
 
     setDraft(taskDraftFromTask(task));
     setCompletionDraft(defaultCompletionDraft(task));
+    setVerificationDraft(defaultVerificationDraft(task));
     setShowCompletionForm(false);
+    setShowVerificationForm(false);
     setDrawerError(null);
     setRetryAction(null);
     setHasDraftEdits(false);
@@ -3003,7 +3017,9 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
       await onReload();
       setDraft(taskDraftFromTask(task));
       setCompletionDraft(defaultCompletionDraft(task));
+      setVerificationDraft(defaultVerificationDraft(task));
       setShowCompletionForm(false);
+      setShowVerificationForm(false);
       setHasDraftEdits(false);
       setDrawerError(null);
       setLiveUpdateNotice(false);
@@ -3023,6 +3039,17 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
       });
       setHasDraftEdits(false);
       setLiveUpdateNotice(false);
+    });
+
+  const saveVerificationTarget = () =>
+    runDrawerMutation(async () => {
+      await api.updateTask(task.id, {
+        status: "testing",
+        actor: "operator-ui",
+        expectedRevision: task.revision,
+        verificationTarget: verificationTargetPayload(verificationDraft)
+      });
+      setShowVerificationForm(false);
     });
 
   return (
@@ -3047,6 +3074,10 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
             onClick={() => {
               if (status.id === "done" && task.status !== "done") {
                 setShowCompletionForm(true);
+                return;
+              }
+              if (status.id === "testing" && task.status !== "testing") {
+                setShowVerificationForm(true);
                 return;
               }
               runDrawerMutation(() => api.updateTask(task.id, { status: status.id, actor: "operator-ui" }));
@@ -3101,6 +3132,15 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
           )}
         </div>
       )}
+
+      <VerificationTargetPanel
+        task={task}
+        draft={verificationDraft}
+        setDraft={setVerificationDraft}
+        showForm={showVerificationForm}
+        setShowForm={setShowVerificationForm}
+        onSave={saveVerificationTarget}
+      />
 
       <CompletionPanel
         task={task}
@@ -3358,10 +3398,15 @@ function OperatorApprovalPanel({ task, statuses, onDecide }) {
   const defaultNextStatus = statusOptions.some((status) => status.id === blocker?.nextStatus) ? blocker.nextStatus : "review";
   const [nextStatus, setNextStatus] = useState(defaultNextStatus);
   const [note, setNote] = useState("");
+  const [verificationDraft, setVerificationDraft] = useState({ commitSha: "", mergedTo: "", artifactNote: "" });
+  const hasVerificationTarget = Boolean(
+    verificationDraft.commitSha.trim() || verificationDraft.mergedTo.trim() || verificationDraft.artifactNote.trim()
+  );
 
   useEffect(() => {
     setNextStatus(defaultNextStatus);
     setNote("");
+    setVerificationDraft({ commitSha: "", mergedTo: "", artifactNote: "" });
   }, [task.id, blocker?.requestedAt, defaultNextStatus]);
 
   if (!isPendingOperatorApproval(task)) {
@@ -3403,11 +3448,45 @@ function OperatorApprovalPanel({ task, statuses, onDecide }) {
           Decision note
           <textarea value={note} onChange={(event) => setNote(event.target.value)} />
         </label>
+        {nextStatus === "testing" && (
+          <>
+            <label>
+              Verification commit SHA
+              <input
+                value={verificationDraft.commitSha}
+                onChange={(event) => setVerificationDraft({ ...verificationDraft, commitSha: event.target.value })}
+              />
+            </label>
+            <label>
+              Verification merged to
+              <input
+                value={verificationDraft.mergedTo}
+                onChange={(event) => setVerificationDraft({ ...verificationDraft, mergedTo: event.target.value })}
+              />
+            </label>
+            <label className="wide">
+              Verification artifact note
+              <textarea
+                value={verificationDraft.artifactNote}
+                onChange={(event) => setVerificationDraft({ ...verificationDraft, artifactNote: event.target.value })}
+              />
+            </label>
+          </>
+        )}
       </div>
       <div className="approvalActions">
         <button
           className="primaryButton"
-          onClick={() => onDecide({ decision: "approved", decidedBy: "operator-ui", note, nextStatus })}
+          onClick={() =>
+            onDecide({
+              decision: "approved",
+              decidedBy: "operator-ui",
+              note,
+              nextStatus,
+              ...(nextStatus === "testing" ? { verificationTarget: verificationTargetPayload(verificationDraft) } : {})
+            })
+          }
+          disabled={nextStatus === "testing" && !hasVerificationTarget}
         >
           <CheckCircle2 size={16} />
           <span>Approve</span>
@@ -3493,6 +3572,89 @@ function labelsFromText(value) {
     .split(",")
     .map((label) => label.trim())
     .filter(Boolean);
+}
+
+function defaultVerificationDraft(task) {
+  return {
+    commitSha: task.verificationTarget?.commitSha || task.reviewVerdict?.commitSha || "",
+    mergedTo: task.verificationTarget?.mergedTo || "",
+    artifactNote: task.verificationTarget?.artifactNote || ""
+  };
+}
+
+function verificationTargetPayload(draft) {
+  return {
+    commitSha: draft.commitSha.trim(),
+    mergedTo: draft.mergedTo.trim(),
+    artifactNote: draft.artifactNote.trim()
+  };
+}
+
+function verificationTargetLabel(target) {
+  return target.commitSha || target.mergedTo || target.artifactNote || "target";
+}
+
+function verificationTargetTitle(target) {
+  return [
+    target.commitSha ? `Commit: ${target.commitSha}` : "",
+    target.mergedTo ? `Merged to: ${target.mergedTo}` : "",
+    target.artifactNote ? `Artifact: ${target.artifactNote}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function VerificationTargetPanel({ task, draft, setDraft, showForm, setShowForm, onSave }) {
+  const target = task.verificationTarget;
+  const canSave = draft.commitSha.trim() || draft.mergedTo.trim() || draft.artifactNote.trim();
+
+  return (
+    <div className="drawerSection verificationTargetSection">
+      <div className="sectionTitle">
+        <TestTube2 size={17} />
+        <span>Verification Target</span>
+      </div>
+      {task.status === "testing" && target && !showForm ? (
+        <div className="verificationTargetRecord">
+          {target.commitSha && <code>{target.commitSha}</code>}
+          {target.mergedTo && <p>Merged to: {target.mergedTo}</p>}
+          {target.artifactNote && <p>{target.artifactNote}</p>}
+          <button className="ghostButton" onClick={() => setShowForm(true)}>
+            Edit target
+          </button>
+        </div>
+      ) : showForm ? (
+        <div className="formGrid verificationTargetForm">
+          <p className="wide muted">Name the running artifact a tester must verify. At least one field is required.</p>
+          <label>
+            Commit SHA
+            <input value={draft.commitSha} onChange={(event) => setDraft({ ...draft, commitSha: event.target.value })} />
+          </label>
+          <label>
+            Merged To
+            <input value={draft.mergedTo} onChange={(event) => setDraft({ ...draft, mergedTo: event.target.value })} placeholder="main or deployment" />
+          </label>
+          <label className="wide">
+            Artifact Note
+            <textarea
+              value={draft.artifactNote}
+              onChange={(event) => setDraft({ ...draft, artifactNote: event.target.value })}
+              placeholder="URL, image tag, environment, or manual verification target"
+            />
+          </label>
+          <button className="primaryButton wide" onClick={onSave} disabled={!canSave}>
+            <TestTube2 size={17} />
+            <span>{task.status === "testing" ? "Save Target" : "Move to Testing"}</span>
+          </button>
+        </div>
+      ) : (
+        <button className="ghostButton wide" onClick={() => setShowForm(true)}>
+          <TestTube2 size={17} />
+          <span>Prepare Testing Target</span>
+        </button>
+      )}
+    </div>
+  );
 }
 
 function defaultCompletionDraft(task) {

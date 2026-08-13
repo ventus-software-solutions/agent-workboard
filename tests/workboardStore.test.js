@@ -2828,6 +2828,7 @@ describe("WorkboardStore", () => {
         title: `${status} signal task`,
         status,
         role: "implementer",
+        ...(status === "testing" ? { verificationTarget: { artifactNote: "Signal fixture deployment" } } : {}),
         ...(status === "done"
           ? {
               completion: {
