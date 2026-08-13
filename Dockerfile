@@ -19,8 +19,10 @@ COPY package*.json ./
 RUN apk add --no-cache git sqlite \
   && git config --system --add safe.directory /workspace
 RUN npm ci --omit=dev
+# Keep the runtime image allow-listed and small; CI boots it to catch omitted runtime directories.
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
+COPY --from=build /app/shared ./shared
 
 VOLUME ["/data", "/workspace"]
 EXPOSE 8080
