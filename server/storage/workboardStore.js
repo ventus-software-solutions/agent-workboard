@@ -909,13 +909,33 @@ export class WorkboardStore {
       this.ensureAgentSlotSchema();
 
       const stats = this.agentSlotTaskStats();
+      const requestedRole = normalizeText(input.role);
+      const validRoles = [
+        ...new Set(this.data.agentTypes.filter((type) => type.capacity > 0).map((type) => type.role))
+      ].sort();
+      if (requestedRole && !validRoles.includes(requestedRole)) {
+        throw httpError(
+          `Agent role ${requestedRole} is not configured. Valid roles: ${validRoles.join(", ")}.`,
+          400,
+          { role: requestedRole, validRoles }
+        );
+      }
+
       const requestedSlot = requestedAgentId
         ? this.data.agentSlots.find((slot) => slot.id === requestedAgentId)
         : null;
-      const typeId = requestedSlot?.typeId || this.inferAgentTypeId(input);
       if (requestedAgentId && !requestedSlot) {
         throw httpError(`Agent slot ${requestedAgentId} is not configured.`, 404, { agentId: requestedAgentId });
       }
+
+      // Resolve a persisted identity across the whole registry before inferring a
+      // type. Otherwise a token-only restart can be assigned a free general slot
+      // before the original specialized slot is considered.
+      const identitySlot = reclaimToken
+        ? this.data.agentSlots.find((slot) => slot.lease?.identityToken === reclaimToken)
+        : null;
+      const targetSlot = requestedSlot || identitySlot;
+      const typeId = targetSlot?.typeId || this.inferAgentTypeId(input);
 
       const primaryType = this.data.agentTypes.find((candidate) => candidate.id === typeId);
       if (!primaryType) {
@@ -928,7 +948,7 @@ export class WorkboardStore {
       // or an explicit agentId is honored as-is - no spill.
       const explicitPreferred = Boolean(normalizeText(input.preferredType || input.agentType || input.type || ""));
       const candidateTypes =
-        explicitPreferred || requestedSlot
+        explicitPreferred || targetSlot
           ? [primaryType]
           : this.orderAgentSlotTypesForRole(primaryType, currentTime, stats);
 
@@ -940,7 +960,7 @@ export class WorkboardStore {
 
       for (const candidateType of candidateTypes) {
         const pick = this.pickAgentSlotForType(candidateType, currentTime, stats, {
-          requestedSlot: requestedSlot?.typeId === candidateType.id ? requestedSlot : null,
+          requestedSlot: targetSlot?.typeId === candidateType.id ? targetSlot : null,
           reclaimToken,
           runtimeId
         });

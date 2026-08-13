@@ -1694,6 +1694,23 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("rejects bootstrap roles without a configured slot pool", async () => {
+    for (const role of ["researcher", "arbitrary-unknown-role"]) {
+      const response = await request(app)
+        .post("/api/bootstrap")
+        .send({ role, runtimeId: `api-invalid-role-${role}` })
+        .expect(400);
+
+      expect(response.body.error).toMatchObject({
+        message: expect.stringMatching(/configured.*valid roles/i),
+        details: {
+          role,
+          validRoles: ["implementer", "pm", "reviewer", "tester"]
+        }
+      });
+    }
+  });
+
   it("returns active project context from bootstrap, agent docs, and slot registry", async () => {
     store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", defaultProjectKey: "TEAM" });
     await store.init();

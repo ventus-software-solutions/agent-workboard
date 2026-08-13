@@ -1773,6 +1773,35 @@ describe("WorkboardStore", () => {
     expect(store.getTask(task.id)).toMatchObject({ status: "in_progress", assignee: acquired.agentId });
   });
 
+  it("resolves identity tokens globally before inferred type selection", async () => {
+    const project = await store.createProject({ name: "Token-only Restart Project" });
+    const acquired = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "token-only-first-runtime",
+      now: "2026-06-01T10:00:00.000Z"
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Resume token-only restart",
+      status: "in_progress",
+      assignee: acquired.agentId
+    });
+
+    const restarted = await store.acquireAgentSlot({
+      identityToken: acquired.identityToken,
+      runtimeId: "token-only-second-runtime",
+      now: "2026-06-01T15:00:00.000Z"
+    });
+
+    expect(restarted).toMatchObject({
+      agentId: "implementer-backend-1",
+      typeId: "implementer-backend",
+      identityToken: acquired.identityToken,
+      reclaimed: true,
+      reclaimedViaIdentity: true
+    });
+  });
+
   it("refuses identity reclaim over a fresh heartbeating lease (live duplicate)", async () => {
     const acquired = await store.acquireAgentSlot({
       preferredType: "implementer-backend",
@@ -1791,6 +1820,25 @@ describe("WorkboardStore", () => {
       status: 409,
       message: expect.stringContaining("already active")
     });
+  });
+
+  it("rejects requested roles without a configured slot pool", async () => {
+    for (const role of ["researcher", "arbitrary-unknown-role"]) {
+      await expect(
+        store.acquireAgentSlot({
+          role,
+          runtimeId: `invalid-role-${role}`,
+          now: "2026-06-12T15:00:00.000Z"
+        })
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/configured.*valid roles/i),
+        details: {
+          role,
+          validRoles: ["implementer", "pm", "reviewer", "tester"]
+        }
+      });
+    }
   });
 
   it("spills over to sibling types of the same role (ordered by free seats) for inferred acquires", async () => {
