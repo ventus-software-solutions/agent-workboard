@@ -246,11 +246,31 @@ function isClaimable(task) {
 }
 
 function downstreamImpact(task, tasks = []) {
-  const direct = new Set(task.blocks || []);
+  const tasksById = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+  const downstreamByTaskId = new Map(tasks.map((candidate) => [candidate.id, new Set(candidate.blocks || [])]));
+
   for (const candidate of tasks) {
-    if ((candidate.dependsOn || []).includes(task.id) || (candidate.blockedBy || []).includes(task.id)) direct.add(candidate.id);
+    for (const prerequisiteId of [...(candidate.dependsOn || []), ...(candidate.blockedBy || [])]) {
+      const downstreamIds = downstreamByTaskId.get(prerequisiteId) || new Set();
+      downstreamIds.add(candidate.id);
+      downstreamByTaskId.set(prerequisiteId, downstreamIds);
+    }
   }
-  return 1 + direct.size;
+
+  const reachable = new Set([task.id]);
+  const pending = [...(downstreamByTaskId.get(task.id) || task.blocks || [])];
+  while (pending.length > 0) {
+    const downstreamTaskId = pending.pop();
+    if (!downstreamTaskId || reachable.has(downstreamTaskId)) continue;
+    reachable.add(downstreamTaskId);
+
+    if (!tasksById.has(downstreamTaskId)) continue;
+    for (const nextTaskId of downstreamByTaskId.get(downstreamTaskId) || []) {
+      if (!reachable.has(nextTaskId)) pending.push(nextTaskId);
+    }
+  }
+
+  return reachable.size;
 }
 
 function groomingReasons(task, now) {

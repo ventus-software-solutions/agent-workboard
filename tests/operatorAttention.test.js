@@ -102,6 +102,35 @@ describe("operator attention selector", () => {
     expect(result.actions.filter((action) => action.id === "role-gap:tester")).toHaveLength(0);
   });
 
+  it("orders by unique transitive downstream reach and handles relationship cycles", () => {
+    const blocked = (id, blocks) =>
+      task(id, {
+        status: "blocked",
+        blocks,
+        blocker: { type: "dependency", reason: "Waiting for prerequisite work" }
+      });
+    const done = (id, blocks = []) => task(id, { status: "done", blocks });
+    const tasks = [
+      blocked("shallow-wide", ["shallow-leaf-1", "shallow-leaf-2"]),
+      done("shallow-leaf-1"),
+      done("shallow-leaf-2"),
+      blocked("deep-chain", ["deep-1"]),
+      done("deep-1", ["deep-2"]),
+      done("deep-2", ["deep-3"]),
+      done("deep-3"),
+      blocked("cycle-a", ["cycle-b"]),
+      done("cycle-b", ["cycle-a"])
+    ];
+
+    const result = buildOperatorAttention({
+      tasks,
+      agentRegistry: registry(activeAgent("implementer-1", "implementer"))
+    });
+
+    expect(result.actions.map((action) => action.taskId)).toEqual(["deep-chain", "shallow-wide", "cycle-a"]);
+    expect(result.actions.map((action) => action.downstreamCount)).toEqual([4, 3, 2]);
+  });
+
   it.each([
     ["backlog", "role_gap"],
     ["ready", "role_gap"],
