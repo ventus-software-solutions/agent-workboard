@@ -1771,10 +1771,15 @@ export class WorkboardStore {
         if (!q) return true;
         return capabilitySearchText(capability).includes(q);
       })
-      .sort((a, b) => capabilityStatusRank(a.status) - capabilityStatusRank(b.status) || b.updatedAt.localeCompare(a.updatedAt));
+      .sort((a, b) => capabilityStatusRank(a.status) - capabilityStatusRank(b.status) || b.updatedAt.localeCompare(a.updatedAt))
+      .map((capability) => this.describeCapability(capability));
   }
 
   getCapability(capabilityId) {
+    return this.describeCapability(this.getCapabilityRecord(capabilityId));
+  }
+
+  getCapabilityRecord(capabilityId) {
     this.ensureDefaultCapabilities();
     const idValue = normalizeCapabilityId(capabilityId);
     const capability = this.data.capabilities.find((candidate) => candidate.id === idValue);
@@ -1782,6 +1787,51 @@ export class WorkboardStore {
       throw Object.assign(new Error("Capability not found."), { status: 404 });
     }
     return capability;
+  }
+
+  describeCapability(capability) {
+    const linkedTasks = capability.relatedTaskIds.map((taskId) => {
+      const task = this.data.tasks.find((candidate) => candidate.id === taskId);
+      if (!task) {
+        return {
+          id: taskId,
+          title: taskId,
+          status: "missing",
+          completionType: "",
+          updatedAt: "",
+          missing: true
+        };
+      }
+      return {
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        completionType: task.completion?.completionType || "",
+        updatedAt: task.updatedAt,
+        missing: false
+      };
+    });
+    // Done is a workflow terminal state, not proof that implementation shipped.
+    // Only explicit merged completion evidence can make a non-live capability look stale.
+    const completedTaskIds = linkedTasks
+      .filter((task) => task.status === "done" && task.completionType === "merged")
+      .map((task) => task.id);
+    const driftEligible = ["proposed", "planned", "in_progress", "review"].includes(capability.status);
+    const driftDetected = driftEligible && completedTaskIds.length > 0;
+    const taskWord = completedTaskIds.length === 1 ? "task is" : "tasks are";
+
+    return {
+      ...capability,
+      linkedTasks,
+      statusDrift: {
+        detected: driftDetected,
+        reason: driftDetected ? "completed_task_non_live" : "",
+        completedTaskIds,
+        summary: driftDetected
+          ? `${completedTaskIds.length} linked ${taskWord} merged, but this capability is still ${capability.status}.`
+          : ""
+      }
+    };
   }
 
   async createCapability(input) {
@@ -1799,12 +1849,12 @@ export class WorkboardStore {
 
     this.data.capabilities.push(capability);
     await this.save();
-    return capability;
+    return this.describeCapability(capability);
   }
 
   async updateCapability(capabilityId, patch) {
     this.ensureDefaultCapabilities();
-    const capability = this.getCapability(capabilityId);
+    const capability = this.getCapabilityRecord(capabilityId);
     const nextCapability = this.normalizeCapabilityInput(patch, {
       existing: capability,
       createdAt: capability.createdAt,
@@ -1812,12 +1862,12 @@ export class WorkboardStore {
     });
 
     if (JSON.stringify(capability) === JSON.stringify(nextCapability)) {
-      return capability;
+      return this.describeCapability(capability);
     }
 
     Object.assign(capability, nextCapability);
     await this.save();
-    return capability;
+    return this.describeCapability(capability);
   }
 
   getBoardState(filters = {}) {
@@ -3279,7 +3329,7 @@ export class WorkboardStore {
 
   validateCompletionCapabilityLinks(completion, taskProjectId) {
     for (const capabilityId of completion.capabilityIds || []) {
-      const capability = this.getCapability(capabilityId);
+      const capability = this.getCapabilityRecord(capabilityId);
       if (capability.projectId && capability.projectId !== taskProjectId) {
         throw Object.assign(new Error("Completion capability links must stay within the task project."), { status: 400 });
       }
@@ -3289,7 +3339,7 @@ export class WorkboardStore {
   applyCompletionCapabilityLinks(task) {
     const completedAt = task.completion?.completedAt || task.updatedAt || now();
     for (const capabilityId of task.completion?.capabilityIds || []) {
-      const capability = this.getCapability(capabilityId);
+      const capability = this.getCapabilityRecord(capabilityId);
       if (!capability.projectId) {
         capability.projectId = task.projectId;
       }

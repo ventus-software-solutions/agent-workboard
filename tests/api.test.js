@@ -1084,17 +1084,6 @@ describe("Agent Workboard API", () => {
         expect(response.body.capabilities).toHaveLength(1);
       });
 
-    await request(app)
-      .patch(`/api/capabilities/${created.body.capability.id}`)
-      .send({ status: "live", verificationEvidence: ["API test verified registry CRUD."] })
-      .expect(200)
-      .expect((response) => {
-        expect(response.body.capability).toMatchObject({
-          status: "live",
-          live: true
-        });
-      });
-
     const completed = await request(app)
       .patch(`/api/tasks/${task.id}`)
       .send({
@@ -1109,6 +1098,95 @@ describe("Agent Workboard API", () => {
       .expect(200);
 
     expect(completed.body.task.completion.capabilityIds).toEqual([created.body.capability.id]);
+
+    await request(app)
+      .get(`/api/capabilities/${created.body.capability.id}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          status: "planned",
+          linkedTasks: [
+            {
+              id: task.id,
+              title: "Publish capability endpoint",
+              status: "done",
+              completionType: "merged",
+              missing: false
+            }
+          ],
+          statusDrift: {
+            detected: true,
+            reason: "completed_task_non_live",
+            completedTaskIds: [task.id]
+          }
+        });
+        expect(response.body.capability.statusDrift.summary).toContain("still planned");
+      });
+
+    await request(app)
+      .patch(`/api/capabilities/${created.body.capability.id}`)
+      .send({ status: "live", verificationEvidence: ["API test verified registry CRUD."] })
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability).toMatchObject({
+          status: "live",
+          live: true,
+          statusDrift: {
+            detected: false,
+            completedTaskIds: [task.id]
+          }
+        });
+      });
+  });
+
+  it("keeps non-shipping done tasks visible without reporting capability status drift", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Non-shipping Capability API" }).expect(201)).body.project;
+    const tasks = [];
+    for (const completionType of ["no-code", "audit-only", "superseded"]) {
+      const response = await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: `${completionType} closure`,
+          status: "done",
+          role: "implementer",
+          completion: {
+            completionType,
+            notes: `${completionType} completed without shipping implementation.`
+          }
+        })
+        .expect(201);
+      tasks.push(response.body.task);
+    }
+
+    const capability = await request(app)
+      .post("/api/capabilities")
+      .send({
+        id: "cap_non_shipping_api",
+        projectId: project.id,
+        name: "Non-shipping completion boundary",
+        summary: "Only merged completion evidence indicates shipped implementation.",
+        status: "planned",
+        relatedTaskIds: tasks.map((task) => task.id)
+      })
+      .expect(201);
+
+    await request(app)
+      .get(`/api/capabilities/${capability.body.capability.id}`)
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.capability.linkedTasks.map((task) => task.completionType)).toEqual([
+          "no-code",
+          "audit-only",
+          "superseded"
+        ]);
+        expect(response.body.capability.statusDrift).toEqual({
+          detected: false,
+          reason: "",
+          completedTaskIds: [],
+          summary: ""
+        });
+      });
   });
 
   it("supports operator approval requests from in-progress tasks, queue listing, and approval decisions", async () => {

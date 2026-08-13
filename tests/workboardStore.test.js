@@ -667,6 +667,41 @@ describe("WorkboardStore", () => {
     expect(store.getCapability(capability.id).verificationEvidence.join("\n")).toContain(task.id);
   });
 
+  it.each(["no-code", "audit-only", "superseded"])(
+    "does not report capability status drift for a done %s task",
+    async (completionType) => {
+      const project = await store.createProject({ name: `Non-shipping ${completionType} Capability Project` });
+      const task = await store.createTask({
+        projectId: project.id,
+        title: `Close ${completionType} work without shipping implementation`,
+        status: "done",
+        role: "implementer",
+        completion: {
+          completionType,
+          notes: `${completionType} work intentionally shipped no implementation.`
+        }
+      });
+      const capability = await store.createCapability({
+        id: `cap_non_shipping_${completionType.replace(/-/g, "_")}`,
+        projectId: project.id,
+        name: `Non-shipping ${completionType} capability`,
+        summary: "A planned capability must not drift without merged implementation evidence.",
+        status: "planned",
+        relatedTaskIds: [task.id]
+      });
+
+      expect(store.getCapability(capability.id)).toMatchObject({
+        linkedTasks: [{ id: task.id, status: "done", completionType }],
+        statusDrift: {
+          detected: false,
+          reason: "",
+          completedTaskIds: [],
+          summary: ""
+        }
+      });
+    }
+  );
+
   it("records status changes, comments, and persisted data", async () => {
     const project = await store.createProject({ name: "Release Train" });
     const task = await store.createTask({ projectId: project.id, title: "Ship notes", role: "pm" });
