@@ -227,10 +227,62 @@ prunable gitdir file points to non-existent location
   });
 
   it("uses WORKBOARD_REPO_DIR for deployed cleanup scans", () => {
-    expect(readWorktreeCleanupConfig({ WORKBOARD_REPO_DIR: "/workspace", WORKBOARD_CLEANUP_MUTATIONS: "false" }, "/app")).toMatchObject({
+    expect(
+      readWorktreeCleanupConfig(
+        {
+          WORKBOARD_REPO_DIR: "/workspace",
+          WORKBOARD_WORKTREE_PREFIX: "vergleichshai-worktree",
+          WORKBOARD_CLEANUP_MUTATIONS: "false"
+        },
+        "/app"
+      )
+    ).toMatchObject({
       repoRoot: "/workspace",
       mainRef: "main",
+      worktreePrefix: "vergleichshai-worktree",
       mutationsEnabled: false
+    });
+  });
+
+  it("matches task evidence by a configured-prefix worktree directory name", () => {
+    const report = buildWorktreeCleanupReport({
+      tasks: [
+        task({
+          id: "task_custom_prefix",
+          comments: [
+            {
+              id: "comment_custom_prefix",
+              author: "implementer-01",
+              body: "Worktree: vergleichshai-worktree-implementer-01-config",
+              createdAt: "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        })
+      ],
+      worktrees: [
+        {
+          path: "C:/tmp/vergleichshai-worktree-implementer-01-config",
+          branch: "implementer-01/config",
+          head: "abc1234",
+          dirty: false,
+          untrackedCount: 0,
+          aheadMain: 0,
+          behindMain: 0,
+          mergedIntoMain: true
+        }
+      ],
+      mainRef: "main",
+      worktreePrefix: "vergleichshai-worktree",
+      generatedAt: "2026-06-01T12:00:00.000Z"
+    });
+
+    expect(report).toMatchObject({
+      worktreePrefix: "vergleichshai-worktree",
+      counts: { cleanupReady: 1 }
+    });
+    expect(report.items[0]).toMatchObject({
+      status: "cleanup-ready",
+      task: { id: "task_custom_prefix" }
     });
   });
 

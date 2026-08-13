@@ -48,7 +48,7 @@ git worktree add ../wt-agent-workboard-implementer-01-claim-api -b implementer-0
 cd ../wt-agent-workboard-implementer-01-claim-api
 ```
 
-Worktrees are created as siblings of the repository checkout by default. Set `WORKBOARD_WORKTREE_ROOT` to put them elsewhere; the API, MCP tools, and generated agent docs all emit worktree commands rooted at that path.
+Worktrees are created as siblings of the repository checkout by default. Set `WORKBOARD_WORKTREE_ROOT` to put them elsewhere, and set `WORKBOARD_WORKTREE_PREFIX` to replace the default `wt-agent-workboard` directory-name prefix. The API, MCP tools, generated agent docs, and cleanup matching use these settings together.
 
 ## Review And Merge
 

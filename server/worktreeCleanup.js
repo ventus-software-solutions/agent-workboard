@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { worktreePrefix as resolveWorktreePrefix } from "./worktreePaths.js";
 
 const execFileAsync = promisify(execFile);
 const ACTIVE_STATUSES = new Set(["in_progress", "review", "testing", "blocked"]);
@@ -23,6 +24,7 @@ export async function createWorktreeCleanupReport({
     tasks: store.listTasks(),
     worktrees: snapshot.worktrees,
     mainRef: resolvedMainRef,
+    worktreePrefix: config.worktreePrefix,
     generatedAt: new Date().toISOString()
   });
   return {
@@ -31,6 +33,7 @@ export async function createWorktreeCleanupReport({
       mutationsEnabled: config.mutationsEnabled,
       mode: config.mutationsEnabled ? "enabled" : "report-only",
       repoRoot: resolvedRepoRoot,
+      worktreePrefix: config.worktreePrefix,
       reason: config.mutationsEnabled
         ? ""
         : "Cleanup actions are disabled because WORKBOARD_CLEANUP_MUTATIONS is false."
@@ -42,6 +45,7 @@ export function readWorktreeCleanupConfig(env = runtimeEnv(), fallbackRepoRoot =
   return {
     repoRoot: normalizeText(env.WORKBOARD_REPO_DIR) || fallbackRepoRoot,
     mainRef: normalizeText(env.WORKBOARD_CLEANUP_MAIN_REF) || "main",
+    worktreePrefix: resolveWorktreePrefix(env),
     mutationsEnabled: parseBooleanFlag(env.WORKBOARD_CLEANUP_MUTATIONS, true)
   };
 }
@@ -156,6 +160,7 @@ export function buildWorktreeCleanupReport({
   tasks = [],
   worktrees = [],
   mainRef = "main",
+  worktreePrefix = resolveWorktreePrefix(),
   generatedAt = new Date().toISOString()
 } = {}) {
   const items = worktrees
@@ -163,12 +168,13 @@ export function buildWorktreeCleanupReport({
       const branch = normalizeText(worktree.branch);
       return branch && !PROTECTED_BRANCHES.has(branch);
     })
-    .map((worktree) => classifyWorktree(worktree, tasks, mainRef))
+    .map((worktree) => classifyWorktree(worktree, tasks, mainRef, worktreePrefix))
     .sort(compareCleanupItems);
 
   return {
     generatedAt,
     mainRef,
+    worktreePrefix,
     counts: {
       total: items.length,
       cleanupReady: items.filter((item) => item.status === "cleanup-ready").length,
@@ -290,9 +296,9 @@ async function runGit(args, { allowFailure = false } = {}) {
   }
 }
 
-function classifyWorktree(worktreeInput, tasks, mainRef) {
+function classifyWorktree(worktreeInput, tasks, mainRef, worktreePrefix) {
   const worktree = normalizeWorktree(worktreeInput);
-  const task = findRelatedTask(worktree, tasks);
+  const task = findRelatedTask(worktree, tasks, worktreePrefix);
   const base = {
     worktreePath: worktree.path,
     branch: worktree.branch,
@@ -402,9 +408,12 @@ function normalizeWorktree(worktree) {
   };
 }
 
-function findRelatedTask(worktree, tasks) {
+function findRelatedTask(worktree, tasks, worktreePrefix) {
   const branch = normalizeText(worktree.branch).toLowerCase();
   const worktreePath = normalizeText(worktree.path).toLowerCase();
+  const worktreeDirName = path.posix.basename(worktreePath.replace(/\\/g, "/"));
+  const prefix = normalizeText(worktreePrefix).toLowerCase();
+  const managedDirName = prefix && worktreeDirName.startsWith(`${prefix}-`) ? worktreeDirName : "";
   const head = normalizeText(worktree.head).toLowerCase();
   let best = null;
 
@@ -418,6 +427,7 @@ function findRelatedTask(worktree, tasks) {
     if (head && completionCommit === head) score = Math.max(score, 90);
     if (branch && searchText.includes(branch)) score = Math.max(score, 70);
     if (worktreePath && searchText.includes(worktreePath)) score = Math.max(score, 60);
+    if (managedDirName && searchText.includes(managedDirName)) score = Math.max(score, 60);
 
     if (score > 0 && (!best || score > best.score || (score === best.score && task.status === "done"))) {
       best = { task, score };
