@@ -31,9 +31,11 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api.js";
 import { buildAgentRegistry } from "./lib/agentRegistry.js";
+import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
+import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
 
 const DRAG_START_THRESHOLD = 8;
 
@@ -846,15 +848,22 @@ export function App() {
             onOpenTask={openLinkedTask}
           />
         ) : view === "agents" ? (
-          <AgentsRegistry
-            registry={agentRegistry}
-            onOpenTask={openLinkedTask}
-            onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
-            onUpdateAgentSlot={updateAgentSlotControls}
-            onUpdateAgentTypeCapacity={updateAgentTypeCapacity}
-            onReleaseAgent={handleReleaseAgent}
-            updatingAgentId={agentControlPending}
-          />
+          <>
+            <AgentOnboarding
+              roles={meta.roles}
+              readyTaskCount={countClaimableReadyTasks(projectTasks, meta.workItemTypes)}
+              activeSlotCount={agentSlots.slots.filter((slot) => slot.active).length}
+            />
+            <AgentsRegistry
+              registry={agentRegistry}
+              onOpenTask={openLinkedTask}
+              onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
+              onUpdateAgentSlot={updateAgentSlotControls}
+              onUpdateAgentTypeCapacity={updateAgentTypeCapacity}
+              onReleaseAgent={handleReleaseAgent}
+              updatingAgentId={agentControlPending}
+            />
+          </>
         ) : workspaceTab === "coordination" ? (
           <CoordinationWorkspace
             talks={talks}
