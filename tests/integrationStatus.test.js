@@ -75,6 +75,33 @@ describe("integration status guidance", () => {
     expect(status.worktreeCommand).not.toMatch(/\b[A-Za-z]:\//);
   });
 
+  it("reports whether review delivery branches are pushed to origin", () => {
+    const status = buildIntegrationStatus({
+      branches: ["implementer/pushed", "implementer/ahead", "implementer/missing"],
+      runGit: fakeGit({
+        "branch --show-current": "main",
+        "rev-parse main": "mainsha",
+        "rev-parse origin/main": "mainsha",
+        "rev-list --left-right --count origin/main...main": "0\t0",
+        "status --short": "",
+        "rev-parse --verify refs/heads/implementer/pushed": "pushedsha",
+        "rev-parse --verify refs/remotes/origin/implementer/pushed": "pushedsha",
+        "rev-list --left-right --count refs/remotes/origin/implementer/pushed...refs/heads/implementer/pushed": "0\t0",
+        "rev-parse --verify refs/heads/implementer/ahead": "aheadsha",
+        "rev-parse --verify refs/remotes/origin/implementer/ahead": "remotesha",
+        "rev-list --left-right --count refs/remotes/origin/implementer/ahead...refs/heads/implementer/ahead": "0\t2",
+        "rev-parse --verify refs/heads/implementer/missing": new Error("missing"),
+        "rev-parse --verify refs/remotes/origin/implementer/missing": new Error("missing")
+      })
+    });
+
+    expect(status.deliveryBranches).toEqual([
+      expect.objectContaining({ branch: "implementer/pushed", state: "pushed", ahead: 0 }),
+      expect.objectContaining({ branch: "implementer/ahead", state: "unpushed", ahead: 2 }),
+      expect.objectContaining({ branch: "implementer/missing", state: "missing" })
+    ]);
+  });
+
   it("pauses branch guidance when local and origin have diverged", () => {
     const status = buildIntegrationStatus({
       runGit: fakeGit({

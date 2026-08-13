@@ -4,11 +4,12 @@ import { worktreePath } from "./worktreePaths.js";
 const DEFAULT_LOCAL_REF = "main";
 const DEFAULT_REMOTE_REF = "origin/main";
 
-export function getIntegrationStatus({ cwd, localRef, remoteRef } = {}) {
+export function getIntegrationStatus({ cwd, localRef, remoteRef, branches = [] } = {}) {
   const config = readIntegrationStatusConfig();
   return buildIntegrationStatus({
     localRef: localRef || config.localRef,
     remoteRef: remoteRef || config.remoteRef,
+    branches,
     runGit: (args) =>
       execFileSync("git", args, {
         cwd: cwd || config.cwd,
@@ -29,7 +30,8 @@ export function readIntegrationStatusConfig(env = runtimeEnv(), fallbackCwd = ru
 export function buildIntegrationStatus({
   runGit,
   localRef = DEFAULT_LOCAL_REF,
-  remoteRef = DEFAULT_REMOTE_REF
+  remoteRef = DEFAULT_REMOTE_REF,
+  branches = []
 } = {}) {
   const git = typeof runGit === "function" ? runGit : () => "";
   const currentBranch = readGit(git, ["branch", "--show-current"]) || "";
@@ -42,6 +44,7 @@ export function buildIntegrationStatus({
   const shortOriginHead = shortSha(originHead);
   const pushDebt = ahead > 0 || (!originHead && Boolean(localHead));
   const state = decideIntegrationState({ ahead, behind, clean, localHead, originHead, localRef, remoteRef });
+  const deliveryBranches = inspectDeliveryBranches(git, branches, remoteRef);
 
   return {
     sourceOfTruth: state.sourceOfTruth,
@@ -55,12 +58,43 @@ export function buildIntegrationStatus({
     behind,
     clean,
     pushDebt,
+    deliveryBranches,
     summary: state.summary,
     worktreeCommand: state.baseRef
       ? `git worktree add ${worktreePath()} -b <agent-id>/<slug> ${state.baseRef}`
       : "Pause before creating a worktree: reconcile local main and origin/main first.",
     recoveryActions: recoveryActions({ pushDebt, sourceOfTruth: state.sourceOfTruth, localRef, remoteRef })
   };
+}
+
+function inspectDeliveryBranches(git, branches, remoteRef) {
+  const remoteName = String(remoteRef || DEFAULT_REMOTE_REF).split("/")[0] || "origin";
+  return [...new Set((branches || []).map(normalizeBranch).filter(Boolean))].map((branch) => {
+    const localRef = `refs/heads/${branch}`;
+    const branchRemoteRef = `refs/remotes/${remoteName}/${branch}`;
+    const localHead = readGit(git, ["rev-parse", "--verify", localRef]);
+    const remoteHead = readGit(git, ["rev-parse", "--verify", branchRemoteRef]);
+    const counts = localHead && remoteHead
+      ? parseAheadBehind(readGit(git, ["rev-list", "--left-right", "--count", `${branchRemoteRef}...${localRef}`]))
+      : { behind: 0, ahead: 0 };
+    const state = !localHead && !remoteHead
+      ? "missing"
+      : localHead && (!remoteHead || counts.ahead > 0)
+        ? "unpushed"
+        : "pushed";
+    return {
+      branch,
+      state,
+      localHead: shortSha(localHead),
+      remoteHead: shortSha(remoteHead),
+      ahead: counts.ahead,
+      behind: counts.behind
+    };
+  });
+}
+
+function normalizeBranch(value) {
+  return normalizeText(value).replace(/^refs\/heads\//, "");
 }
 
 function readGit(runGit, args) {

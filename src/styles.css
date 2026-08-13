@@ -2639,6 +2639,7 @@ button {
 .verificationTargetPill,
 .changesRequestedPill,
 .reviewApprovedPill,
+.deliveryIncompletePill,
 .approvalPill {
   display: inline-flex;
   align-items: center;
@@ -2706,6 +2707,12 @@ button {
   color: #8ee6c5;
   border-color: rgba(62, 183, 139, 0.45);
   background: rgba(27, 105, 77, 0.24);
+}
+
+.deliveryIncompletePill {
+  color: #ffd07a;
+  border: 1px solid rgba(226, 164, 50, 0.55);
+  background: rgba(116, 72, 15, 0.3);
 }
 
 .stageRecord p {

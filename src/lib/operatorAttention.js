@@ -1,4 +1,5 @@
 import { agedExternalSource } from "../../shared/externalSource.js";
+import { taskDeliveryShortfall } from "../../shared/deliveryCompleteness.js";
 
 const CLAIMABLE_WORK_ITEM_TYPES = new Set(["task", "subtask", "bug", "spike", "chore"]);
 const GROOMING_STALE_DAYS = 7;
@@ -6,6 +7,7 @@ const GROOMING_STALE_DAYS = 7;
 const CATEGORY_RANK = {
   approval: 90,
   merge: 80,
+  delivery: 78,
   review_changes: 75,
   blocker: 70,
   off_script: 65,
@@ -28,6 +30,8 @@ export function buildOperatorAttention({
   origin = "http://localhost:8088",
   projectId = "",
   project = null,
+  deploymentSettings = {},
+  integrationStatus = {},
   now = new Date()
 } = {}) {
   const agents = Array.isArray(agentRegistry.agents) ? agentRegistry.agents : [];
@@ -80,6 +84,21 @@ export function buildOperatorAttention({
           title: task.title,
           detail: task.blocker.requestedAction || task.blocker.reason || "An agent needs an operator decision.",
           remedy: "decide",
+          tasks
+        })
+      );
+      continue;
+    }
+
+    const deliveryShortfall = taskDeliveryShortfall(task, { deploymentSettings, integrationStatus });
+    if (deliveryShortfall) {
+      actions.push(
+        taskAction({
+          task,
+          kind: "delivery",
+          title: task.title,
+          detail: deliveryShortfall.detail,
+          remedy: "open_task",
           tasks
         })
       );
@@ -332,6 +351,12 @@ function attentionCopy(action) {
         what: `Review approved “${action.title}”.`,
         why: "The implementation is waiting for its reviewer-owned merge and final verification.",
         doThis: "Click Open delivery to review the evidence and merge or route it."
+      };
+    case "delivery":
+      return {
+        what: `“${action.title}” reached review with incomplete delivery evidence: ${action.detail}`,
+        why: "The configured deployment process cannot be completed or independently reviewed until the missing branch or pull request evidence is recorded.",
+        doThis: "Open the task and push the branch, open the pull request, or record the missing delivery link."
       };
     case "blocker":
       return {

@@ -46,7 +46,11 @@ export function createApp({
   const integrationStatus = (projectId = "") => {
     const project = projectId ? store.getProject(projectId) : null;
     const cwd = project?.dataSource?.repoDir || undefined;
-    return integrationStatusProvider(cwd ? { cwd } : undefined);
+    const branches = projectId
+      ? store.listTasks({ projectId, status: "review" }).map((task) => task.branch).filter(Boolean)
+      : [];
+    const options = { ...(cwd ? { cwd } : {}), ...(branches.length > 0 ? { branches } : {}) };
+    return integrationStatusProvider(Object.keys(options).length > 0 ? options : undefined);
   };
 
   app.get("/api/health", (_req, res) => {
