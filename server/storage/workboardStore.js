@@ -41,6 +41,7 @@ const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
 const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story"]);
 const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
+const MAX_DEPLOYMENT_PROCESS_OVERRIDES_LENGTH = 50000;
 const UPSTREAM_STATUSES_BY_ROLE = {
   implementer: ["ready", "backlog"],
   reviewer: ["in_progress", "ready"],
@@ -345,6 +346,20 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeDeploymentProcessOverrides(value) {
+  if (typeof value !== "string") {
+    throw httpError("processOverrides must be a string.", 400);
+  }
+  const normalized = value.replaceAll("\r\n", "\n").trim();
+  if (normalized.length > MAX_DEPLOYMENT_PROCESS_OVERRIDES_LENGTH) {
+    throw httpError(
+      `processOverrides must be ${MAX_DEPLOYMENT_PROCESS_OVERRIDES_LENGTH} characters or fewer.`,
+      400
+    );
+  }
+  return normalized;
+}
+
 function normalizeActivityLimit(value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return 100;
@@ -488,6 +503,11 @@ function defaultData() {
     capabilities: defaultCapabilities(createdAt),
     agentPresence: {},
     talkMessages: [],
+    deploymentSettings: {
+      processOverrides: "",
+      updatedAt: "",
+      updatedBy: ""
+    },
     agentTypes: defaultAgentTypes(),
     agentSlots: defaultAgentSlots()
   };
@@ -640,8 +660,36 @@ export class WorkboardStore {
     return OPERATOR_APPROVAL_DECISIONS;
   }
 
+  getDeploymentSettings() {
+    this.ensureDeploymentSettings();
+    return { ...this.data.deploymentSettings };
+  }
+
+  async updateDeploymentSettings(input = {}) {
+    if (!Object.prototype.hasOwnProperty.call(input, "processOverrides")) {
+      throw httpError("processOverrides is required.", 400);
+    }
+    const processOverrides = normalizeDeploymentProcessOverrides(input.processOverrides);
+    const updatedBy = normalizeText(input.actor) || "operator";
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureDeploymentSettings();
+      this.data.deploymentSettings = {
+        processOverrides,
+        updatedAt: now(),
+        updatedBy
+      };
+      await this.writeData(this.data);
+      return { ...this.data.deploymentSettings };
+    });
+  }
+
   migrateData() {
     let migrated = false;
+    if (this.ensureDeploymentSettings()) {
+      migrated = true;
+    }
     if (!Array.isArray(this.data.events)) {
       this.data.events = [];
       migrated = true;
@@ -742,6 +790,29 @@ export class WorkboardStore {
     }
 
     return migrated;
+  }
+
+  ensureDeploymentSettings() {
+    const current = this.data.deploymentSettings;
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      this.data.deploymentSettings = {
+        processOverrides: "",
+        updatedAt: "",
+        updatedBy: ""
+      };
+      return true;
+    }
+
+    const normalized = {
+      processOverrides: typeof current.processOverrides === "string" ? current.processOverrides : "",
+      updatedAt: normalizeText(current.updatedAt),
+      updatedBy: normalizeText(current.updatedBy)
+    };
+    if (JSON.stringify(current) === JSON.stringify(normalized)) {
+      return false;
+    }
+    this.data.deploymentSettings = normalized;
+    return true;
   }
 
   rebuildTaskRelationshipDerivatives() {

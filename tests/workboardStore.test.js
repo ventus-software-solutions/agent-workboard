@@ -18,6 +18,31 @@ afterEach(async () => {
 });
 
 describe("WorkboardStore", () => {
+  it("persists deployment process overrides independently of project data", async () => {
+    expect(store.getDeploymentSettings()).toEqual({
+      processOverrides: "",
+      updatedAt: "",
+      updatedBy: ""
+    });
+
+    const saved = await store.updateDeploymentSettings({
+      processOverrides: "\r\n- Deliver through a branch and PR.\r\n- Coordinator merges foundation changes.\r\n",
+      actor: "operator-ui"
+    });
+
+    expect(saved).toMatchObject({
+      processOverrides: "- Deliver through a branch and PR.\n- Coordinator merges foundation changes.",
+      updatedBy: "operator-ui"
+    });
+    expect(saved.updatedAt).toBeTruthy();
+
+    const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
+    await reloaded.init();
+    expect(reloaded.getDeploymentSettings()).toEqual(saved);
+
+    await expect(store.updateDeploymentSettings({ processOverrides: null })).rejects.toMatchObject({ status: 400 });
+  });
+
   it("seeds the DEMO project with a ready first workflow implementation task", () => {
     const demoTasks = store.listTasks({ projectId: "project_demo" });
     const releasePlan = demoTasks.find((task) => task.id === "task_demo_pm");

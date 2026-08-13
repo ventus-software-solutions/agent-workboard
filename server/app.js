@@ -52,8 +52,31 @@ export function createApp({
     });
   });
 
+  app.get("/api/deployment-settings", (_req, res, next) => {
+    try {
+      res.json({ settings: store.getDeploymentSettings() });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/deployment-settings", async (req, res, next) => {
+    try {
+      res.json({ settings: await store.updateDeploymentSettings(req.body) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/agent-docs", (_req, res) => {
-    res.json(listAgentDocs({ roles: store.roles(), statuses: store.statuses(), integrationStatus: integrationStatus() }));
+    res.json(
+      listAgentDocs({
+        roles: store.roles(),
+        statuses: store.statuses(),
+        integrationStatus: integrationStatus(),
+        deploymentSettings: store.getDeploymentSettings()
+      })
+    );
   });
 
   app.get("/api/agent-docs/:agentId", (req, res) => {
@@ -67,7 +90,8 @@ export function createApp({
       agentTypes: agentSlotRegistry.types,
       integrationStatus: integrationStatus(),
       baseUrl,
-      projectContext: store.getAgentProjectContext(req.params.agentId)
+      projectContext: store.getAgentProjectContext(req.params.agentId),
+      deploymentSettings: store.getDeploymentSettings()
     });
 
     if (req.query.format === "md" || req.query.format === "markdown" || req.accepts(["json", "text"]) === "text") {

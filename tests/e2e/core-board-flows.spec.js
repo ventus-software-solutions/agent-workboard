@@ -65,6 +65,30 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await expect(workflowCard).toContainText("Unassigned");
 });
 
+test("edits deployment process rules from Settings and updates generated agent docs", async ({ page }) => {
+  const rules = "- Deliver through a branch and PR.\n- Coordinator merges foundation-class changes.";
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page.locator(".kanbanColumn")).toHaveCount(0);
+
+  const editor = page.getByLabel("Process overrides (Markdown)");
+  await editor.fill(rules);
+  await page.getByRole("button", { name: "Save deployment rules" }).click();
+  await expect(page.getByText("Deployment process rules saved.")).toBeVisible();
+
+  const generatedDoc = await page.request.get(`${apiBaseURL}/api/agent-docs/reviewer?format=md`);
+  expect(generatedDoc.ok()).toBe(true);
+  expect(await generatedDoc.text()).toContain(`## Deployment process rules (OVERRIDE defaults)\n${rules}`);
+
+  await editor.fill("");
+  await page.getByRole("button", { name: "Save deployment rules" }).click();
+  await expect(page.getByText("Deployment process rules saved.")).toBeVisible();
+  const clearedDoc = await page.request.get(`${apiBaseURL}/api/agent-docs/reviewer?format=md`);
+  expect(await clearedDoc.text()).not.toContain("Deployment process rules (OVERRIDE defaults)");
+});
+
 test("covers core board flows in the browser", async ({ page }) => {
   const projectName = uniqueName("E2E Core Flow Project");
   const projectKey = uniqueKey("E2E");
