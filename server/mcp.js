@@ -40,7 +40,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         agentTypes: agentSlotRegistry.types,
         integrationStatus: getIntegrationStatus(),
         baseUrl,
-        projectContext: store.getAgentProjectContext(input.agentId)
+        projectContext: store.getAgentProjectContext(input.agentId),
+        deploymentSettings: store.getDeploymentSettings?.() || null
       });
       return asText(input.format === "json" ? doc : renderAgentDocMarkdown(doc));
     }
@@ -218,7 +219,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         agentTypes: agentSlotRegistry.types,
         integrationStatus: getIntegrationStatus(),
         projectContext,
-        baseUrl
+        baseUrl,
+        deploymentSettings: store.getDeploymentSettings?.() || null
       });
       const nextTaskFilters = {
         agentId: acquisition.agentId,

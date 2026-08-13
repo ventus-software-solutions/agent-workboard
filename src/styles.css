@@ -247,6 +247,113 @@ button {
   overflow: hidden;
 }
 
+.settingsWorkspace {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 2px 24px;
+}
+
+.settingsPanel {
+  width: min(920px, 100%);
+  padding: 24px;
+  border: 1px solid #303740;
+  border-radius: 10px;
+  background: #171c22;
+}
+
+.settingsPanelHeader,
+.settingsFormFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settingsPanelHeader h3 {
+  margin: 5px 0 0;
+  font-size: 20px;
+}
+
+.scopeChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #3a5661;
+  border-radius: 999px;
+  color: #aee7f6;
+  background: #20333b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settingsLead {
+  max-width: 760px;
+  margin: 18px 0 22px;
+  color: #aab5c2;
+  line-height: 1.55;
+}
+
+.fieldLabel {
+  display: block;
+  margin-bottom: 8px;
+  color: #dbe3ec;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.processOverridesEditor {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  padding: 14px;
+  border: 1px solid #3a424c;
+  border-radius: 8px;
+  color: #eef2f7;
+  background: #11161b;
+  font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.processOverridesEditor:focus {
+  border-color: #7fb7c7;
+  outline: 2px solid rgb(127 183 199 / 18%);
+}
+
+.settingsFormFooter {
+  margin-top: 14px;
+}
+
+.settingsSaveStatus {
+  min-height: 20px;
+  color: #8f9baa;
+  font-size: 12px;
+}
+
+.settingsSuccess {
+  color: #91d8ad;
+}
+
+.settingsError {
+  color: #ff9a9a;
+}
+
+@media (max-width: 700px) {
+  .settingsPanelHeader,
+  .settingsFormFooter {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scopeChip {
+    align-self: flex-start;
+  }
+}
+
 .topBar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto auto auto auto;

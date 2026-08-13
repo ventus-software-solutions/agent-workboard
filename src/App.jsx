@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings,
   ShieldCheck,
   Sparkles,
   TestTube2,
@@ -131,6 +132,11 @@ export function App() {
   const [activityEvents, setActivityEvents] = useState([]);
   const [capabilities, setCapabilities] = useState([]);
   const [agentSlots, setAgentSlots] = useState({ types: [], slots: [] });
+  const [deploymentSettings, setDeploymentSettings] = useState({
+    processOverrides: "",
+    updatedAt: "",
+    updatedBy: ""
+  });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "", workItemType: "" });
@@ -224,7 +230,12 @@ export function App() {
 
   async function loadAll(projectId = selectedProjectId) {
     setError("");
-    const [metaResult, projectsResult, agentSlotsResult] = await Promise.all([api.meta(), api.projects(), api.agentSlots()]);
+    const [metaResult, projectsResult, agentSlotsResult, deploymentSettingsResult] = await Promise.all([
+      api.meta(),
+      api.projects(),
+      api.agentSlots(),
+      api.deploymentSettings()
+    ]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
     const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, activityResult] = nextProjectId
@@ -254,6 +265,7 @@ export function App() {
     setActivityEvents(activityResult.activity);
     setWorktreeCleanup(emptyWorktreeCleanup());
     setAgentSlots(agentSlotsResult);
+    setDeploymentSettings(deploymentSettingsResult.settings);
     setLoading(false);
   }
 
@@ -339,6 +351,21 @@ export function App() {
   async function refreshAgentSlots() {
     const result = await api.agentSlots();
     setAgentSlots(result);
+  }
+
+  async function refreshDeploymentSettings() {
+    const result = await api.deploymentSettings();
+    setDeploymentSettings(result.settings);
+    return result.settings;
+  }
+
+  async function saveDeploymentSettings(processOverrides) {
+    const result = await api.updateDeploymentSettings({
+      processOverrides,
+      actor: "operator-ui"
+    });
+    setDeploymentSettings(result.settings);
+    return result.settings;
   }
 
   async function updateAgentSlotControls(agentId, patch) {
@@ -540,7 +567,14 @@ export function App() {
     };
   }, [agentRegistry, projectTasks, staleWork, worktreeCleanup]);
 
-  const viewTitle = view === "capabilities" ? "Capability Registry" : view === "agents" ? "Agents" : selectedProject?.name || "No project";
+  const viewTitle =
+    view === "capabilities"
+      ? "Capability Registry"
+      : view === "agents"
+        ? "Agents"
+        : view === "settings"
+          ? "Settings"
+          : selectedProject?.name || "No project";
 
   async function runMutation(action) {
     setError("");
@@ -693,6 +727,16 @@ export function App() {
             <Database size={16} />
             <span>Capabilities</span>
           </button>
+          <button
+            className={view === "settings" ? "selected" : ""}
+            onClick={() => {
+              setView("settings");
+              closeSidebarOverlay();
+            }}
+          >
+            <Settings size={16} />
+            <span>Settings</span>
+          </button>
         </div>
 
         <div className="projectList">
@@ -754,7 +798,9 @@ export function App() {
             </div>
           </div>
           <div className="topStats">
-            {view === "capabilities" ? (
+            {view === "settings" ? (
+              <Stat icon={Settings} label="Scope" value="Deployment" />
+            ) : view === "capabilities" ? (
               <>
                 <Stat icon={CheckCircle2} label="Live" value={capabilityStats.live} />
                 <Stat icon={AlertCircle} label="Attention" value={capabilityStats.attention} />
@@ -797,7 +843,9 @@ export function App() {
           <button
             className="primaryButton"
             onClick={() => {
-              if (view === "capabilities") {
+              if (view === "settings") {
+                refreshDeploymentSettings().catch((nextError) => setError(nextError.message));
+              } else if (view === "capabilities") {
                 refreshCapabilities().catch((nextError) => setError(nextError.message));
               } else if (view === "agents") {
                 Promise.all([refreshAgentSlots(), refreshTasks()]).catch((nextError) => setError(nextError.message));
@@ -805,10 +853,10 @@ export function App() {
                 setIsCreatingTask(true);
               }
             }}
-            disabled={!selectedProjectId}
+            disabled={view === "board" && !selectedProjectId}
           >
-            {view === "capabilities" || view === "agents" ? <RefreshCw size={17} /> : <Plus size={17} />}
-            <span>{view === "capabilities" || view === "agents" ? "Refresh" : "Task"}</span>
+            {view === "capabilities" || view === "agents" || view === "settings" ? <RefreshCw size={17} /> : <Plus size={17} />}
+            <span>{view === "capabilities" || view === "agents" || view === "settings" ? "Refresh" : "Task"}</span>
           </button>
         </header>
 
@@ -841,6 +889,8 @@ export function App() {
 
         {loading ? (
           <div className="emptyState">Loading workboard...</div>
+        ) : view === "settings" ? (
+          <DeploymentSettingsView settings={deploymentSettings} onSave={saveDeploymentSettings} />
         ) : view === "capabilities" ? (
           <CapabilityRegistry
             capabilities={capabilities}
@@ -981,6 +1031,81 @@ function Stat({ icon: Icon, label, value, sublabel = "", title = "" }) {
       </span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+function DeploymentSettingsView({ settings, onSave }) {
+  const [draft, setDraft] = useState(settings.processOverrides || "");
+  const [saveState, setSaveState] = useState({ pending: false, message: "", error: "" });
+
+  useEffect(() => {
+    setDraft(settings.processOverrides || "");
+  }, [settings.processOverrides, settings.updatedAt]);
+
+  const savedValue = settings.processOverrides || "";
+  const changed = draft !== savedValue;
+
+  async function submit(event) {
+    event.preventDefault();
+    setSaveState({ pending: true, message: "", error: "" });
+    try {
+      await onSave(draft);
+      setSaveState({ pending: false, message: "Deployment process rules saved.", error: "" });
+    } catch (error) {
+      setSaveState({ pending: false, message: "", error: error.message });
+    }
+  }
+
+  return (
+    <section className="settingsWorkspace" aria-labelledby="deployment-process-rules-title">
+      <div className="settingsPanel">
+        <div className="settingsPanelHeader">
+          <div>
+            <div className="eyebrow">Agent instructions</div>
+            <h3 id="deployment-process-rules-title">Deployment process rules</h3>
+          </div>
+          <span className="scopeChip">All agents · all projects</span>
+        </div>
+        <p className="settingsLead">
+          These Markdown rules are injected into every generated agent document and override the board's default workflow.
+          Keep bootstrap prompts short; put deployment-specific PR, merge-authority, approval, and cleanup rules here.
+        </p>
+        <form onSubmit={submit}>
+          <label className="fieldLabel" htmlFor="deployment-process-overrides">
+            Process overrides (Markdown)
+          </label>
+          <textarea
+            id="deployment-process-overrides"
+            className="processOverridesEditor"
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setSaveState({ pending: false, message: "", error: "" });
+            }}
+            maxLength={50000}
+            rows={18}
+            placeholder={"Example:\n- Deliver implementation through a branch and pull request.\n- Only the coordinator merges foundation-class changes."}
+          />
+          <div className="settingsFormFooter">
+            <div className="settingsSaveStatus" aria-live="polite">
+              {saveState.error ? <span className="settingsError">{saveState.error}</span> : null}
+              {saveState.message ? <span className="settingsSuccess">{saveState.message}</span> : null}
+              {!saveState.error && !saveState.message && settings.updatedAt ? (
+                <span>
+                  Last saved {formatDate(settings.updatedAt)} by {settings.updatedBy || "operator"}
+                </span>
+              ) : null}
+              {!saveState.error && !saveState.message && !settings.updatedAt ? (
+                <span>Leave empty to use the board defaults without an override section.</span>
+              ) : null}
+            </div>
+            <button className="primaryButton" type="submit" disabled={!changed || saveState.pending}>
+              {saveState.pending ? "Saving…" : "Save deployment rules"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
   );
 }
 

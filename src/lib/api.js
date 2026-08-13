@@ -38,6 +38,9 @@ export async function request(path, options = {}) {
 
 export const api = {
   meta: () => request("/api/meta"),
+  deploymentSettings: () => request("/api/deployment-settings"),
+  updateDeploymentSettings: (settings) =>
+    request("/api/deployment-settings", { method: "PATCH", body: JSON.stringify(settings) }),
   integrationStatus: () => request("/api/integration-status"),
   agentSlots: () => request("/api/agent-slots"),
   updateAgentType: (typeId, patch) =>

@@ -23,6 +23,45 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("edits deployment process rules and injects them into every role doc only when non-empty", async () => {
+    const emptyDoc = await request(app).get("/api/agent-docs/implementer?format=md").expect(200);
+    expect(emptyDoc.text).not.toContain("Deployment process rules (OVERRIDE defaults)");
+
+    const rules = [
+      "- Deliver every implementation through a branch and pull request.",
+      "- Reviewers merge only simple fixes; the coordinator merges foundation changes.",
+      "- The merger cleans the task worktree."
+    ].join("\n");
+    const updated = await request(app)
+      .patch("/api/deployment-settings")
+      .send({ processOverrides: rules, actor: "operator-api" })
+      .expect(200);
+    expect(updated.body.settings).toMatchObject({ processOverrides: rules, updatedBy: "operator-api" });
+
+    const fetched = await request(app).get("/api/deployment-settings").expect(200);
+    expect(fetched.body.settings).toEqual(updated.body.settings);
+
+    for (const agentId of ["pm", "implementer", "reviewer", "tester", "researcher", "operator"]) {
+      const json = await request(app).get(`/api/agent-docs/${agentId}`).expect(200);
+      expect(json.body.agent.deploymentProcessRules).toBe(rules);
+
+      const markdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
+      expect(markdown.text).toContain("## Deployment process rules (OVERRIDE defaults)");
+      expect(markdown.text).toContain(rules);
+      expect(markdown.text.indexOf("Deployment process rules")).toBeLessThan(markdown.text.indexOf("## Workflow"));
+    }
+
+    const overview = await request(app).get("/api/agent-docs").expect(200);
+    expect(overview.body.deploymentProcessRules).toBe(rules);
+    expect(overview.body.usage.promptTemplate).toBe(
+      "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you."
+    );
+
+    await request(app).patch("/api/deployment-settings").send({ processOverrides: "", actor: "operator-api" }).expect(200);
+    const clearedDoc = await request(app).get("/api/agent-docs/reviewer?format=md").expect(200);
+    expect(clearedDoc.text).not.toContain("Deployment process rules (OVERRIDE defaults)");
+  }, 15000);
+
   it("surfaces integration source guidance in meta, bootstrap, and agent docs", async () => {
     const integrationStatus = {
       sourceOfTruth: "local-main",

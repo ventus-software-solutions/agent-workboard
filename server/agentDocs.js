@@ -71,7 +71,8 @@ const SPECIALTY_KEYWORDS = [
   ["security", ["security", "auth", "permission", "role"]]
 ];
 
-export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
+export function listAgentDocs({ roles, statuses, integrationStatus = null, deploymentSettings = null }) {
+  const deploymentProcessRules = deploymentProcessRulesFromSettings(deploymentSettings);
   return {
     service: "agent-workboard",
     purpose: "Bootstrap agents from the board itself so every worker follows the same task-selection and reporting rules.",
@@ -107,6 +108,7 @@ export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
     roles,
     statuses,
     integrationStatus,
+    ...(deploymentProcessRules ? { deploymentProcessRules } : {}),
     worktree: worktreeDiscipline(undefined, integrationStatus),
     autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
     workflow: sharedWorkflow()
@@ -121,7 +123,8 @@ export function buildAgentDoc({
   agentTypes = [],
   baseUrl = "http://localhost:8088",
   integrationStatus = null,
-  projectContext = null
+  projectContext = null,
+  deploymentSettings = null
 }) {
   const normalizedAgentId = String(agentId || "").toLowerCase();
   const configuredSlot = agentSlots.find((slot) => slot.id === normalizedAgentId);
@@ -149,6 +152,7 @@ export function buildAgentDoc({
     "release_agent_slot",
     "report_no_eligible_work"
   ];
+  const deploymentProcessRules = deploymentProcessRulesFromSettings(deploymentSettings);
 
   return {
     agentId,
@@ -160,6 +164,7 @@ export function buildAgentDoc({
     activeProject,
     identity: identityModel(agentId, { agentSlots, agentTypes }),
     mission: rule.mission,
+    ...(deploymentProcessRules ? { deploymentProcessRules } : {}),
     taskSelection: [
       `Use assigned project ${activeProjectLabel} unless the operator gives an explicit override.`,
       "First, list active projects if you need to confirm project names or keys.",
@@ -231,6 +236,13 @@ export function renderAgentDocMarkdown(doc) {
     "## Mission",
     doc.mission,
     "",
+    ...(doc.deploymentProcessRules
+      ? [
+          "## Deployment process rules (OVERRIDE defaults)",
+          doc.deploymentProcessRules,
+          ""
+        ]
+      : []),
     "## Identity And Slots",
     doc.identity.summary,
     doc.identity.currentRule,
@@ -298,6 +310,10 @@ export function renderAgentDocMarkdown(doc) {
     `Use \`${doc.mcp.firstTool}\` first, then ${doc.mcp.then.map((tool) => `\`${tool}\``).join(", ")}.`,
     ""
   ].join("\n");
+}
+
+function deploymentProcessRulesFromSettings(deploymentSettings) {
+  return typeof deploymentSettings?.processOverrides === "string" ? deploymentSettings.processOverrides.trim() : "";
 }
 
 function identityModel(agentId = "{agentType}", { agentSlots = [], agentTypes = [] } = {}) {
