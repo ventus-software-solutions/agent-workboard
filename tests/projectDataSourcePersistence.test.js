@@ -57,6 +57,46 @@ describe("per-project tasks-directory persistence", () => {
     expect(reloaded.listTasks({ projectId: folderProject.id }).map((task) => task.id)).toContain(folderTask.id);
   });
 
+  it("migrates pre-gate testing tasks once and persists the per-project target gate", async () => {
+    const taskFile = path.join(tasksDir, "fbr_20260812143216_78750600c", "task.md");
+    await writeFile(taskFile, (await readFile(taskFile, "utf8")).replace("status: todo", "status: testing"));
+
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const project = await store.createProject({ name: "Legacy Testing Folder", dataSource: { tasksDir } });
+
+    expect(store.getTask("fbr_20260812143216_78750600c")).toMatchObject({
+      projectId: project.id,
+      status: "testing",
+      verificationTarget: {
+        artifactNote: expect.stringMatching(/before verification targets were required/i)
+      }
+    });
+    expect(await readFile(taskFile, "utf8")).toContain("verificationTarget:");
+    const persisted = JSON.parse(await readFile(path.join(dataDir, "workboard.json"), "utf8"));
+    expect(persisted.projectTasksdirMetadata[project.id]).toEqual({ verificationTargetGateVersion: 1 });
+  });
+
+  it("quarantines a new per-project testing task without a verification target", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const project = await store.createProject({ name: "Strict Testing Folder", dataSource: { tasksDir } });
+    const externalDir = path.join(tasksDir, "external_testing");
+    await mkdir(externalDir);
+    await writeFile(
+      path.join(externalDir, "task.md"),
+      "---\nid: external_testing\ntitle: External testing task\nowner: unassigned\nstatus: testing\ntype: task\npriority: normal\nlabels:\ncreated: 2026-08-13\n---\nNo target.\n"
+    );
+
+    const refreshed = await store.refreshProjectDataSource(project.id);
+    expect(refreshed.dataSource.health).toMatchObject({
+      status: "error",
+      code: "verification_target_required",
+      message: expect.stringMatching(/verification target/i)
+    });
+    expect(store.listTasks({ projectId: project.id })).toHaveLength(0);
+  });
+
   it("composes project task folders over the SQLite ops store", async () => {
     const store = new WorkboardStore({ dataDir, storageMode: "sqlite" });
     await store.init();

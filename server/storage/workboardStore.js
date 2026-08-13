@@ -1700,7 +1700,10 @@ export class WorkboardStore {
     const projectId = normalizeText(projectIdInput);
     return this.withWriteLock(async () => {
       this.data = await this.readData();
-      this.migrateData();
+      const migrated = this.migrateData();
+      if (migrated || this.persistence.needsMigrationSave) {
+        await this.writeData(this.data);
+      }
       return this.getProject(projectId);
     });
   }
@@ -1759,6 +1762,10 @@ export class WorkboardStore {
       });
       await this.writeData(this.data);
       this.data = await this.readData();
+      const migrated = this.migrateData();
+      if (migrated || this.persistence.needsMigrationSave) {
+        await this.writeData(this.data);
+      }
       return this.getProject(project.id);
     });
   }

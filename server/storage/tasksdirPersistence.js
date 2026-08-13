@@ -424,7 +424,7 @@ function newTaskDoc(view, id, newline = "\n") {
 }
 
 export class TasksdirWorkboardPersistence {
-  constructor({ tasksDir, ops, defaultProjectKey = "" }) {
+  constructor({ tasksDir, ops, defaultProjectKey = "", deferInitialGate = false }) {
     const normalized = asText(tasksDir);
     if (!normalized) {
       throw storageError(
@@ -441,7 +441,7 @@ export class TasksdirWorkboardPersistence {
     this.entries = new Map(); // folder -> { folder, filePath, fingerprint, doc, view, id }
     this.byId = new Map(); // task id -> entry
     this.sidecarCache = new Map(); // task id -> last persisted sidecar (rollback base for stale rejects)
-    this.initialCompositionPending = false;
+    this.initialCompositionPending = Boolean(deferInitialGate);
     this.needsMigrationSave = false;
   }
 
@@ -466,6 +466,7 @@ export class TasksdirWorkboardPersistence {
         : {};
     const verificationTargetMigration = opsData.tasksdirVerificationTargetGateVersion !== 1;
     this.needsMigrationSave = verificationTargetMigration;
+    this.initialCompositionPending = verificationTargetMigration && this.byId.size > 0;
     const fallbackProjectId = this.resolveFallbackProjectId(opsData);
     const tasks = [];
     this.sidecarCache = new Map();
