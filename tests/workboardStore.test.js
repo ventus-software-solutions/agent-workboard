@@ -84,6 +84,74 @@ describe("WorkboardStore", () => {
     expect(store.listTasks({ projectId: project.id, role: "tester" })).toEqual([]);
   });
 
+  it("archives and unarchives projects while preserving tasks and logging activity", async () => {
+    const project = await store.createProject({ name: "Lifecycle Project", key: "LIFE" });
+    const task = await store.createTask({ projectId: project.id, title: "Parked work", status: "ready" });
+
+    const archived = await store.updateProject(project.id, { archived: true }, "operator-ui");
+    expect(archived.archived).toBe(true);
+    expect(store.listProjects()).not.toContainEqual(expect.objectContaining({ id: project.id }));
+    expect(store.listProjects({ includeArchived: true })).toContainEqual(expect.objectContaining({ id: project.id, archived: true }));
+    expect(store.getTask(task.id)).toMatchObject({ id: task.id, status: "ready" });
+    expect(store.listProjectActivity({ projectId: project.id })).toContainEqual(
+      expect.objectContaining({ actor: "operator-ui", type: "project.archived" })
+    );
+
+    const unarchived = await store.updateProject(project.id, { archived: false }, "operator-ui");
+    expect(unarchived.archived).toBe(false);
+    expect(store.listProjects()).toContainEqual(expect.objectContaining({ id: project.id, archived: false }));
+    expect(store.listProjectActivity({ projectId: project.id })).toContainEqual(
+      expect.objectContaining({ actor: "operator-ui", type: "project.unarchived" })
+    );
+    await expect(store.updateProject(project.id, { archived: "true" })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it.each(["in_progress", "review", "testing"])("refuses project lifecycle changes with %s work", async (status) => {
+    const project = await store.createProject({ name: `Active ${status} Project` });
+    await store.createTask({
+      projectId: project.id,
+      title: `Active ${status} work`,
+      status,
+      ...(status === "testing" ? { verificationTarget: { commitSha: "abc1234", mergedTo: "main" } } : {})
+    });
+
+    await expect(store.updateProject(project.id, { archived: true })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_has_active_work", action: "archive", statuses: ["in_progress", "review", "testing"] }
+    });
+    await expect(store.deleteProject(project.id, { confirmationName: project.name })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_has_active_work", action: "delete" }
+    });
+  });
+
+  it("hard-deletes project-owned records after exact-name confirmation without removing other project data", async () => {
+    const project = await store.createProject({ name: "Disposable Project", key: "DROP" });
+    const survivor = await store.createProject({ name: "Survivor Project", key: "KEEP" });
+    const task = await store.createTask({ projectId: project.id, title: "Disposable work", status: "ready" });
+    const survivorTask = await store.createTask({ projectId: survivor.id, title: "Surviving work", status: "ready" });
+    await store.addTalkMessage(project.id, { author: "operator", body: "Disposable coordination" });
+    await store.createCapability({ projectId: project.id, name: "Disposable capability", relatedTaskIds: [task.id] });
+    await store.createCapability({ projectId: survivor.id, name: "Surviving capability", relatedTaskIds: [survivorTask.id] });
+
+    await expect(store.deleteProject(project.id, { confirmationName: "wrong" })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_delete_confirmation_mismatch" }
+    });
+    await expect(store.deleteProject(project.id, { confirmationName: ` ${project.name} ` })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_delete_confirmation_mismatch" }
+    });
+
+    const deletion = await store.deleteProject(project.id, { confirmationName: project.name, actor: "operator-ui" });
+    expect(deletion).toMatchObject({ project: { id: project.id }, counts: { tasks: 1, talks: 1, capabilities: 1 } });
+    expect(() => store.getProject(project.id)).toThrow(expect.objectContaining({ status: 404 }));
+    expect(() => store.getTask(task.id)).toThrow(expect.objectContaining({ status: 404 }));
+    expect(store.getProject(survivor.id)).toMatchObject({ id: survivor.id });
+    expect(store.getTask(survivorTask.id)).toMatchObject({ id: survivorTask.id });
+    expect(store.listCapabilities({ projectId: survivor.id })).toContainEqual(expect.objectContaining({ name: "Surviving capability" }));
+  });
+
   it("rejects invalid task creation fields instead of silently falling back", async () => {
     const project = await store.createProject({ name: "Task Validation Project", key: "TVP" });
 

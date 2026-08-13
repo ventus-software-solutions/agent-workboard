@@ -174,6 +174,7 @@ export function App() {
   });
   const [agentDocsOverview, setAgentDocsOverview] = useState({ usage: { promptTemplate: "" } });
   const [selectedProjectId, setSelectedProjectId] = useState(initialRoute.projectId);
+  const [showArchivedProjects, setShowArchivedProjects] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(initialRoute.taskId);
   const [filters, setFilters] = useState(initialRoute.filters);
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
@@ -297,11 +298,11 @@ export function App() {
     }
   }
 
-  async function loadAll(projectId = selectedProjectId) {
+  async function loadAll(projectId = selectedProjectId, { includeArchived = showArchivedProjects } = {}) {
     setError("");
     const [metaResult, projectsResult, agentSlotsResult, deploymentSettingsResult, agentDocsResult] = await Promise.all([
       api.meta(),
-      api.projects(),
+      api.projects(includeArchived, true),
       api.agentSlots(),
       api.deploymentSettings(),
       api.agentDocs()
@@ -454,6 +455,33 @@ export function App() {
     });
     setDeploymentSettings(result.settings);
     return result.settings;
+  }
+
+  async function refreshProjects(includeArchived = showArchivedProjects) {
+    const result = await api.projects(includeArchived, true);
+    setProjects(result.projects);
+    return result.projects;
+  }
+
+  async function toggleArchivedProjects(includeArchived) {
+    setShowArchivedProjects(includeArchived);
+    await loadAll(selectedProjectId, { includeArchived });
+  }
+
+  async function updateSelectedProjectLifecycle(archived) {
+    const projectId = selectedProjectId;
+    const result = await api.updateProject(projectId, { archived, actor: "operator-ui" });
+    setActionNotice(`${result.project.name} was ${archived ? "archived" : "unarchived"}.`);
+    await loadAll(archived && !showArchivedProjects ? "" : projectId, { includeArchived: showArchivedProjects });
+    return result.project;
+  }
+
+  async function deleteSelectedProject(confirmationName) {
+    const projectId = selectedProjectId;
+    const result = await api.deleteProject(projectId, { confirmationName, actor: "operator-ui" });
+    setActionNotice(`${result.deletion.project.name} and its project-owned records were permanently deleted.`);
+    await loadAll("", { includeArchived: showArchivedProjects });
+    return result.deletion;
   }
 
   async function updateAgentSlotControls(agentId, patch) {
@@ -648,6 +676,11 @@ export function App() {
       cancelled = true;
     };
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (view !== "settings" || loading) return;
+    refreshProjects().catch((nextError) => setError(nextError.message));
+  }, [view, selectedProjectId, showArchivedProjects, loading]);
 
   useEffect(() => {
     if (view !== "board" || workspaceTab !== "coordination" || loading || worktreeCleanup.loaded || worktreeCleanup.loading) return;
@@ -922,17 +955,29 @@ export function App() {
           {projects.map((project) => (
             <button
               key={project.id}
-              className={`projectButton ${project.id === selectedProjectId ? "selected" : ""}`}
+              className={`projectButton ${project.id === selectedProjectId ? "selected" : ""} ${project.archived ? "archived" : ""}`}
               onClick={() => {
                 selectProject(project.id);
                 closeSidebarOverlay();
               }}
+              title={project.archived ? `${project.name} is archived` : project.name}
             >
               <span className="projectKey">{project.key}</span>
-              <span className="projectName">{project.name}</span>
+              <span className="projectName">
+                <span>{project.name}</span>
+                {project.archived ? <small>Archived</small> : null}
+              </span>
               <ChevronRight size={16} />
             </button>
           ))}
+          <label className="archivedProjectsToggle">
+            <input
+              type="checkbox"
+              checked={showArchivedProjects}
+              onChange={(event) => toggleArchivedProjects(event.target.checked).catch((nextError) => setError(nextError.message))}
+            />
+            <span>Show archived</span>
+          </label>
         </div>
 
         <div className="rolePanel">
@@ -988,7 +1033,7 @@ export function App() {
           </div>
           <div className="topStats">
             {view === "settings" ? (
-              <Stat icon={Settings} label="Scope" value="Deployment" />
+              <Stat icon={Settings} label="Scope" value={selectedProject?.key || "Deployment"} />
             ) : view === "capabilities" ? (
               <>
                 <Stat icon={CheckCircle2} label="Live" value={capabilityStats.live} />
@@ -1040,7 +1085,7 @@ export function App() {
             className="primaryButton"
             onClick={() => {
               if (view === "settings") {
-                refreshDeploymentSettings().catch((nextError) => setError(nextError.message));
+                Promise.all([refreshDeploymentSettings(), refreshProjects()]).catch((nextError) => setError(nextError.message));
               } else if (view === "capabilities") {
                 refreshCapabilities().catch((nextError) => setError(nextError.message));
               } else if (view === "agents") {
@@ -1111,7 +1156,22 @@ export function App() {
         {loading ? (
           <div className="emptyState">Loading workboard...</div>
         ) : view === "settings" ? (
-          <DeploymentSettingsView settings={deploymentSettings} onSave={saveDeploymentSettings} />
+          <SettingsView
+            settings={deploymentSettings}
+            onSave={saveDeploymentSettings}
+            project={selectedProject}
+            counts={selectedProject?.recordCounts || {
+              tasks: projectTasks.length,
+              talks: talks.length,
+              activity: activityEvents.length,
+              capabilities: capabilities.length,
+              attachments: 0,
+              comments: 0,
+              activeTasks: 0
+            }}
+            onArchive={updateSelectedProjectLifecycle}
+            onDelete={deleteSelectedProject}
+          />
         ) : view === "capabilities" ? (
           <CapabilityRegistry
             capabilities={capabilities}
@@ -1281,13 +1341,31 @@ function Stat({ icon: Icon, label, value, sublabel = "", title = "", onClick = n
   );
 }
 
-function DeploymentSettingsView({ settings, onSave }) {
+function SettingsView({ settings, onSave, project, counts, onArchive, onDelete }) {
   const [draft, setDraft] = useState(settings.processOverrides || "");
   const [saveState, setSaveState] = useState({ pending: false, message: "", error: "" });
+  const [lifecycleState, setLifecycleState] = useState({ pending: "", error: "" });
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   useEffect(() => {
     setDraft(settings.processOverrides || "");
   }, [settings.processOverrides, settings.updatedAt]);
+
+  useEffect(() => {
+    setLifecycleState({ pending: "", error: "" });
+    setDeleteOpen(false);
+    setDeleteConfirmation("");
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!deleteOpen) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape" && lifecycleState.pending !== "delete") setDeleteOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [deleteOpen, lifecycleState.pending]);
 
   const savedValue = settings.processOverrides || "";
   const changed = draft !== savedValue;
@@ -1303,8 +1381,165 @@ function DeploymentSettingsView({ settings, onSave }) {
     }
   }
 
+  async function changeArchivedState(archived) {
+    setLifecycleState({ pending: archived ? "archive" : "unarchive", error: "" });
+    try {
+      await onArchive(archived);
+      setLifecycleState({ pending: "", error: "" });
+    } catch (error) {
+      setLifecycleState({ pending: "", error: error.message });
+    }
+  }
+
+  async function confirmDelete(event) {
+    event.preventDefault();
+    setLifecycleState({ pending: "delete", error: "" });
+    try {
+      await onDelete(deleteConfirmation);
+      setDeleteOpen(false);
+      setDeleteConfirmation("");
+      setLifecycleState({ pending: "", error: "" });
+    } catch (error) {
+      setLifecycleState({ pending: "", error: error.message });
+    }
+  }
+
   return (
     <section className="settingsWorkspace" aria-labelledby="deployment-process-rules-title">
+      {project ? (
+        <>
+          <div className="settingsPanel projectOverviewPanel">
+            <div className="settingsPanelHeader">
+              <div>
+                <div className="eyebrow">Project overview</div>
+                <h3>{project.name}</h3>
+              </div>
+              <span className={`scopeChip ${project.archived ? "archived" : ""}`}>
+                {project.archived ? "Archived" : "Active"}
+              </span>
+            </div>
+            <p className="settingsLead">{project.description || "No project description has been added."}</p>
+            <dl className="projectOverviewGrid">
+              <div><dt>Key</dt><dd>{project.key}</dd></div>
+              <div><dt>Tasks</dt><dd>{counts.tasks}</dd></div>
+              <div><dt>Talks</dt><dd>{counts.talks}</dd></div>
+              <div><dt>Activity</dt><dd>{counts.activity}</dd></div>
+              <div><dt>Capabilities</dt><dd>{counts.capabilities}</dd></div>
+            </dl>
+          </div>
+
+          <div className="settingsPanel dangerZone" aria-labelledby="project-danger-zone-title">
+            <div className="settingsPanelHeader">
+              <div>
+                <div className="eyebrow">Project lifecycle</div>
+                <h3 id="project-danger-zone-title">Danger zone</h3>
+              </div>
+            </div>
+            <div className="dangerZoneAction">
+              <div>
+                <strong>{project.archived ? "Unarchive this project" : "Archive this project"}</strong>
+                <p>
+                  {project.archived
+                    ? "Return the project to active project lists and agent routing."
+                    : "Hide the project from active lists without changing any tasks or project records."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghostButton"
+                disabled={Boolean(lifecycleState.pending) || (!project.archived && counts.activeTasks > 0)}
+                onClick={() => changeArchivedState(!project.archived)}
+                title={!project.archived && counts.activeTasks > 0 ? "Finish or close active in-progress, review, and testing tasks first." : ""}
+              >
+                <Archive size={16} />
+                {lifecycleState.pending === "archive"
+                  ? "Archiving…"
+                  : lifecycleState.pending === "unarchive"
+                    ? "Unarchiving…"
+                    : project.archived
+                      ? "Unarchive project"
+                      : "Archive project"}
+              </button>
+            </div>
+            <div className="dangerZoneAction permanentAction">
+              <div>
+                <strong>Delete this project</strong>
+                <p>Permanently remove this project and its tasks, talks, activity, capabilities, and attachments.</p>
+              </div>
+              <button
+                type="button"
+                className="dangerButton"
+                disabled={Boolean(lifecycleState.pending) || counts.activeTasks > 0}
+                onClick={() => {
+                  setLifecycleState({ pending: "", error: "" });
+                  setDeleteConfirmation("");
+                  setDeleteOpen(true);
+                }}
+              >
+                Delete project
+              </button>
+            </div>
+            {counts.activeTasks > 0 ? (
+              <div className="lifecycleGuardNotice">
+                <AlertCircle size={16} />
+                {counts.activeTasks} active task{counts.activeTasks === 1 ? "" : "s"} must leave in progress, review, or testing before this project can be archived or deleted.
+              </div>
+            ) : null}
+            {lifecycleState.error ? <div className="settingsError lifecycleError">{lifecycleState.error}</div> : null}
+          </div>
+
+          {deleteOpen ? (
+            <div className="projectDeleteBackdrop">
+              <div className="projectDeleteDialog" role="dialog" aria-modal="true" aria-labelledby="delete-project-title">
+                <form onSubmit={confirmDelete}>
+                <div className="settingsPanelHeader">
+                  <div>
+                    <div className="eyebrow">Permanent action</div>
+                    <h3 id="delete-project-title">Delete {project.name}?</h3>
+                  </div>
+                  <button type="button" className="iconButton" aria-label="Cancel project deletion" onClick={() => setDeleteOpen(false)}>
+                    <X size={17} />
+                  </button>
+                </div>
+                <p className="settingsLead">This cannot be undone. The following project-owned records will be removed:</p>
+                <ul className="deleteCounts">
+                  <li><strong>{counts.tasks}</strong> tasks</li>
+                  <li><strong>{counts.attachments}</strong> attachments</li>
+                  <li><strong>{counts.talks}</strong> talk messages</li>
+                  <li><strong>{counts.comments}</strong> task comments</li>
+                  <li><strong>{counts.activity}</strong> activity events</li>
+                  <li><strong>{counts.capabilities}</strong> capabilities</li>
+                </ul>
+                <label className="fieldLabel" htmlFor="delete-project-confirmation">
+                  Type <strong>{project.name}</strong> to confirm
+                </label>
+                <input
+                  id="delete-project-confirmation"
+                  value={deleteConfirmation}
+                  autoFocus
+                  onChange={(event) => setDeleteConfirmation(event.target.value)}
+                  autoComplete="off"
+                />
+                {lifecycleState.error ? <div className="settingsError lifecycleError">{lifecycleState.error}</div> : null}
+                <div className="settingsFormFooter dialogActions">
+                  <button type="button" className="ghostButton" onClick={() => setDeleteOpen(false)} disabled={lifecycleState.pending === "delete"}>
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="dangerButton"
+                    disabled={deleteConfirmation !== project.name || lifecycleState.pending === "delete"}
+                  >
+                    {lifecycleState.pending === "delete" ? "Deleting…" : `Delete ${project.name}`}
+                  </button>
+                </div>
+                </form>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       <div className="settingsPanel">
         <div className="settingsPanelHeader">
           <div>

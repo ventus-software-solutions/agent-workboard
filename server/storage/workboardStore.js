@@ -27,6 +27,7 @@ export const STATUSES = [
 ];
 
 export const PRIORITIES = ["low", "normal", "high", "urgent"];
+const PROJECT_LIFECYCLE_BLOCKING_STATUSES = new Set(["in_progress", "review", "testing"]);
 export const COMPLETION_TYPES = ["merged", "no-code", "audit-only", "superseded", "legacy-needs-audit"];
 export const WORK_ITEM_TYPES = [
   { id: "epic", label: "Epic", claimable: false, container: true },
@@ -1718,10 +1719,27 @@ export class WorkboardStore {
     };
   }
 
-  listProjects({ includeArchived = false } = {}) {
+  listProjects({ includeArchived = false, includeCounts = false } = {}) {
     return this.data.projects
       .filter((project) => includeArchived || !project.archived)
+      .map((project) => includeCounts ? { ...project, recordCounts: this.getProjectRecordCounts(project.id) } : project)
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  getProjectRecordCounts(projectIdInput) {
+    const project = this.getProject(projectIdInput);
+    const tasks = this.data.tasks.filter((task) => task.projectId === project.id);
+    return {
+      tasks: tasks.length,
+      talks: this.data.talkMessages.filter((message) => message.projectId === project.id).length,
+      activity:
+        this.data.events.filter((event) => event.projectId === project.id).length +
+        tasks.reduce((total, task) => total + (task.activity || []).length, 0),
+      comments: tasks.reduce((total, task) => total + (task.comments || []).length, 0),
+      capabilities: this.data.capabilities.filter((capability) => capability.projectId === project.id).length,
+      attachments: tasks.reduce((total, task) => total + (task.attachments || []).length, 0),
+      activeTasks: tasks.filter((task) => PROJECT_LIFECYCLE_BLOCKING_STATUSES.has(task.status)).length
+    };
   }
 
   projectDataSourcesSupported() {
@@ -1800,6 +1818,157 @@ export class WorkboardStore {
       }
       return this.getProject(project.id);
     });
+  }
+
+  async updateProject(projectIdInput, patch = {}, actor = "") {
+    const projectId = normalizeText(projectIdInput);
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      const project = this.getProject(projectId);
+      const actorId = normalizeText(actor || patch.actor) || "operator";
+      const changes = [];
+
+      if (Object.prototype.hasOwnProperty.call(patch, "name")) {
+        const name = normalizeText(patch.name);
+        if (!name) throw httpError("Project name is required.", 400);
+        if (name !== project.name) {
+          project.name = name;
+          changes.push("name");
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "description")) {
+        const description = normalizeText(patch.description);
+        if (description !== project.description) {
+          project.description = description;
+          changes.push("description");
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "archived")) {
+        if (typeof patch.archived !== "boolean") throw httpError("Project archived must be a boolean.", 400);
+        const archived = patch.archived;
+        if (archived !== project.archived) {
+          if (archived) this.assertProjectLifecycleIdle(project.id, "archive");
+          project.archived = archived;
+          changes.push(archived ? "archived" : "unarchived");
+        }
+      }
+
+      if (changes.length === 0) return project;
+      const updatedAt = now();
+      project.updatedAt = updatedAt;
+      this.data.events.push({
+        id: id("event"),
+        projectId: project.id,
+        actor: actorId,
+        type: project.archived && changes.includes("archived")
+          ? "project.archived"
+          : changes.includes("unarchived")
+            ? "project.unarchived"
+            : "project.updated",
+        message: changes.includes("archived")
+          ? `Archived project ${project.name}.`
+          : changes.includes("unarchived")
+            ? `Unarchived project ${project.name}.`
+            : `Updated project ${project.name}: ${changes.join(", ")}.`,
+        createdAt: updatedAt
+      });
+      await this.writeData(this.data);
+      return this.getProject(project.id);
+    });
+  }
+
+  async deleteProject(projectIdInput, input = {}) {
+    const projectId = normalizeText(projectIdInput);
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      const project = this.getProject(projectId);
+      const confirmationName = typeof input.confirmationName === "string" ? input.confirmationName : "";
+      if (confirmationName !== project.name) {
+        throw httpError(`Type the project name exactly to delete ${project.name}.`, 409, {
+          reason: "project_delete_confirmation_mismatch",
+          projectId: project.id,
+          projectName: project.name
+        });
+      }
+      this.assertProjectLifecycleIdle(project.id, "delete");
+
+      const projectTasks = this.data.tasks.filter((task) => task.projectId === project.id);
+      const taskIds = new Set(projectTasks.map((task) => task.id));
+      const attachmentNames = projectTasks.flatMap((task) => (task.attachments || []).map((attachment) => attachment.storedName)).filter(Boolean);
+      const counts = {
+        tasks: projectTasks.length,
+        talks: this.data.talkMessages.filter((message) => message.projectId === project.id).length,
+        activity:
+          this.data.events.filter((event) => event.projectId === project.id).length +
+          projectTasks.reduce((total, task) => total + (task.activity || []).length, 0),
+        comments: projectTasks.reduce((total, task) => total + (task.comments || []).length, 0),
+        capabilities: this.data.capabilities.filter((capability) => capability.projectId === project.id).length,
+        attachments: attachmentNames.length
+      };
+
+      this.data.projects = this.data.projects.filter((candidate) => candidate.id !== project.id);
+      this.data.tasks = this.data.tasks.filter((task) => task.projectId !== project.id);
+      this.data.talkMessages = this.data.talkMessages.filter((message) => message.projectId !== project.id);
+      this.data.events = this.data.events.filter((event) => event.projectId !== project.id);
+      this.data.capabilities = this.data.capabilities
+        .filter((capability) => capability.projectId !== project.id)
+        .map((capability) => ({
+          ...capability,
+          relatedTaskIds: (capability.relatedTaskIds || []).filter((taskId) => !taskIds.has(taskId))
+        }));
+      this.data.tasks = this.data.tasks.map((task) => ({
+        ...task,
+        dependsOn: (task.dependsOn || []).filter((taskId) => !taskIds.has(taskId)),
+        blockedBy: (task.blockedBy || []).filter((taskId) => !taskIds.has(taskId)),
+        parentTaskId: taskIds.has(task.parentTaskId) ? "" : task.parentTaskId,
+        childTaskIds: (task.childTaskIds || []).filter((taskId) => !taskIds.has(taskId))
+      }));
+      for (const presence of Object.values(this.data.agentPresence || {})) {
+        if (presence.activeProjectId === project.id) delete presence.activeProjectId;
+        if (taskIds.has(presence.currentTaskId)) delete presence.currentTaskId;
+      }
+      for (const slot of this.data.agentSlots || []) {
+        if (slot.activeProjectId === project.id) slot.activeProjectId = "";
+      }
+
+      const deletedAt = now();
+      this.data.events.push({
+        id: id("event"),
+        projectId: "",
+        deletedProjectId: project.id,
+        actor: normalizeText(input.actor) || "operator",
+        type: "project.deleted",
+        message: `Deleted project ${project.name} and its owned records.`,
+        createdAt: deletedAt
+      });
+      await this.writeData(this.data);
+      const removalResults = await Promise.allSettled(
+        attachmentNames.map(async (storedName) => {
+          if (path.basename(storedName) !== storedName) {
+            throw new Error("Unsafe stored attachment name");
+          }
+          return rm(path.join(this.uploadsDir, storedName), { force: true });
+        })
+      );
+      const warnings = removalResults
+        .map((result, index) => result.status === "rejected" ? `Could not remove attachment ${attachmentNames[index]}: ${result.reason?.message || result.reason}` : "")
+        .filter(Boolean);
+      return { project: { ...project }, counts, deletedAt, warnings };
+    });
+  }
+
+  assertProjectLifecycleIdle(projectId, action) {
+    const activeTasks = this.data.tasks
+      .filter((task) => task.projectId === projectId && PROJECT_LIFECYCLE_BLOCKING_STATUSES.has(task.status))
+      .map((task) => ({ id: task.id, title: task.title, status: task.status }));
+    if (activeTasks.length > 0) {
+      throw httpError(`Project cannot be ${action === "archive" ? "archived" : "deleted"} while work is active.`, 409, {
+        reason: "project_has_active_work",
+        action,
+        statuses: [...PROJECT_LIFECYCLE_BLOCKING_STATUSES],
+        tasks: activeTasks
+      });
+    }
   }
 
   listTasks(filters = {}) {

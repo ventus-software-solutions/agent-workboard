@@ -25,6 +25,45 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("archives, lists, unarchives, and hard-deletes projects through lifecycle endpoints", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Lifecycle API Project", key: "LAPI" }).expect(201)).body.project;
+    await request(app).post("/api/tasks").send({ projectId: project.id, title: "Parked API work", status: "ready" }).expect(201);
+
+    const archived = await request(app)
+      .patch(`/api/projects/${project.id}`)
+      .send({ archived: true, actor: "operator-ui" })
+      .expect(200);
+    expect(archived.body.project).toMatchObject({ id: project.id, archived: true });
+    expect((await request(app).get("/api/projects").expect(200)).body.projects).not.toContainEqual(
+      expect.objectContaining({ id: project.id })
+    );
+    expect((await request(app).get("/api/projects?includeArchived=true").expect(200)).body.projects).toContainEqual(
+      expect.objectContaining({ id: project.id, archived: true })
+    );
+
+    await request(app).patch(`/api/projects/${project.id}`).send({ archived: false }).expect(200);
+    await request(app).delete(`/api/projects/${project.id}`).send({ confirmationName: "wrong" }).expect(409);
+    const deleted = await request(app)
+      .delete(`/api/projects/${project.id}`)
+      .send({ confirmationName: project.name, actor: "operator-ui" })
+      .expect(200);
+    expect(deleted.body.deletion).toMatchObject({ project: { id: project.id }, counts: { tasks: 1 } });
+    await request(app).get(`/api/projects/${project.id}/activity`).expect(404);
+  });
+
+  it("rejects archive and delete API calls while a project has active work", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Active Lifecycle API" }).expect(201)).body.project;
+    await request(app).post("/api/tasks").send({ projectId: project.id, title: "Active API work", status: "in_progress" }).expect(201);
+
+    const archive = await request(app).patch(`/api/projects/${project.id}`).send({ archived: true }).expect(409);
+    expect(archive.body.error.details).toMatchObject({ reason: "project_has_active_work", action: "archive" });
+    const deletion = await request(app)
+      .delete(`/api/projects/${project.id}`)
+      .send({ confirmationName: project.name })
+      .expect(409);
+    expect(deletion.body.error.details).toMatchObject({ reason: "project_has_active_work", action: "delete" });
+  });
+
   it("round-trips touched paths and exposes advisory collisions through task and next-task APIs", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Collision API Project" }).expect(201)).body.project;
     const first = (
