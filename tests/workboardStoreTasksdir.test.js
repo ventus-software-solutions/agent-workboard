@@ -409,4 +409,24 @@ describe("WorkboardStore tasksdir mode", () => {
       reviewVerdict: { decision: "request_changes", findingsCount: 1, commitSha: "abc1234" }
     });
   });
+
+  it("persists task delivery links in tasksdir sidecars across store reopen", async () => {
+    let store = await openStore();
+    const task = store.getTask(FBR_BUG);
+    await store.updateTask(
+      FBR_BUG,
+      {
+        pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+        branch: "implementer/task-links",
+        expectedRevision: task.revision
+      },
+      "implementer-agent"
+    );
+
+    store = await openStore();
+    expect(store.getTask(FBR_BUG)).toMatchObject({
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links"
+    });
+  });
 });

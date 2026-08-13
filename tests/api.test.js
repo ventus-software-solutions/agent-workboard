@@ -262,6 +262,89 @@ describe("Agent Workboard API", () => {
     });
   });
 
+  it("persists first-class pull request and branch metadata with URL validation", async () => {
+    const project = (
+      await request(app).post("/api/projects").send({ name: "Task Links API Project", key: "TLINK" }).expect(201)
+    ).body.project;
+    const created = await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Expose task delivery links",
+        status: "ready",
+        role: "implementer",
+        pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+        branch: "implementer/task-links"
+      })
+      .expect(201);
+
+    expect(created.body.task).toMatchObject({
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links"
+    });
+
+    await request(app)
+      .patch(`/api/tasks/${created.body.task.id}`)
+      .send({ pullRequestUrl: "https://github.com/acme/workboard/pull/missing-revision", actor: "implementer-agent" })
+      .expect(400);
+    await request(app)
+      .patch(`/api/tasks/${created.body.task.id}`)
+      .send({ branch: "implementer/missing-revision", actor: "implementer-agent" })
+      .expect(400);
+
+    const updated = await request(app)
+      .patch(`/api/tasks/${created.body.task.id}`)
+      .send({
+        pullRequestUrl: "https://github.com/acme/workboard/pull/43",
+        branch: "implementer/task-links-v2",
+        actor: "implementer-agent",
+        expectedRevision: created.body.task.revision
+      })
+      .expect(200);
+    expect(updated.body.task).toMatchObject({
+      pullRequestUrl: "https://github.com/acme/workboard/pull/43",
+      branch: "implementer/task-links-v2"
+    });
+
+    for (const stalePatch of [
+      { pullRequestUrl: "https://github.com/acme/workboard/pull/stale" },
+      { branch: "implementer/stale-task-links" }
+    ]) {
+      const stale = await request(app)
+        .patch(`/api/tasks/${created.body.task.id}`)
+        .send({ ...stalePatch, actor: "implementer-agent", expectedRevision: created.body.task.revision })
+        .expect(409);
+      expect(stale.body.error.details).toMatchObject({
+        taskId: created.body.task.id,
+        expectedRevision: created.body.task.revision,
+        currentRevision: updated.body.task.revision
+      });
+    }
+
+    await request(app)
+      .patch(`/api/tasks/${created.body.task.id}`)
+      .send({
+        pullRequestUrl: "javascript:alert(1)",
+        actor: "implementer-agent",
+        expectedRevision: updated.body.task.revision
+      })
+      .expect(400);
+    await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Reject unsafe task link",
+        pullRequestUrl: "data:text/html,bad"
+      })
+      .expect(400);
+
+    const persisted = await request(app).get(`/api/tasks/${created.body.task.id}`).expect(200);
+    expect(persisted.body.task).toMatchObject({
+      pullRequestUrl: "https://github.com/acme/workboard/pull/43",
+      branch: "implementer/task-links-v2"
+    });
+  });
+
   it("exports and imports a project backup package without losing task evidence", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Backup API Project", key: "BKP" }).expect(201)).body
       .project;
@@ -272,6 +355,8 @@ describe("Agent Workboard API", () => {
           projectId: project.id,
           title: "Back up this task",
           description: "Needs comments, activity, and attachment metadata.",
+          pullRequestUrl: "https://github.com/acme/workboard/pull/88",
+          branch: "implementer/backup-links",
           status: "ready",
           role: "implementer",
           labels: ["backup"]
@@ -311,6 +396,8 @@ describe("Agent Workboard API", () => {
       id: task.id,
       projectId: project.id,
       title: "Back up this task",
+      pullRequestUrl: "https://github.com/acme/workboard/pull/88",
+      branch: "implementer/backup-links",
       comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
       attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
     });
@@ -335,6 +422,8 @@ describe("Agent Workboard API", () => {
         id: task.id,
         projectId: project.id,
         title: "Back up this task",
+        pullRequestUrl: "https://github.com/acme/workboard/pull/88",
+        branch: "implementer/backup-links",
         comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
         attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
       });

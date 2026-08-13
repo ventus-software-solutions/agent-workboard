@@ -5,6 +5,7 @@ import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 import { createWorkboardPersistence } from "./persistence.js";
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
+import { isSafeHttpUrl } from "../../shared/taskLinks.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -86,6 +87,8 @@ const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
 const FULL_TASK_EDIT_FIELDS = [
   "title",
   "description",
+  "pullRequestUrl",
+  "branch",
   "assignee",
   "priority",
   "role",
@@ -700,6 +703,16 @@ export class WorkboardStore {
     }
 
     for (const task of this.data.tasks || []) {
+      const pullRequestUrl = normalizeTaskPullRequestUrl(task.pullRequestUrl, { migrating: true });
+      if (task.pullRequestUrl !== pullRequestUrl) {
+        task.pullRequestUrl = pullRequestUrl;
+        migrated = true;
+      }
+      const branch = normalizeText(task.branch);
+      if (task.branch !== branch) {
+        task.branch = branch;
+        migrated = true;
+      }
       if (!Array.isArray(task.comments)) {
         task.comments = [];
         migrated = true;
@@ -2344,6 +2357,8 @@ export class WorkboardStore {
       projectId,
       title,
       description: normalizeText(input.description),
+      pullRequestUrl: normalizeTaskPullRequestUrl(input.pullRequestUrl),
+      branch: normalizeText(input.branch),
       status,
       priority,
       role,
@@ -2578,13 +2593,21 @@ export class WorkboardStore {
       }
     }
 
-    for (const field of ["description", "assignee"]) {
+    for (const field of ["description", "assignee", "branch"]) {
       if (field in patch) {
         const next = normalizeText(patch[field]);
         if (task[field] !== next) {
           task[field] = next;
           changes.push(field);
         }
+      }
+    }
+
+    if ("pullRequestUrl" in patch) {
+      const next = normalizeTaskPullRequestUrl(patch.pullRequestUrl);
+      if (task.pullRequestUrl !== next) {
+        task.pullRequestUrl = next;
+        changes.push("pullRequestUrl");
       }
     }
 
@@ -4520,6 +4543,13 @@ function activeTaskClaimError(agentId, activeTask, workMode) {
 
 function isFullTaskEditPatch(patch) {
   return FULL_TASK_EDIT_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(patch, field));
+}
+
+function normalizeTaskPullRequestUrl(value, { migrating = false } = {}) {
+  const url = normalizeText(value);
+  if (!url || isSafeHttpUrl(url)) return url;
+  if (migrating) return "";
+  throw httpError("Task pullRequestUrl must be an http or https URL.", 400, { field: "pullRequestUrl" });
 }
 
 function readExpectedTaskRevision(patch) {

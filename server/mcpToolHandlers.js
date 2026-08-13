@@ -25,6 +25,9 @@ export const MCP_TOOL_NAMES = [
 
 export function buildUpdateTaskStatusPatch(input) {
   const patch = { status: input.status };
+  for (const field of ["pullRequestUrl", "branch"]) {
+    if (input[field] !== undefined) patch[field] = input[field];
+  }
   if (input.completion !== undefined) {
     patch.completion = input.completion;
   }

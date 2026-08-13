@@ -1114,6 +1114,16 @@ button {
   margin: 0;
   color: #d6e0ea;
   line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.talkMessage p a,
+.comment p a,
+.taskCard > p a {
+  color: #8edcf3;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .talkMeta button {
@@ -2078,6 +2088,50 @@ button {
   -webkit-box-orient: vertical;
 }
 
+.taskDeliveryLinks {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  margin-top: 7px;
+}
+
+.taskDeliveryLinks a,
+.taskDeliveryLinks > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  color: #a7e5f7;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.taskDeliveryLinks a:hover,
+.taskDeliveryLinks a:focus-visible {
+  color: #ddf7ff;
+  text-decoration: underline;
+}
+
+.taskDeliveryLinks code {
+  color: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.taskDeliveryLinks.compact {
+  margin-top: -1px;
+}
+
+.taskDeliveryLinks.compact a,
+.taskDeliveryLinks.compact > span {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: #26343d;
+}
+
 .capabilityRegistry {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -2955,6 +3009,10 @@ button {
   line-height: 1.2;
 }
 
+.drawerHeader .taskDeliveryLinks {
+  margin-top: 8px;
+}
+
 .iconButton {
   display: grid;
   place-items: center;
@@ -3261,6 +3319,11 @@ button {
   margin: 8px 0 0;
   color: #c4ced8;
   line-height: 1.4;
+}
+
+.comment p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .dialogBackdrop {

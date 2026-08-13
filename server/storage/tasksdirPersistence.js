@@ -437,6 +437,8 @@ export class TasksdirWorkboardPersistence {
       task.reviewedBy = asText(sidecar.reviewedBy);
       task.testedBy = asText(sidecar.testedBy);
       task.reviewVerdict = sidecar.reviewVerdict && typeof sidecar.reviewVerdict === "object" ? clone(sidecar.reviewVerdict) : null;
+      task.pullRequestUrl = asText(sidecar.pullRequestUrl);
+      task.branch = asText(sidecar.branch);
       tasks.push(task);
       this.sidecarCache.set(entry.id, clone(sidecarOfTask(task)));
     }
@@ -548,6 +550,8 @@ export class TasksdirWorkboardPersistence {
     task.reviewedBy = asText(cached?.reviewedBy);
     task.testedBy = asText(cached?.testedBy);
     task.reviewVerdict = cached?.reviewVerdict && typeof cached.reviewVerdict === "object" ? clone(cached.reviewVerdict) : null;
+    task.pullRequestUrl = asText(cached?.pullRequestUrl);
+    task.branch = asText(cached?.branch);
   }
 
   async createTaskFile(plan) {
@@ -658,7 +662,9 @@ function sidecarOfTask(task) {
     approvalHistory: task.approvalHistory || [],
     reviewedBy: asText(task.reviewedBy),
     testedBy: asText(task.testedBy),
-    reviewVerdict: task.reviewVerdict && typeof task.reviewVerdict === "object" ? clone(task.reviewVerdict) : null
+    reviewVerdict: task.reviewVerdict && typeof task.reviewVerdict === "object" ? clone(task.reviewVerdict) : null,
+    pullRequestUrl: asText(task.pullRequestUrl),
+    branch: asText(task.branch)
   };
 }
 

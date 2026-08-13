@@ -139,6 +139,46 @@ describe("Agent Workboard MCP tools", () => {
 
     expect(registrations.map((registration) => registration.name)).toEqual(MCP_TOOL_NAMES);
 
+    const createTask = registrations.find((registration) => registration.name === "create_task");
+    expect(createTask.config.inputSchema).toMatchObject({
+      pullRequestUrl: expect.anything(),
+      branch: expect.anything()
+    });
+    await createTask.handler({
+      projectId: "project_123",
+      title: "Expose delivery links",
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links"
+    });
+    expect(fakeStore.createTask).toHaveBeenCalledWith({
+      projectId: "project_123",
+      title: "Expose delivery links",
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links"
+    });
+
+    const updateTaskStatus = registrations.find((registration) => registration.name === "update_task_status");
+    expect(updateTaskStatus.config.inputSchema).toMatchObject({
+      pullRequestUrl: expect.anything(),
+      branch: expect.anything()
+    });
+    await updateTaskStatus.handler({
+      taskId: "task_123",
+      status: "review",
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links",
+      actor: "implementer-agent"
+    });
+    expect(fakeStore.updateTask).toHaveBeenCalledWith(
+      "task_123",
+      {
+        status: "review",
+        pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+        branch: "implementer/task-links"
+      },
+      "implementer-agent"
+    );
+
     const getNext = registrations.find((registration) => registration.name === "get_next_task");
     expect(parseTextResult(await getNext.handler({ agentId: "mcp-agent", projectId: "project_123" }))).toMatchObject({
       task: { id: "task_123" },

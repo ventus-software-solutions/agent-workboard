@@ -522,6 +522,7 @@ function worktreeDiscipline(agentId = "<agent-id>", integrationStatus = null) {
     `Prefer a separate worktree for implementation, for example \`${worktreeExample}\`.`,
     "Keep the main checkout for running/observing the local service and for operator state. Do not pile unrelated agent edits into it.",
     "Commit only your task files, run the task-specific checks, push your branch when possible, then comment the branch/commit/test evidence on the task.",
+    "When handing implementation to review, save the task-level branch and pullRequestUrl fields when they are available.",
     "If you find dirty files you did not create, do not overwrite them. Report the conflict on the task or in Agent Talks."
   ];
 }

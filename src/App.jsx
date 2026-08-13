@@ -43,6 +43,8 @@ import { createPollingScheduler } from "./lib/polling.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
 import { describeSystemStatus } from "./lib/systemStatus.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
+import { LinkifiedText } from "./components/LinkifiedText.jsx";
+import { TaskDeliveryLinks } from "./components/TaskDeliveryLinks.jsx";
 
 const DRAG_START_THRESHOLD = 8;
 
@@ -2213,7 +2215,7 @@ function AgentTalksPanel({ projectId, talks, tasks, filters, onFilterChange, onS
               <strong>{message.authorAgentId}</strong>
               <time>{formatDate(message.createdAt)}</time>
             </div>
-            <p>{message.body}</p>
+            <p><LinkifiedText>{message.body}</LinkifiedText></p>
             <div className="talkMeta">
               {message.relatedTask && (
                 <button onClick={() => onSelectTask(message.relatedTask.id)}>{message.relatedTask.title}</button>
@@ -2870,7 +2872,8 @@ function TaskCard({
         )}
       </div>
       <h4>{task.title}</h4>
-      <p>{task.description || "No description yet."}</p>
+      <p><LinkifiedText>{task.description || "No description yet."}</LinkifiedText></p>
+      <TaskDeliveryLinks task={task} compact />
       <div className="taskMeta">
         <span title={role?.summary}>
           <Icon size={14} />
@@ -2985,6 +2988,7 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
         <div>
           <div className="eyebrow">Task</div>
           <h2>{task.title}</h2>
+          <TaskDeliveryLinks task={task} />
         </div>
         <button className="iconButton" onClick={onClose} title="Close">
           <X size={18} />
@@ -3125,6 +3129,23 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
           />
         </label>
         <label className="wide">
+          Pull request URL
+          <input
+            type="url"
+            value={draft.pullRequestUrl}
+            onChange={(event) => updateDraft({ pullRequestUrl: event.target.value })}
+            placeholder="https://github.com/owner/repo/pull/123"
+          />
+        </label>
+        <label className="wide">
+          Branch
+          <input
+            value={draft.branch}
+            onChange={(event) => updateDraft({ branch: event.target.value })}
+            placeholder="implementer/task-slug"
+          />
+        </label>
+        <label className="wide">
           Parent task
           <select
             aria-label="Parent task"
@@ -3262,7 +3283,7 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
             <div className="comment" key={item.id}>
               <strong>{item.author}</strong>
               <span>{new Date(item.createdAt).toLocaleString()}</span>
-              <p>{item.body}</p>
+              <p><LinkifiedText>{item.body}</LinkifiedText></p>
             </div>
           ))}
         </div>
@@ -3399,6 +3420,8 @@ function taskDraftFromTask(task) {
   return {
     title: task.title,
     description: task.description,
+    pullRequestUrl: task.pullRequestUrl || "",
+    branch: task.branch || "",
     assignee: task.assignee,
     role: task.role,
     workItemType: task.workItemType || "task",
@@ -3602,6 +3625,8 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
     projectId,
     title: "",
     description: "",
+    pullRequestUrl: "",
+    branch: "",
     role: "implementer",
     workItemType: "task",
     priority: "normal",
@@ -3663,6 +3688,23 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
           <textarea
             value={draft.description}
             onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+        </label>
+        <label className="wide">
+          Pull request URL
+          <input
+            type="url"
+            value={draft.pullRequestUrl}
+            onChange={(event) => setDraft({ ...draft, pullRequestUrl: event.target.value })}
+            placeholder="https://github.com/owner/repo/pull/123"
+          />
+        </label>
+        <label className="wide">
+          Branch
+          <input
+            value={draft.branch}
+            onChange={(event) => setDraft({ ...draft, branch: event.target.value })}
+            placeholder="implementer/task-slug"
           />
         </label>
         <button className="primaryButton wide" onClick={() => onCreate(draft)} disabled={!draft.title.trim()}>
