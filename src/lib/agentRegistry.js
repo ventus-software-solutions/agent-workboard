@@ -173,6 +173,7 @@ function finalizeAgent(agent) {
     status,
     statusLabel: STATUS_LABELS[status] || titleize(status),
     active: Boolean(agent.slot?.active),
+    activeProjectId: agent.slot?.activeProjectId || "",
     paused: Boolean(agent.slot?.paused),
     stale: Boolean(agent.slot?.stale),
     waiting: agent.slot?.presence?.state === "waiting" && agent.slot?.presence?.status === "waiting",
