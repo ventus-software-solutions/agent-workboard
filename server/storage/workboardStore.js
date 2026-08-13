@@ -1811,7 +1811,11 @@ export class WorkboardStore {
         missing: false
       };
     });
-    const completedTaskIds = linkedTasks.filter((task) => task.status === "done").map((task) => task.id);
+    // Done is a workflow terminal state, not proof that implementation shipped.
+    // Only explicit merged completion evidence can make a non-live capability look stale.
+    const completedTaskIds = linkedTasks
+      .filter((task) => task.status === "done" && task.completionType === "merged")
+      .map((task) => task.id);
     const driftEligible = ["proposed", "planned", "in_progress", "review"].includes(capability.status);
     const driftDetected = driftEligible && completedTaskIds.length > 0;
     const taskWord = completedTaskIds.length === 1 ? "task is" : "tasks are";
@@ -1824,7 +1828,7 @@ export class WorkboardStore {
         reason: driftDetected ? "completed_task_non_live" : "",
         completedTaskIds,
         summary: driftDetected
-          ? `${completedTaskIds.length} linked ${taskWord} done, but this capability is still ${capability.status}.`
+          ? `${completedTaskIds.length} linked ${taskWord} merged, but this capability is still ${capability.status}.`
           : ""
       }
     };
