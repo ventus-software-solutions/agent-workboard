@@ -10,6 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  image-smoke:
+    name: Production image boots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build production image
+        run: docker build --tag "agent-workboard-ci:${GITHUB_SHA}" .
+
+      - name: Boot image and verify health
+        run: bash scripts/docker-image-smoke.sh "agent-workboard-ci:${GITHUB_SHA}"
+
   test:
     name: Test and build (${{ matrix.storage }})
     runs-on: ubuntu-latest
