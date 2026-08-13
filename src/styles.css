@@ -110,6 +110,104 @@ button {
   border-radius: 8px;
 }
 
+.railProjectActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.railProjectActions .railAction {
+  flex: 1 1 auto;
+}
+
+.helpPopover {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: #c3d4de;
+}
+
+.helpPopoverTrigger,
+.helpPopoverClose {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #46545e;
+  border-radius: 999px;
+  background: #1a2228;
+  color: #bfd7e2;
+}
+
+.helpPopoverTrigger:hover,
+.helpPopoverTrigger:focus-visible,
+.helpPopoverClose:hover,
+.helpPopoverClose:focus-visible {
+  border-color: #8bc8d8;
+  color: #e6f8fc;
+  outline: 2px solid rgb(127 183 199 / 28%);
+  outline-offset: 2px;
+}
+
+.helpPopoverPanel {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 7px);
+  right: 0;
+  display: grid;
+  gap: 10px;
+  width: min(340px, calc(100vw - 28px));
+  padding: 13px;
+  border: 1px solid #53636e;
+  border-radius: 10px;
+  background: #182027;
+  box-shadow: 0 16px 38px rgb(0 0 0 / 42%);
+  color: #dce8ee;
+  text-align: left;
+}
+
+.helpPopoverHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.helpPopoverHeader strong {
+  color: #f4fafc;
+  font-size: 15px;
+}
+
+.helpPopoverClose {
+  width: 26px;
+  height: 26px;
+}
+
+.helpPopoverCopy {
+  color: #b8c8d1;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.helpPopoverLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  color: #9ee7ff;
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.helpPopoverLink:hover,
+.helpPopoverLink:focus-visible {
+  color: #d7f6ff;
+  text-decoration: underline;
+}
+
 .railAction,
 .primaryButton,
 .ghostButton,
@@ -373,6 +471,12 @@ button {
   min-width: 0;
 }
 
+.topTitleLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .topBar h2 {
   margin-top: 3px;
   font-size: 24px;
@@ -455,6 +559,13 @@ button {
   color: #bdd5df;
 }
 
+.integrationStatusGroup,
+.sectionHeaderActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .integrationStatus strong {
   color: #eef6f8;
   font-size: 12px;
@@ -528,12 +639,20 @@ button {
   flex-wrap: wrap;
 }
 
+.workspaceTabsRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(580px, 100%);
+  margin-bottom: 12px;
+}
+
 .workspaceTabs {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  width: min(540px, 100%);
-  margin-bottom: 12px;
+  min-width: 0;
 }
 
 .workspaceTabs button {
@@ -2583,7 +2702,7 @@ button {
   font-size: 19px;
 }
 
-.operatorAttentionHeader > span {
+.operatorAttentionCount {
   display: grid;
   place-items: center;
   min-width: 30px;
@@ -3552,6 +3671,28 @@ button {
 
   .formGrid {
     grid-template-columns: 1fr;
+  }
+
+  .helpPopoverPanel {
+    position: fixed;
+    top: auto;
+    right: 14px;
+    bottom: 14px;
+    left: 14px;
+    width: auto;
+  }
+
+  .workspaceTabsRow {
+    align-items: flex-start;
+  }
+
+  .workspaceTabs button {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .workspaceTabs button strong {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
 

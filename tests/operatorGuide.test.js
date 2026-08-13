@@ -53,6 +53,7 @@ describe("operator guide", () => {
       "## Tasks",
       "## Agents",
       "## Capabilities",
+      "## Settings",
       "## Agent Talks",
       "## Operator Approvals",
       "## Worktree Cleanup",

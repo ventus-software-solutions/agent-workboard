@@ -221,6 +221,22 @@ Capability states are `proposed`, `planned`, `in_progress`, `review`, `live`, `b
 
 <!-- guide-constants:capability-statuses:end -->
 
+## Settings
+
+### What it is
+
+Settings contains deployment-wide operating rules. Unlike projects and tasks, these rules apply across the running Agent Workboard installation.
+
+### What it does
+
+The view makes shared process expectations visible to operators and agents, including rules that generated agent instructions may reference.
+
+### What you do
+
+- Review the scope shown by the setting before changing it.
+- Treat deployment-wide edits as policy changes, not project-specific preferences.
+- Save a change only when every project should follow the new rule, then verify the success message.
+
 ## Agent Talks
 
 ### What it is

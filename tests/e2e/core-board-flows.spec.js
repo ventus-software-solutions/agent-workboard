@@ -200,6 +200,51 @@ test("edits deployment process rules from Settings and updates generated agent d
   expect(await clearedDoc.text()).not.toContain("Deployment process rules (OVERRIDE defaults)");
 });
 
+test("provides keyboard-accessible operator help for every main surface", async ({ page }) => {
+  await page.goto(baseURL);
+
+  const projectsTrigger = page.getByRole("button", { name: "About Projects" });
+  await projectsTrigger.focus();
+  await projectsTrigger.press("Enter");
+  const projectsDialog = page.getByRole("dialog", { name: "Projects" });
+  await expect(projectsDialog).toBeVisible();
+  await expect(projectsDialog.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "/operator-guide#projects");
+  await expect(projectsDialog.getByRole("button", { name: "Close Projects help" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(projectsDialog).toHaveCount(0);
+  await expect(projectsTrigger).toBeFocused();
+
+  await expectHelpLink(page, "Board and tasks", "/operator-guide#tasks");
+  await expectHelpLink(page, "Operator attention", "/operator-guide#read-the-board-in-30-seconds");
+  await expectHelpLink(page, "Integration status", "/operator-guide#integration-status");
+
+  await page.getByRole("tab", { name: /Coordination/ }).click();
+  await expectHelpLink(page, "Coordination", "/operator-guide#agent-talks");
+  await expectHelpLink(page, "Worktree cleanup", "/operator-guide#worktree-cleanup");
+
+  await page.getByRole("tab", { name: /Activity/ }).click();
+  await expectHelpLink(page, "Activity", "/operator-guide#activity");
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expectHelpLink(page, "Agents", "/operator-guide#agents");
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  await expectHelpLink(page, "Capabilities", "/operator-guide#capabilities");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expectHelpLink(page, "Settings", "/operator-guide#settings");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open sidebar" }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
+  await page.getByRole("button", { name: "About Board and tasks" }).click();
+  const compactDialog = page.getByRole("dialog", { name: "Board and tasks" });
+  const box = await compactDialog.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  expect(box.y + box.height).toBeLessThanOrEqual(844);
+});
+
 test("covers core board flows in the browser", async ({ page }) => {
   const projectName = uniqueName("E2E Core Flow Project");
   const projectKey = uniqueKey("E2E");
@@ -1589,6 +1634,17 @@ async function createTask(page, { title, role, priority, assignee, labels, descr
   await page.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toHaveCount(0);
   await closeDrawerIfOpen(page);
+}
+
+async function expectHelpLink(page, label, href) {
+  const trigger = page.getByRole("button", { name: `About ${label}` });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: label });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", href);
+  await dialog.getByRole("button", { name: `Close ${label} help` }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
 }
 
 async function postJson(page, pathname, body) {
