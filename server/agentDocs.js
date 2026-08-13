@@ -146,6 +146,7 @@ export function buildAgentDoc({
     "list_talk_messages",
     "add_comment",
     "update_task_status",
+    "release_agent_slot",
     "report_no_eligible_work"
   ];
 
@@ -465,6 +466,9 @@ function sharedWorkflow() {
     "Do implementation work in the task worktree, not in the shared main checkout.",
     "Post evidence back to the task: files changed, tests run, findings, or blockers.",
     "Move the task to review, testing, done, or blocked according to the result. Done requires a completion record.",
+    "Keep your slot lease alive: renew via bootstrap or `acquire_agent_slot` before it expires, and persist the returned `identityToken`.",
+    "On restart, re-pass your persisted `identityToken` to `acquire_agent_slot`/bootstrap to reclaim the same slot instead of taking a new one.",
+    "On graceful shutdown, release or pause your slot if a release/pause control exists (PATCH pause today, or the operator force-release path); otherwise stop renewing and the lease expires on its own.",
     "Only then look for another task."
   ];
 }

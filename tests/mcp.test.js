@@ -57,6 +57,11 @@ describe("Agent Workboard MCP tools", () => {
         }
       })),
       claimTask: vi.fn((taskId, input) => ({ id: taskId, ...input })),
+      forceReleaseAgentSlot: vi.fn((agentId, input) => ({
+        released: true,
+        agentId,
+        returnedTasks: [{ taskId: "task_x", title: "x" }]
+      })),
       acquireAgentSlot: vi.fn((input) => ({
         acquired: true,
         agentId: input.agentId || "mcp-agent",
@@ -271,6 +276,16 @@ describe("Agent Workboard MCP tools", () => {
         state: "active",
         activeProjectId: "project_team"
       }
+    });
+
+    const releaseSlot = registrations.find((registration) => registration.name === "release_agent_slot");
+    expect(parseTextResult(await releaseSlot.handler({ agentId: "mcp-agent" }))).toMatchObject({
+      released: true,
+      agentId: "mcp-agent"
+    });
+    expect(fakeStore.forceReleaseAgentSlot).toHaveBeenCalledWith("mcp-agent", {
+      actor: undefined,
+      now: undefined
     });
 
     const idle = registrations.find((registration) => registration.name === "report_no_eligible_work");

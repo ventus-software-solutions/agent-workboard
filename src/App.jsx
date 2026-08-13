@@ -354,6 +354,23 @@ export function App() {
     }
   }
 
+  async function handleReleaseAgent(agentId) {
+    setError("");
+    setAgentControlPending(agentId);
+    try {
+      const result = await api.releaseAgentSlot(agentId, { actor: "operator" });
+      await refreshAgentSlots();
+      if (selectedProjectId) {
+        const refreshed = await api.tasks({ projectId: selectedProjectId });
+        setProjectTasks(refreshed.tasks);
+      }
+    } catch (nextError) {
+      setError(nextError.message);
+    } finally {
+      setAgentControlPending("");
+    }
+  }
+
   async function updateAgentTypeCapacity(typeId, capacity) {
     setError("");
     setAgentControlPending(`type:${typeId}`);
@@ -843,6 +860,7 @@ export function App() {
               onFilterAgent={(agentId) => filterBoardByAgent(agentId).catch((nextError) => setError(nextError.message))}
               onUpdateAgentSlot={updateAgentSlotControls}
               onUpdateAgentTypeCapacity={updateAgentTypeCapacity}
+              onReleaseAgent={handleReleaseAgent}
               updatingAgentId={agentControlPending}
             />
           </>
@@ -1430,7 +1448,7 @@ function AttentionAgentList({ agents }) {
   );
 }
 
-function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, onUpdateAgentTypeCapacity, updatingAgentId }) {
+function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, onUpdateAgentTypeCapacity, onReleaseAgent, updatingAgentId }) {
   const groups = registry.groups.filter((group) => group.agents.length > 0);
 
   if (groups.length === 0) {
@@ -1470,6 +1488,7 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
                   onOpenTask={onOpenTask}
                   onFilterAgent={onFilterAgent}
                   onUpdateAgentSlot={onUpdateAgentSlot}
+                  onReleaseAgent={onReleaseAgent}
                   updatingAgentId={updatingAgentId}
                 />
               ))}
@@ -1582,15 +1601,27 @@ function AgentTypeCapacityPanel({ types, onUpdateCapacity, updatingAgentId }) {
   );
 }
 
-function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, updatingAgentId }) {
+function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onReleaseAgent, updatingAgentId }) {
   const Icon = roleIcons[agent.role] || Bot;
   const linkedTasks = agent.assignedTasks.slice(0, 4);
   const isConfiguredSlot = agent.source === "slot";
   const isUpdating = updatingAgentId === agent.id;
   const isPaused = Boolean(agent.paused);
+  const returnableTasks = (agent.assignedTasks || []).filter((task) => task.status === "in_progress");
   const selectedWorkMode = workModeOptions.some((option) => option.id === agent.workMode)
     ? agent.workMode
     : workModeOptions[0].id;
+
+  function confirmForceRelease() {
+    const taskNames = returnableTasks.map((task) => task.title).join(", ");
+    const detail = returnableTasks.length
+      ? `${returnableTasks.length} task(s) will be returned to ready: ${taskNames}`
+      : "No in-progress tasks claimed by this slot.";
+    // eslint-disable-next-line no-alert
+    if (window.confirm(`Force-release agent slot ${agent.id}? This ignores its lease. ${detail}`)) {
+      onReleaseAgent(agent.id);
+    }
+  }
 
   return (
     <article className={`agentCard agentStatus-${agent.status} agentSource-${agent.source}`} data-testid="agent-card">
@@ -1641,6 +1672,15 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, updati
           >
             {isPaused ? <PlayCircle size={15} /> : <PauseCircle size={15} />}
             <span>{isPaused ? "Resume" : "Pause"}</span>
+          </button>
+          <button
+            className="ghostButton dangerButton agentReleaseButton"
+            disabled={isUpdating}
+            aria-label={`Force-release ${agent.id}`}
+            onClick={confirmForceRelease}
+            title="Force-release this slot, ignoring its lease and returning its in-progress tasks to the queue (operator override)"
+          >
+            <span>Force release</span>
           </button>
         </div>
       )}

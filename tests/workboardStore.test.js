@@ -1738,6 +1738,214 @@ describe("WorkboardStore", () => {
     expect(nextSlot.agentId).toBe("implementer-backend-2");
   });
 
+  it("reclaims the same slot on restart via a client-persistable identity token", async () => {
+    const project = await store.createProject({ name: "Restart Reclaim Project" });
+    const acquired = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "first-runtime",
+      now: "2026-06-01T10:00:00.000Z"
+    });
+    expect(acquired).toMatchObject({ agentId: "implementer-backend-1", reclaimed: false });
+    expect(acquired.identityToken).toBeTruthy();
+
+    // Keep the slot busy with in-progress work that a restarted agent should resume.
+    const task = await store.createTask({
+      projectId: project.id,
+      title: "Resume me after restart",
+      status: "in_progress",
+      assignee: acquired.agentId
+    });
+
+    // Restart = new runtimeId but same persisted identityToken. Lease is stale.
+    const restarted = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "second-runtime",
+      identityToken: acquired.identityToken,
+      now: "2026-06-01T15:00:00.000Z"
+    });
+    expect(restarted).toMatchObject({
+      agentId: acquired.agentId,
+      reclaimed: true,
+      reclaimedViaIdentity: true,
+      identityToken: acquired.identityToken
+    });
+    expect(restarted.lease.runtimeId).toBe("second-runtime");
+    expect(store.getTask(task.id)).toMatchObject({ status: "in_progress", assignee: acquired.agentId });
+  });
+
+  it("resolves identity tokens globally before inferred type selection", async () => {
+    const project = await store.createProject({ name: "Token-only Restart Project" });
+    const acquired = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "token-only-first-runtime",
+      now: "2026-06-01T10:00:00.000Z"
+    });
+    await store.createTask({
+      projectId: project.id,
+      title: "Resume token-only restart",
+      status: "in_progress",
+      assignee: acquired.agentId
+    });
+
+    const restarted = await store.acquireAgentSlot({
+      identityToken: acquired.identityToken,
+      runtimeId: "token-only-second-runtime",
+      now: "2026-06-01T15:00:00.000Z"
+    });
+
+    expect(restarted).toMatchObject({
+      agentId: "implementer-backend-1",
+      typeId: "implementer-backend",
+      identityToken: acquired.identityToken,
+      reclaimed: true,
+      reclaimedViaIdentity: true
+    });
+  });
+
+  it("refuses identity reclaim over a fresh heartbeating lease (live duplicate)", async () => {
+    const acquired = await store.acquireAgentSlot({
+      preferredType: "implementer-backend",
+      runtimeId: "live-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+
+    await expect(
+      store.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: "duplicate-runtime",
+        identityToken: acquired.identityToken,
+        now: "2026-06-12T15:02:00.000Z"
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("already active")
+    });
+  });
+
+  it("rejects requested roles without a configured slot pool", async () => {
+    for (const role of ["researcher", "arbitrary-unknown-role"]) {
+      await expect(
+        store.acquireAgentSlot({
+          role,
+          runtimeId: `invalid-role-${role}`,
+          now: "2026-06-12T15:00:00.000Z"
+        })
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/configured.*valid roles/i),
+        details: {
+          role,
+          validRoles: ["implementer", "pm", "reviewer", "tester"]
+        }
+      });
+    }
+  });
+
+  it("spills over to sibling types of the same role (ordered by free seats) for inferred acquires", async () => {
+    for (let i = 0; i < 4; i++) {
+      await store.acquireAgentSlot({
+        preferredType: "implementer-backend",
+        runtimeId: `fill-backend-${i + 1}`
+      });
+    }
+
+    // Inferred (bare role, no preferred type) when backend is full spills to a sibling
+    // implementer type rather than failing.
+    const spilled = await store.acquireAgentSlot({
+      role: "implementer",
+      specialties: ["backend"],
+      runtimeId: "spill-runtime"
+    });
+    expect(spilled.typeId).not.toBe("implementer-backend");
+    expect(spilled.agentId).not.toMatch(/^implementer-backend/);
+    expect(store.data.agentTypes.find((t) => t.id === spilled.typeId).role).toBe("implementer");
+    expect(spilled).toMatchObject({ acquired: true });
+  });
+
+  it("reports an honest exhausted error naming leased slots and earliest expiry", async () => {
+    for (let i = 0; i < 4; i++) {
+      await store.acquireAgentSlot({ preferredType: "implementer-backend", runtimeId: `full-${i + 1}`, now: "2026-06-12T15:00:00.000Z" });
+    }
+
+    let error;
+    try {
+      // Same lease window so the pool is genuinely at capacity (fresh leases).
+      await store.acquireAgentSlot({ preferredType: "implementer-backend", runtimeId: "over", now: "2026-06-12T15:10:00.000Z" });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error.status).toBe(409);
+    expect(error.message).toContain("implementer-backend");
+    expect(error.message).toMatch(/lease/);
+    expect(error.details.leasedSlots).toHaveLength(4);
+    expect(error.details.leasedSlots[0]).toMatchObject({
+      agentId: "implementer-backend-1"
+    });
+    expect(error.details.leasedSlots[0].expiresAt).toBeTruthy();
+    expect(error.details.earliestFreeAt).toBeTruthy();
+    expect(error.details.staleLeaseCount).toBe(0);
+  });
+
+  it("drops stale presence older than the retention window from presence listings", async () => {
+    await store.acquireAgentSlot({ preferredType: "implementer-backend", runtimeId: "presence-fresh" });
+    await store.updateAgentPresence("implementer-backend-1", {
+      state: "active",
+      message: "fresh heartbeat",
+      now: "2026-06-10T12:00:00.000Z"
+    });
+
+    // Same day - within retention window, still listed.
+    expect(
+      store.listAgentPresence({ now: "2026-06-10T18:00:00.000Z" }).map((p) => p.agentId)
+    ).toContain("implementer-backend-1");
+
+    // Two days later - beyond the 24h retention window, dropped from the response.
+    expect(
+      store.listAgentPresence({ now: "2026-06-12T12:00:00.000Z" }).map((p) => p.agentId)
+    ).not.toContain("implementer-backend-1");
+
+    // But the raw presence record is retained in the data store (history is preserved).
+    expect(store.data.agentPresence["implementer-backend-1"]).toBeTruthy();
+  });
+
+  it("force-releases a slot: returns in-progress claims to ready, keeps review work, clears presence", async () => {
+    const project = await store.createProject({ name: "Force Release Project" });
+    await store.acquireAgentSlot({ agentId: "implementer-backend-1", runtimeId: "release-runtime", now: "2026-06-12T15:00:00.000Z" });
+    const inProgress = await store.createTask({
+      projectId: project.id,
+      title: "Return me",
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      role: "implementer",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const inReview = await store.createTask({
+      projectId: project.id,
+      title: "Keep review state",
+      status: "review",
+      assignee: "implementer-backend-1",
+      role: "implementer",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    await store.updateAgentPresence("implementer-backend-1", { state: "active", now: "2026-06-12T15:00:00.000Z" });
+
+    const result = await store.forceReleaseAgentSlot("implementer-backend-1", {
+      actor: "operator",
+      now: "2026-06-12T15:10:00.000Z"
+    });
+
+    expect(result).toMatchObject({ released: true, agentId: "implementer-backend-1", wasActive: true });
+    expect(result.returnedTasks.map((task) => task.taskId)).toEqual([inProgress.id]);
+    expect(store.getTask(inProgress.id)).toMatchObject({ status: "ready", assignee: "" });
+    expect(store.getTask(inProgress.id).activity[0]).toMatchObject({
+      type: "force_release.returned",
+      message: "Force-released by operator; task returned to queue."
+    });
+    expect(store.getTask(inReview.id)).toMatchObject({ status: "review", assignee: "implementer-backend-1" });
+    expect(store.data.agentPresence["implementer-backend-1"]).toBeUndefined();
+    expect(store.data.agentSlots.find((s) => s.id === "implementer-backend-1").lease).toBeNull();
+  });
+
   it("defaults bootstrapped agents to their active project and only searches all projects when requested", async () => {
     store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", defaultProjectKey: "TEAM" });
     await store.init();
