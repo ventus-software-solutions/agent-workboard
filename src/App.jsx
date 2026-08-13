@@ -954,6 +954,7 @@ export function App() {
           </>
         ) : workspaceTab === "coordination" ? (
           <CoordinationWorkspace
+            projectId={selectedProjectId}
             talks={talks}
             tasks={projectTasks}
             filters={talkFilters}
@@ -1281,6 +1282,7 @@ function TasksWorkspace({ filters, onFilterChange, statuses, roles, workItemType
 }
 
 function CoordinationWorkspace({
+  projectId,
   talks,
   tasks,
   filters,
@@ -1315,6 +1317,7 @@ function CoordinationWorkspace({
       <div className="coordinationGrid">
         <div className="coordinationMain">
           <AgentTalksPanel
+            projectId={projectId}
             talks={talks}
             tasks={tasks}
             filters={filters}
@@ -1906,7 +1909,7 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
   );
 }
 
-function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, onPost }) {
+function AgentTalksPanel({ projectId, talks, tasks, filters, onFilterChange, onSelectTask, onPost }) {
   const [draft, setDraft] = useState({
     authorAgentId: "operator-ui",
     kind: "update",
@@ -1916,13 +1919,12 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
   });
   const [visibleTalkCount, setVisibleTalkCount] = useState(TALK_PAGE_SIZE);
   const activeFilterCount = [filters.kind, filters.agentId, filters.taskId].filter(Boolean).length;
-  const talkScopeId = talks[0]?.projectId || tasks[0]?.projectId || "";
   const visibleTalks = talks.slice(0, visibleTalkCount);
   const remainingTalkCount = Math.max(0, talks.length - visibleTalks.length);
 
   useEffect(() => {
     setVisibleTalkCount(TALK_PAGE_SIZE);
-  }, [filters.kind, filters.agentId, filters.taskId, talkScopeId]);
+  }, [filters.kind, filters.agentId, filters.taskId, projectId]);
 
   async function submitTalk() {
     await onPost(draft);

@@ -665,6 +665,11 @@ test("paginates Agent Talks newest first and loads the remaining boundary", asyn
   await expect(page.locator(".talkMessage")).toHaveCount(26);
   await expect(page.locator(".talksHeaderMeta")).toContainText("26 of 26 shown");
   await expect(page.locator(".talksPanel")).toContainText("Pagination message 00");
+
+  await page.getByLabel("Talk kind filter").selectOption("update");
+  await expect(page.locator(".talkMessage")).toHaveCount(25);
+  await expect(page.locator(".talksHeaderMeta")).toContainText("25 of 26 shown");
+  await expect(page.getByRole("button", { name: "Load 1 more" })).toBeVisible();
 });
 
 test("shows project activity audit events without opening every task", async ({ page }) => {
