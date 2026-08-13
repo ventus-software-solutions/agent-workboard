@@ -34,6 +34,7 @@ const VIEW_KEYS = [
   "workItemType",
   "priority",
   "labels",
+  "touches",
   "description",
   "role",
   "revision",
@@ -159,6 +160,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
   const priority = BOARD_PRIORITIES.has(rawPriority) ? rawPriority : null;
 
   const labels = [...new Set([...readLabels(getValue(doc, "labels")), ...extraLabels])];
+  const touches = readLabels(getBoardValue(doc, "touches"));
 
   const boardRevision = Number.parseInt(getBoardValue(doc, "revision"), 10);
   const revision = Number.isInteger(boardRevision) && boardRevision >= 1 ? boardRevision : 1;
@@ -212,6 +214,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     workItemType,
     priority,
     labels,
+    touches,
     description: String(doc.body ?? "").trim(),
     role: boardRole || DEFAULT_ROLE,
     revision,
@@ -268,6 +271,7 @@ export function fileViewFromBoardTask(task) {
     workItemType: asText(task.workItemType) || "task",
     priority: BOARD_PRIORITIES.has(task.priority) ? task.priority : null,
     labels: Array.isArray(task.labels) ? task.labels.map((item) => asText(item)).filter(Boolean) : [],
+    touches: Array.isArray(task.touches) ? task.touches.map((item) => asText(item)).filter(Boolean) : [],
     description: asText(task.description),
     role: asText(task.role) || DEFAULT_ROLE,
     revision: Number.isInteger(task.revision) && task.revision >= 1 ? task.revision : 1,
@@ -301,6 +305,7 @@ export function boardTaskFromView(id, view, projectId) {
     workItemType: view.workItemType,
     assignee: view.assignee,
     labels: [...view.labels],
+    touches: [...view.touches],
     dependsOn: [...view.dependsOn],
     blockedBy: [...view.blockedBy],
     parentTaskId: view.parentTaskId,
@@ -330,6 +335,7 @@ function applyViewToTask(task, view) {
   task.workItemType = view.workItemType;
   task.priority = view.priority;
   task.labels = [...view.labels];
+  task.touches = [...view.touches];
   task.description = view.description;
   task.role = view.role;
   task.revision = view.revision;
@@ -353,6 +359,9 @@ export function applyViewToDoc(doc, baseView, nextView) {
   if (!sameValue(baseView.workItemType, nextView.workItemType)) setValue(doc, "type", nextView.workItemType);
   if (!sameValue(baseView.priority, nextView.priority)) setValue(doc, "priority", nextView.priority ?? "unset");
   if (!sameValue(baseView.labels, nextView.labels)) setValue(doc, "labels", renderList(nextView.labels));
+  if (!sameValue(baseView.touches, nextView.touches)) {
+    setBoardValue(doc, "touches", nextView.touches.length ? JSON.stringify(nextView.touches) : "");
+  }
   if (!sameValue(baseView.description, nextView.description)) {
     doc.body = nextView.description ? `${nextView.description}${nl}` : "";
   }

@@ -126,6 +126,7 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         role: z.string().optional(),
         priority: z.string().optional(),
         labels: z.array(z.string()).optional(),
+        touches: z.array(z.string()).optional(),
         assignee: z.string().optional(),
         actor: z.string().optional()
       }
@@ -412,6 +413,28 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       }
     },
     async (input) => asText({ task: await store.updateTask(input.taskId, buildUpdateTaskStatusPatch(input), input.actor) })
+  );
+
+  server.registerTool(
+    "update_task_touches",
+    {
+      title: "Update task file-scope hints",
+      description: "Set optional repository path hints used for advisory collision warnings.",
+      inputSchema: {
+        taskId: z.string(),
+        touches: z.array(z.string()),
+        expectedRevision: z.number().int().positive(),
+        actor: z.string().optional()
+      }
+    },
+    async (input) =>
+      asText({
+        task: await store.updateTask(
+          input.taskId,
+          { touches: input.touches, expectedRevision: input.expectedRevision },
+          input.actor
+        )
+      })
   );
 
   server.registerTool(

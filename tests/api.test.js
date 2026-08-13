@@ -25,6 +25,62 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("round-trips touched paths and exposes advisory collisions through task and next-task APIs", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Collision API Project" }).expect(201)).body.project;
+    const first = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Change app shell",
+          status: "ready",
+          role: "implementer",
+          touches: ["src/**"]
+        })
+        .expect(201)
+    ).body.task;
+    const second = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Change task cards",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-frontend-2",
+          touches: ["src/App.jsx"]
+        })
+        .expect(201)
+    ).body.task;
+
+    const fetched = await request(app).get(`/api/tasks/${first.id}`).expect(200);
+    expect(fetched.body.task).toMatchObject({
+      touches: ["src/**"],
+      collision: { detected: true, taskIds: [second.id] }
+    });
+
+    const next = await request(app)
+      .get("/api/agents/implementer-frontend-1/next-task")
+      .query({ projectId: project.id })
+      .expect(200);
+    expect(next.body).toMatchObject({
+      task: { id: first.id, collision: { detected: true, taskIds: [second.id] } },
+      selection: {
+        collision: { detected: true, taskIds: [second.id] },
+        claim: { taskId: first.id, expectedStatus: "ready" }
+      }
+    });
+
+    await request(app)
+      .patch(`/api/tasks/${first.id}`)
+      .send({ touches: ["server/app.js"], expectedRevision: first.revision, actor: "operator-ui" })
+      .expect(200);
+    expect((await request(app).get(`/api/tasks/${first.id}`).expect(200)).body.task).toMatchObject({
+      touches: ["server/app.js"],
+      collision: { detected: false }
+    });
+  });
+
   it("exposes process start, version, and active storage mode in meta", async () => {
     app = createApp({ store, startedAt: "2026-08-13T09:00:00.000Z", version: "9.8.7" });
 
@@ -477,7 +533,8 @@ describe("Agent Workboard API", () => {
           branch: "implementer/backup-links",
           status: "ready",
           role: "implementer",
-          labels: ["backup"]
+          labels: ["backup"],
+          touches: ["server/storage/**"]
         })
         .expect(201)
     ).body.task;
@@ -516,6 +573,7 @@ describe("Agent Workboard API", () => {
       title: "Back up this task",
       pullRequestUrl: "https://github.com/acme/workboard/pull/88",
       branch: "implementer/backup-links",
+      touches: ["server/storage/**"],
       comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
       attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
     });
@@ -542,6 +600,7 @@ describe("Agent Workboard API", () => {
         title: "Back up this task",
         pullRequestUrl: "https://github.com/acme/workboard/pull/88",
         branch: "implementer/backup-links",
+        touches: ["server/storage/**"],
         comments: [expect.objectContaining({ author: "reviewer-agent", body: "Keep this review note." })],
         attachments: [expect.objectContaining({ filename: "backup.txt", uploadedBy: "tester-agent" })]
       });

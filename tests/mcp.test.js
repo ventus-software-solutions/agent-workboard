@@ -318,6 +318,19 @@ describe("Agent Workboard MCP tools", () => {
       }
     });
 
+    const updateTouches = registrations.find((registration) => registration.name === "update_task_touches");
+    await updateTouches.handler({
+      taskId: "task_123",
+      touches: ["src/App.jsx", "server/storage/**"],
+      expectedRevision: 4,
+      actor: "mcp-agent"
+    });
+    expect(fakeStore.updateTask).toHaveBeenCalledWith(
+      "task_123",
+      { touches: ["src/App.jsx", "server/storage/**"], expectedRevision: 4 },
+      "mcp-agent"
+    );
+
     const releaseSlot = registrations.find((registration) => registration.name === "release_agent_slot");
     expect(parseTextResult(await releaseSlot.handler({ agentId: "mcp-agent" }))).toMatchObject({
       released: true,

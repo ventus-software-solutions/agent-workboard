@@ -1,4 +1,5 @@
 import { normalizeVerificationTarget } from "./verificationTarget.js";
+import { normalizeTaskTouches as normalizeTouches } from "../../shared/taskTouches.js";
 
 export const PROJECT_BACKUP_PACKAGE_TYPE = "agent-workboard.project-backup";
 export const PROJECT_BACKUP_PACKAGE_VERSION = 1;
@@ -144,6 +145,7 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     testedBy: normalizeText(source.testedBy),
     reviewVerdict: normalizeReviewVerdict(source.reviewVerdict),
     labels: normalizeTaskLabels(source.labels),
+    touches: normalizeTaskTouches(source.touches),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,
     verificationTarget:
       status === "testing"
@@ -387,6 +389,14 @@ function normalizeTaskLabels(value) {
     labels.push(label);
   }
   return [...new Set(labels)];
+}
+
+function normalizeTaskTouches(value) {
+  try {
+    return normalizeTouches(value);
+  } catch (error) {
+    throw httpError(error.message, 400, { field: "tasks.touches" });
+  }
 }
 
 function normalizeStringList(value) {

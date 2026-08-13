@@ -271,4 +271,26 @@ describe("mode selection", () => {
     };
     expect(fileViewFromBoardTask(task)).toEqual(view);
   });
+
+  it("round-trips touched-path hints through namespaced task frontmatter", () => {
+    const doc = docFromFrontmatter([
+      "id: t1",
+      'title: "T"',
+      "owner: unassigned",
+      "status: todo",
+      "type: task",
+      "priority: normal",
+      "labels:",
+      "board:",
+      '  touches: ["src/App.jsx","server/storage/**"]'
+    ]);
+    const { view } = mapFileTask(doc, "t1");
+    expect(view.touches).toEqual(["src/App.jsx", "server/storage/**"]);
+
+    const nextView = { ...view, touches: ["docs/**"] };
+    applyViewToDoc(doc, view, nextView);
+    const rewritten = serializeTaskFile(doc);
+    expect(rewritten).toContain('touches: ["docs/**"]');
+    expect(mapFileTask(parseTaskFile(rewritten), "t1").view.touches).toEqual(["docs/**"]);
+  });
 });

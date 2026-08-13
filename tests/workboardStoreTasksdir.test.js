@@ -97,7 +97,11 @@ describe("WorkboardStore tasksdir mode", () => {
     const before = await snapshotFiles();
 
     const task = store.getTask(FBR_BUG);
-    await store.updateTask(FBR_BUG, { priority: "high", expectedRevision: task.revision }, "operator");
+    await store.updateTask(
+      FBR_BUG,
+      { priority: "high", touches: ["server/storage/**"], expectedRevision: task.revision },
+      "operator"
+    );
 
     const after = await snapshotFiles();
     for (const [folder, content] of before) {
@@ -109,6 +113,7 @@ describe("WorkboardStore tasksdir mode", () => {
     const original = before.get(FBR_BUG);
     expect(rewritten).not.toBe(original);
     expect(rewritten).toContain("priority: high");
+    expect(rewritten).toContain('touches: ["server/storage/**"]');
     // unknown keys keep their exact lines
     for (const line of ["source: fbr", `fbr_ref: ${FBR_BUG}`, "module: '-'", "created: 2026-08-12"]) {
       expect(rewritten).toContain(line);
@@ -119,7 +124,11 @@ describe("WorkboardStore tasksdir mode", () => {
     const body = original.slice(original.indexOf("\n---\n") + 5);
     expect(rewritten.endsWith(body)).toBe(true);
     // board-only fields live in the namespaced board block
-    expect(rewritten).toMatch(/board:\n {2}revision: \d+/);
+    expect(rewritten).toContain("board:\n");
+    expect(rewritten).toMatch(/ {2}revision: \d+/);
+
+    const reloaded = await openStore();
+    expect(reloaded.getTask(FBR_BUG).touches).toEqual(["server/storage/**"]);
   });
 
   it("claims through the file: winner writes owner/status, loser gets a 409", async () => {

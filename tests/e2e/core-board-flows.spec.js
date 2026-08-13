@@ -611,6 +611,54 @@ test("keeps wrapped task-card content inside the card at responsive widths", asy
   }
 });
 
+test("shows advisory overlap chips and one operator inbox item for touched-path collisions", async ({ page }) => {
+  const projectName = uniqueName("E2E Collision Project");
+  const firstTitle = uniqueName("Change app shell");
+  const secondTitle = uniqueName("Change task card");
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Project", exact: true }).click();
+  await page.locator(".dialog").getByLabel("Name").fill(projectName);
+  await page.locator(".dialog").getByLabel("Key").fill(uniqueKey("COL"));
+  await page.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  await createTask(page, {
+    title: firstTitle,
+    role: "implementer",
+    priority: "normal",
+    assignee: "",
+    labels: "frontend",
+    touches: "src/**",
+    description: "Broad frontend scope."
+  });
+  const projects = await (await page.request.get(`${apiBaseURL}/api/projects`)).json();
+  const project = projects.projects.find((candidate) => candidate.name === projectName);
+  const tasks = await (await page.request.get(`${apiBaseURL}/api/tasks?projectId=${project.id}`)).json();
+  const first = tasks.tasks.find((candidate) => candidate.title === firstTitle);
+  const readyResponse = await page.request.patch(`${apiBaseURL}/api/tasks/${first.id}`, {
+    data: { status: "ready", expectedRevision: first.revision, actor: "operator-ui" }
+  });
+  expect(readyResponse.ok()).toBe(true);
+
+  await createTask(page, {
+    title: secondTitle,
+    role: "implementer",
+    priority: "normal",
+    assignee: "",
+    labels: "frontend",
+    touches: "src/App.jsx",
+    description: "Narrow frontend scope."
+  });
+
+  await expect(taskCard(page, firstTitle).locator(".collisionPill")).toContainText("overlap 1");
+  await expect(taskCard(page, secondTitle).locator(".collisionPill")).toContainText("overlap 1");
+  const collisionItems = page.locator('[data-kind="collision"]');
+  await expect(collisionItems).toHaveCount(1);
+  await expect(collisionItems.first()).toContainText("Both tasks may touch");
+  await expect(collisionItems.first().getByRole("button", { name: "Inspect overlap" })).toBeVisible();
+});
+
 test("labels task status controls as actions", async ({ page }) => {
   const projectName = uniqueName("E2E Action Label Project");
   const projectKey = uniqueKey("ACT");
@@ -1735,7 +1783,7 @@ test("flags capability status drift and opens its completed linked task", async 
   await expect(page.locator(".drawer")).toContainText(taskTitle);
 });
 
-async function createTask(page, { title, role, priority, assignee, labels, description, workItemType = "" }) {
+async function createTask(page, { title, role, priority, assignee, labels, touches = "", description, workItemType = "" }) {
   await closeDrawerIfOpen(page);
   await page.getByRole("button", { name: "Task", exact: true }).click();
   const dialog = page.locator(".dialog");
@@ -1747,6 +1795,9 @@ async function createTask(page, { title, role, priority, assignee, labels, descr
   await dialog.getByLabel("Priority").selectOption(priority);
   await dialog.getByLabel("Assignee").fill(assignee);
   await dialog.getByLabel("Labels").fill(labels);
+  if (touches) {
+    await dialog.getByLabel("Touched paths").fill(touches);
+  }
   await dialog.getByLabel("Description").fill(description);
   await page.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toHaveCount(0);

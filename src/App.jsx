@@ -2467,7 +2467,7 @@ function OperatorAttentionPanel({
                   {action.remedy === "open_task" && (
                     <button className="attentionPrimaryAction" onClick={() => onSelectTask(action.taskId)}>
                       <ChevronRight size={14} />
-                      <span>{action.kind === "merge" ? "Open delivery" : "Fix blocker"}</span>
+                      <span>{action.kind === "merge" ? "Open delivery" : action.kind === "collision" ? "Inspect overlap" : "Fix blocker"}</span>
                     </button>
                   )}
                   {action.remedy === "open_coordination" && (
@@ -2537,6 +2537,7 @@ function attentionIcon(kind) {
   if (kind === "blocker") return AlertCircle;
   if (kind === "stalled") return WifiOff;
   if (kind === "off_script") return AlertCircle;
+  if (kind === "collision") return GitMerge;
   if (kind === "grooming") return ClipboardList;
   if (kind === "cleanup") return Archive;
   if (kind === "data_source") return Database;
@@ -2957,6 +2958,15 @@ function TaskCard({
         {task.reviewVerdict?.decision === "approve" && <span className="reviewApprovedPill">Review approved</span>}
         {workflowCue && <span className="workflowPill">{workflowCue}</span>}
         {dependencyState !== "clear" && <span className={`relationshipPill ${dependencyState}`}>{relationshipStateLabel(dependencyState)}</span>}
+        {task.collision?.detected && (
+          <span
+            className="collisionPill"
+            title={`Overlaps ${task.collision.taskIds.length} active task${task.collision.taskIds.length === 1 ? "" : "s"}: ${task.collision.paths.join(", ")}`}
+          >
+            <GitMerge size={13} />
+            overlap {task.collision.taskIds.length}
+          </span>
+        )}
         {task.childTaskIds?.length > 0 && <span className="relationshipPill clear">{task.childTaskIds.length} child</span>}
         {task.status === "done" && task.completion && (
           <span className={`completionPill ${task.completion.completionType === "legacy-needs-audit" ? "needsAudit" : ""}`}>
@@ -3271,6 +3281,15 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
         <label className="wide">
           Labels
           <input value={draft.labels} onChange={(event) => updateDraft({ labels: event.target.value })} />
+        </label>
+        <label className="wide">
+          Touched paths
+          <input
+            value={draft.touches}
+            placeholder="src/App.jsx, server/storage/**"
+            onChange={(event) => updateDraft({ touches: event.target.value })}
+          />
+          <small>Optional file or glob hints used to warn about parallel work.</small>
         </label>
         <label className="wide">
           Description
@@ -3617,6 +3636,7 @@ function taskDraftFromTask(task) {
     workItemType: task.workItemType || "task",
     priority: task.priority,
     labels: task.labels.join(", "),
+    touches: (task.touches || []).join(", "),
     dependsOn: task.dependsOn || [],
     blockedBy: task.blockedBy || [],
     parentTaskId: task.parentTaskId || "",
@@ -3631,7 +3651,8 @@ function taskPayloadFromDraft(draft) {
     dependsOn: draft.dependsOn || [],
     blockedBy: draft.blockedBy || [],
     parentTaskId: draft.parentTaskId || "",
-    labels: labelsFromText(draft.labels)
+    labels: labelsFromText(draft.labels),
+    touches: touchesFromText(draft.touches)
   };
 }
 
@@ -3723,6 +3744,13 @@ function VerificationTargetPanel({ task, draft, setDraft, showForm, setShowForm,
       )}
     </div>
   );
+}
+
+function touchesFromText(value) {
+  return String(value || "")
+    .split(",")
+    .map((touch) => touch.trim())
+    .filter(Boolean);
 }
 
 function defaultCompletionDraft(task) {
@@ -3904,7 +3932,8 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
     workItemType: "task",
     priority: "normal",
     assignee: "",
-    labels: ""
+    labels: "",
+    touches: ""
   });
 
   return (
@@ -3955,6 +3984,15 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
         <label className="wide">
           Labels
           <input value={draft.labels} onChange={(event) => setDraft({ ...draft, labels: event.target.value })} />
+        </label>
+        <label className="wide">
+          Touched paths
+          <input
+            value={draft.touches}
+            placeholder="src/App.jsx, server/storage/**"
+            onChange={(event) => setDraft({ ...draft, touches: event.target.value })}
+          />
+          <small>Optional file or glob hints used to warn about parallel work.</small>
         </label>
         <label className="wide">
           Description

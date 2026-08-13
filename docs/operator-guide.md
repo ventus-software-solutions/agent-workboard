@@ -47,6 +47,8 @@ The Board view has three tabs:
 - **Coordination** contains Agent Talks, stale-work recovery, blockers, review attention, and worktree cleanup.
 - **Activity** is the audit trail for claims, edits, comments, approvals, transitions, and completions.
 
+Tasks can also carry optional **Touched paths** hints. When ready or active tasks match the same file or glob scope, both cards show an `overlap` chip and the operator inbox offers an advisory collision item. Inspect the pair, coordinate sequencing, and require a fresh rebase and verification before delivery; the warning does not block claims.
+
 Use Tasks to steer current work, Coordination to unblock the system, and Activity to answer “what changed, when, and by whom?”
 
 ## Tasks

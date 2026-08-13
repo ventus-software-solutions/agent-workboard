@@ -438,7 +438,7 @@ export function createApp({
   app.post("/api/tasks", async (req, res, next) => {
     try {
       const task = await store.createTask(req.body);
-      res.status(201).json({ task });
+      res.status(201).json({ task: store.describeTask(task) });
     } catch (error) {
       next(error);
     }
@@ -454,7 +454,7 @@ export function createApp({
 
   app.get("/api/tasks/:taskId", (req, res, next) => {
     try {
-      res.json({ task: store.getTask(req.params.taskId) });
+      res.json({ task: store.describeTask(store.getTask(req.params.taskId)) });
     } catch (error) {
       next(error);
     }
@@ -463,7 +463,7 @@ export function createApp({
   app.patch("/api/tasks/:taskId", async (req, res, next) => {
     try {
       const task = await store.updateTask(req.params.taskId, req.body, req.body.actor);
-      res.json({ task });
+      res.json({ task: store.describeTask(task) });
     } catch (error) {
       next(error);
     }

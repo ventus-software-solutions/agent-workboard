@@ -13,6 +13,7 @@ import { normalizeVerificationTarget, verificationTargetRequiredError } from "./
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 import { isSafeHttpUrl } from "../../shared/taskLinks.js";
+import { normalizeTaskTouches, taskTouchesOverlap } from "../../shared/taskTouches.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -100,6 +101,7 @@ const FULL_TASK_EDIT_FIELDS = [
   "priority",
   "role",
   "labels",
+  "touches",
   "workItemType",
   "dependsOn",
   "blockedBy",
@@ -760,6 +762,10 @@ export class WorkboardStore {
       }
       if (!Array.isArray(task.labels)) {
         task.labels = [];
+        migrated = true;
+      }
+      if (!Array.isArray(task.touches)) {
+        task.touches = [];
         migrated = true;
       }
       const workItemType = normalizeWorkItemType(task.workItemType, { migrating: true });
@@ -1671,17 +1677,22 @@ export class WorkboardStore {
       ? reviewerCandidateBuckets(scopedTasks, agentId, profile)
       : workerCandidateBuckets(scopedTasks, agentId, profile);
     const candidates = uniqueTasks(buckets.flatMap((bucket) => bucket.tasks));
+    const describedCandidates = candidates.map((candidate) => this.describeTask(candidate));
 
     for (const bucket of buckets) {
       const task = bucket.tasks[0];
       if (!task) continue;
+      const describedTask = this.describeTask(task);
 
       return {
         ...standingSignal,
         agent,
-        task,
-        selection: withProjectScope(buildSelection(bucket.reason, task, agentId), projectContext, allProjects),
-        candidates,
+        task: describedTask,
+        selection: {
+          ...withProjectScope(buildSelection(bucket.reason, task, agentId), projectContext, allProjects),
+          collision: describedTask.collision
+        },
+        candidates: describedCandidates,
         blockedCandidates: relationshipBlockedCandidates
       };
     }
@@ -1797,7 +1808,7 @@ export class WorkboardStore {
       .filter((task) => !filters.role || task.role === filters.role)
       .filter((task) => !filters.assignee || task.assignee === filters.assignee)
       .filter((task) => !workItemType || task.workItemType === workItemType)
-      .filter((task) => labels.every((label) => task.labels.includes(label)))
+      .filter((task) => labels.every((label) => (task.labels || []).includes(label)))
       .filter((task) => {
         if (!q) return true;
         return [
@@ -1808,7 +1819,8 @@ export class WorkboardStore {
           task.priority,
           task.workItemType,
           relationshipSearchText(task, this.data.tasks),
-          ...task.labels
+          ...(task.labels || []),
+          ...(task.touches || [])
         ]
           .join(" ")
           .toLowerCase()
@@ -1818,7 +1830,8 @@ export class WorkboardStore {
         const statusDelta = statusRank(a.status) - statusRank(b.status);
         if (statusDelta !== 0) return statusDelta;
         return priorityRank(b.priority) - priorityRank(a.priority) || b.updatedAt.localeCompare(a.updatedAt);
-      });
+      })
+      .map((task) => this.describeTask(task));
   }
 
   listProjectActivity(filters = {}) {
@@ -2123,6 +2136,7 @@ export class WorkboardStore {
         workItemType: task.workItemType,
         assignee: task.assignee,
         labels: task.labels,
+        touches: task.touches,
         dependsOn: task.dependsOn,
         blockedBy: task.blockedBy,
         parentTaskId: task.parentTaskId,
@@ -2496,6 +2510,7 @@ export class WorkboardStore {
       workItemType,
       assignee: normalizeText(input.assignee),
       labels: normalizeTaskLabels(input.labels),
+      touches: normalizeTaskTouchesInput(input.touches),
       dependsOn: relationships.dependsOn,
       blockedBy: relationships.blockedBy,
       parentTaskId: relationships.parentTaskId,
@@ -2654,6 +2669,9 @@ export class WorkboardStore {
     }
     if ("labels" in patch) {
       normalizeTaskLabels(patch.labels, { defaultValue: task.labels });
+    }
+    if ("touches" in patch) {
+      normalizeTaskTouchesInput(patch.touches, { defaultValue: task.touches });
     }
 
     if (requiresRevision) {
@@ -2834,6 +2852,14 @@ export class WorkboardStore {
       if (JSON.stringify(task.labels) !== JSON.stringify(labels)) {
         task.labels = labels;
         changes.push("labels");
+      }
+    }
+
+    if ("touches" in patch) {
+      const touches = normalizeTaskTouchesInput(patch.touches, { defaultValue: task.touches });
+      if (JSON.stringify(task.touches) !== JSON.stringify(touches)) {
+        task.touches = touches;
+        changes.push("touches");
       }
     }
 
@@ -3536,11 +3562,44 @@ export class WorkboardStore {
       priority: task.priority,
       role: task.role,
       assignee: task.assignee,
-      labels: [...task.labels],
+      labels: [...(task.labels || [])],
+      touches: [...(task.touches || [])],
+      collision: this.describeTaskCollision(task),
       updatedAt: task.updatedAt,
       createdAt: task.createdAt,
       revision: task.revision
     };
+  }
+
+  describeTask(task) {
+    return {
+      ...task,
+      labels: [...(task.labels || [])],
+      touches: [...(task.touches || [])],
+      collision: this.describeTaskCollision(task)
+    };
+  }
+
+  describeTaskCollision(task) {
+    const empty = { detected: false, taskIds: [], paths: [], items: [] };
+    if (!task || task.status === "done" || !task.touches?.length) return empty;
+    const items = [];
+    for (const other of this.data.tasks) {
+      if (other.id === task.id || other.projectId !== task.projectId || other.status === "done" || !other.touches?.length) continue;
+      if (task.status === "backlog" && other.status === "backlog") continue;
+      const overlap = taskTouchesOverlap(task.touches, other.touches);
+      if (!overlap.overlaps) continue;
+      items.push({
+        taskId: other.id,
+        title: other.title,
+        status: other.status,
+        assignee: other.assignee,
+        matches: overlap.matches
+      });
+    }
+    if (!items.length) return empty;
+    const paths = [...new Set(items.flatMap((item) => item.matches.flatMap((match) => [match.left, match.right])))];
+    return { detected: true, taskIds: items.map((item) => item.taskId), paths, items };
   }
 
   latestOwnerProgressForTask(task, assignee, currentTime) {
@@ -4306,6 +4365,17 @@ function normalizeTaskLabels(value, { defaultValue = [] } = {}) {
     labels.push(label);
   }
   return [...new Set(labels)];
+}
+
+function normalizeTaskTouchesInput(value, options = {}) {
+  if (value !== undefined && !Array.isArray(value) && typeof value !== "string") {
+    throw httpError("Task touches must be an array or comma-separated path hints.", 400, { field: "touches" });
+  }
+  try {
+    return normalizeTaskTouches(value, options);
+  } catch (error) {
+    throw httpError(error.message, 400, { field: "touches" });
+  }
 }
 
 function normalizeDecompositionChildren(value, parent) {
