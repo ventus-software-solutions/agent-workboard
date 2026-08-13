@@ -27,4 +27,19 @@ describe("MCP tool handlers", () => {
       })
     ).toEqual({ status: "done", completion });
   });
+
+  it("includes task delivery links when supplied", () => {
+    expect(
+      buildUpdateTaskStatusPatch({
+        taskId: "task_123",
+        status: "review",
+        pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+        branch: "implementer/task-links"
+      })
+    ).toEqual({
+      status: "review",
+      pullRequestUrl: "https://github.com/acme/workboard/pull/42",
+      branch: "implementer/task-links"
+    });
+  });
 });

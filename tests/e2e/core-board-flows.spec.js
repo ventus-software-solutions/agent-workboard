@@ -259,6 +259,104 @@ test("covers core board flows in the browser", async ({ page }) => {
   await expect.poll(async () => readFile(downloadedPath, "utf8")).toBe("browser attachment evidence\n");
 });
 
+test("linkifies safe task URLs while keeping markup and unsafe schemes inert", async ({ page }) => {
+  const projectName = uniqueName("E2E Safe Task Links Project");
+  const projectKey = uniqueKey("LNK");
+  const taskTitle = uniqueName("Expose delivery links safely");
+  const descriptionUrl = "https://example.com/spec?case=links";
+  const commentUrl = "https://example.org/review/42";
+  const talkUrl = "https://example.net/coordination";
+  const pullRequestUrl = "https://github.com/acme/workboard/pull/42";
+  const branch = "implementer/task-links";
+  const unsafeText = '<img src=x onerror=alert(1)> javascript:alert(1) data:text/html,bad';
+
+  const project = (
+    await postJson(page, "/api/projects", {
+      name: projectName,
+      key: projectKey,
+      description: "Project for safe link rendering coverage."
+    })
+  ).project;
+  const task = (
+    await postJson(page, "/api/tasks", {
+      projectId: project.id,
+      title: taskTitle,
+      description: `Read ${descriptionUrl}. ${unsafeText}`,
+      status: "ready",
+      role: "implementer",
+      priority: "normal",
+      pullRequestUrl,
+      branch
+    })
+  ).task;
+  await postJson(page, `/api/tasks/${task.id}/comments`, {
+    author: "reviewer-agent",
+    body: `Review ${commentUrl}. ${unsafeText}`
+  });
+  await postJson(page, `/api/projects/${project.id}/talks`, {
+    authorAgentId: "implementer-agent",
+    kind: "update",
+    relatedTaskId: task.id,
+    body: `Coordination ${talkUrl}. ${unsafeText}`
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  const card = taskCard(page, taskTitle);
+  await expect(card).toBeVisible();
+  const descriptionLink = card.getByRole("link", { name: descriptionUrl });
+  await expect(descriptionLink).toHaveAttribute("href", descriptionUrl);
+  await expect(descriptionLink).toHaveAttribute("target", "_blank");
+  await expect(descriptionLink).toHaveAttribute("rel", /noopener/);
+  await expect(card.getByRole("link", { name: "PR", exact: true })).toHaveAttribute("href", pullRequestUrl);
+  await expect(card.getByRole("link", { name: branch, exact: true })).toHaveAttribute(
+    "href",
+    "https://github.com/acme/workboard/tree/implementer/task-links"
+  );
+  await expect(card.locator("img")).toHaveCount(0);
+  await expect(card.locator('a[href^="javascript:"]')).toHaveCount(0);
+  await expect(card.locator('a[href^="data:"]')).toHaveCount(0);
+
+  await card.locator("h4").click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.locator(".drawerHeader").getByRole("link", { name: "Pull request" })).toHaveAttribute(
+    "href",
+    pullRequestUrl
+  );
+  await expect(drawer.getByLabel("Pull request URL")).toHaveValue(pullRequestUrl);
+  await expect(drawer.getByLabel("Branch", { exact: true })).toHaveValue(branch);
+
+  const comment = drawer.locator(".comment", { hasText: commentUrl });
+  const commentLink = comment.getByRole("link", { name: commentUrl });
+  await expect(commentLink).toHaveAttribute("target", "_blank");
+  await expect(comment.locator("img")).toHaveCount(0);
+  await expect(comment.locator('a[href^="javascript:"]')).toHaveCount(0);
+
+  const updatedPullRequestUrl = "https://github.com/acme/workboard/pull/43";
+  const updatedBranch = "implementer/task-links-v2";
+  await drawer.getByLabel("Pull request URL").fill(updatedPullRequestUrl);
+  await drawer.getByLabel("Branch", { exact: true }).fill(updatedBranch);
+  await drawer.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(drawer.locator(".drawerHeader").getByRole("link", { name: "Pull request" })).toHaveAttribute(
+    "href",
+    updatedPullRequestUrl
+  );
+  await expect(drawer.locator(".drawerHeader").getByRole("link", { name: updatedBranch, exact: true })).toHaveAttribute(
+    "href",
+    "https://github.com/acme/workboard/tree/implementer/task-links-v2"
+  );
+
+  await closeDrawerIfOpen(page);
+  await page.getByRole("tab", { name: /Coordination/ }).click();
+  const talk = page.locator(".talkMessage", { hasText: talkUrl });
+  const talkLink = talk.getByRole("link", { name: talkUrl });
+  await expect(talkLink).toHaveAttribute("target", "_blank");
+  await expect(talkLink).toHaveAttribute("rel", /noopener/);
+  await expect(talk.locator("img")).toHaveCount(0);
+  await expect(talk.locator('a[href^="javascript:"]')).toHaveCount(0);
+  await expect(talk.locator('a[href^="data:"]')).toHaveCount(0);
+});
+
 test("keeps project health counters stable while task filters change", async ({ page }) => {
   const projectName = uniqueName("E2E Stable Health Project");
   const projectKey = uniqueKey("HLT");

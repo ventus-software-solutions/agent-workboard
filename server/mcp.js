@@ -114,6 +114,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         projectId: z.string(),
         title: z.string(),
         description: z.string().optional(),
+        pullRequestUrl: z.string().optional(),
+        branch: z.string().optional(),
         role: z.string().optional(),
         priority: z.string().optional(),
         labels: z.array(z.string()).optional(),
@@ -374,6 +376,8 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       inputSchema: {
         taskId: z.string(),
         status: z.string(),
+        pullRequestUrl: z.string().optional(),
+        branch: z.string().optional(),
         completion: z
           .object({
             completionType: z.string(),

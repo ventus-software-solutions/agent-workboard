@@ -109,6 +109,8 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     projectId: taskProjectId,
     title: normalizeTaskTitle(source.title),
     description: normalizeText(source.description),
+    pullRequestUrl: normalizeHttpUrl(source.pullRequestUrl, { field: "tasks.pullRequestUrl", index, taskId }),
+    branch: normalizeText(source.branch),
     status,
     priority: readEnumField(source, "priority", helpers.priorityIds, "normal", "Task"),
     role: readEnumField(source, "role", helpers.roleIds, "implementer", "Task"),
@@ -293,6 +295,18 @@ function normalizeCompletionRecord(value, { completionTypeIds, now }) {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeHttpUrl(value, details) {
+  const url = normalizeText(value);
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") return url;
+  } catch {
+    // Fall through to the structured backup validation error.
+  }
+  throw httpError("Project backup task pullRequestUrl must be an http or https URL.", 400, details);
 }
 
 function normalizeObject(value) {
