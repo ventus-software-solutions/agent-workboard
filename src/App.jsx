@@ -2175,7 +2175,28 @@ function OperatorAttentionPanel({
                     )}
                     {action.downstreamCount > 1 && <span>{action.downstreamCount - 1} downstream</span>}
                   </div>
-                  <p>{action.detail}</p>
+                  <div className="operatorAttentionSentences">
+                    <p>
+                      <strong>What happened</strong>
+                      <span>{action.what}</span>
+                    </p>
+                    <p>
+                      <strong>Why it matters</strong>
+                      <span>{action.why}</span>
+                    </p>
+                    <p>
+                      <strong>Do this</strong>
+                      <span>
+                        {action.doThis}
+                        {action.spawnPrompt && (
+                          <>
+                            {" "}{action.spawnLeadIn}{" "}
+                            <code className="operatorInlinePrompt">{action.spawnPrompt}</code>
+                          </>
+                        )}
+                      </span>
+                    </p>
+                  </div>
                   {action.kind === "approval" && (
                     <label className="operatorApprovalNote">
                       Decision note
@@ -2188,7 +2209,6 @@ function OperatorAttentionPanel({
                       />
                     </label>
                   )}
-                  {action.prompt && action.kind === "role_gap" && <code className="operatorPromptPreview">{action.prompt}</code>}
                   {action.commands?.length > 0 && action.remedy === "copy_commands" && (
                     <div className="operatorCleanupCommands">
                       {action.commands.map((command) => (
@@ -2227,7 +2247,11 @@ function OperatorAttentionPanel({
                     </button>
                   )}
                   {action.remedy === "copy_prompt" && (
-                    <button className="attentionPrimaryAction" disabled={!action.prompt} onClick={() => copyAction(action, action.prompt)}>
+                    <button
+                      className="attentionPrimaryAction"
+                      disabled={!action.spawnPrompt}
+                      onClick={() => copyAction(action, action.spawnPrompt)}
+                    >
                       <Copy size={14} />
                       <span>{copiedActionId === action.id ? "Copied" : "Copy spawn prompt"}</span>
                     </button>
@@ -2238,14 +2262,15 @@ function OperatorAttentionPanel({
                         <ClipboardList size={14} />
                         <span>Groom now</span>
                       </button>
-                      <button
-                        className="attentionSecondaryAction"
-                        disabled={!action.prompt}
-                        onClick={() => copyAction(action, action.prompt)}
-                      >
-                        <Copy size={14} />
-                        <span>{copiedActionId === action.id ? "Copied" : "Spawn PM"}</span>
-                      </button>
+                      {action.spawnPrompt && (
+                        <button
+                          className="attentionSecondaryAction"
+                          onClick={() => copyAction(action, action.spawnPrompt)}
+                        >
+                          <Copy size={14} />
+                          <span>{copiedActionId === action.id ? "Copied" : "Copy PM spawn prompt"}</span>
+                        </button>
+                      )}
                     </>
                   )}
                   {action.remedy === "cleanup" && (
@@ -2262,6 +2287,12 @@ function OperatorAttentionPanel({
                     <button className="attentionPrimaryAction" onClick={() => copyAction(action, action.commands.join("\n"))}>
                       <Copy size={14} />
                       <span>{copiedActionId === action.id ? "Copied" : "Copy host commands"}</span>
+                    </button>
+                  )}
+                  {action.spawnPrompt && !["copy_prompt", "groom"].includes(action.remedy) && (
+                    <button className="attentionSecondaryAction" onClick={() => copyAction(action, action.spawnPrompt)}>
+                      <Copy size={14} />
+                      <span>{copiedActionId === action.id ? "Copied" : `Copy ${action.requiredRoleLabel} spawn prompt`}</span>
                     </button>
                   )}
                 </div>
