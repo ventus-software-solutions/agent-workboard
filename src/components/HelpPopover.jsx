@@ -1,17 +1,50 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ExternalLink, Info, X } from "lucide-react";
 import { getOperatorHelpTopic, operatorGuideHref } from "../lib/operatorHelp.js";
 
 export function HelpPopover({ topic: topicId, className = "" }) {
   const topic = getOperatorHelpTopic(topicId);
   const [open, setOpen] = useState(false);
+  const [panelStyle, setPanelStyle] = useState(undefined);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
+  const panelRef = useRef(null);
   const closeRef = useRef(null);
   const generatedId = useId().replace(/:/g, "");
   const popoverId = `operator-help-${topicId}-${generatedId}`;
   const titleId = `${popoverId}-title`;
   const descriptionId = `${popoverId}-description`;
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+
+    function placePanel() {
+      if (window.matchMedia("(max-width: 640px)").matches) {
+        setPanelStyle(undefined);
+        return;
+      }
+      const root = rootRef.current?.getBoundingClientRect();
+      const trigger = triggerRef.current?.getBoundingClientRect();
+      const panel = panelRef.current?.getBoundingClientRect();
+      if (!root || !trigger || !panel) return;
+
+      const margin = 14;
+      const maximumLeft = Math.max(margin, window.innerWidth - panel.width - margin);
+      const viewportLeft = Math.min(maximumLeft, Math.max(margin, trigger.right - panel.width));
+      setPanelStyle({
+        left: `${viewportLeft - root.left}px`,
+        right: "auto"
+      });
+    }
+
+    placePanel();
+    window.addEventListener("resize", placePanel);
+    window.addEventListener("scroll", placePanel, true);
+    return () => {
+      window.removeEventListener("resize", placePanel);
+      window.removeEventListener("scroll", placePanel, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -64,6 +97,8 @@ export function HelpPopover({ topic: topicId, className = "" }) {
       {open && (
         <span
           className="helpPopoverPanel"
+          ref={panelRef}
+          style={panelStyle}
           id={popoverId}
           role="dialog"
           aria-modal="false"

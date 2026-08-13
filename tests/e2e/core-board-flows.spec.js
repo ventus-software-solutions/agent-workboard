@@ -210,6 +210,14 @@ test("provides keyboard-accessible operator help for every main surface", async 
   await expect(projectsDialog).toBeVisible();
   await expect(projectsDialog.getByRole("link", { name: "Learn more" })).toHaveAttribute("href", "/operator-guide#projects");
   await expect(projectsDialog.getByRole("button", { name: "Close Projects help" })).toBeFocused();
+  const desktopViewport = page.viewportSize();
+  const desktopBox = await projectsDialog.boundingBox();
+  expect(desktopViewport).not.toBeNull();
+  expect(desktopBox).not.toBeNull();
+  expect(desktopBox.x).toBeGreaterThanOrEqual(0);
+  expect(desktopBox.y).toBeGreaterThanOrEqual(0);
+  expect(desktopBox.x + desktopBox.width).toBeLessThanOrEqual(desktopViewport.width);
+  expect(desktopBox.y + desktopBox.height).toBeLessThanOrEqual(desktopViewport.height);
   await page.keyboard.press("Escape");
   await expect(projectsDialog).toHaveCount(0);
   await expect(projectsTrigger).toBeFocused();
