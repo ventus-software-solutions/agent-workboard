@@ -3571,7 +3571,16 @@ describe("WorkboardStore", () => {
       description: "Backup should keep task history.",
       status: "ready",
       role: "implementer",
-      labels: ["backup"]
+      labels: ["backup", "external"],
+      externalSource: {
+        provider: "github",
+        repository: "acme/work",
+        kind: "issue",
+        number: 23,
+        url: "https://github.test/acme/work/issues/23",
+        state: "open",
+        openedAt: "2026-08-10T08:00:00.000Z"
+      }
     });
 
     await store.updateTask(
@@ -3603,6 +3612,7 @@ describe("WorkboardStore", () => {
         expect.objectContaining({
           id: task.id,
           projectId: project.id,
+          externalSource: expect.objectContaining({ provider: "github", kind: "issue", number: 23 }),
           comments: [comment],
           attachments: [attachment]
         })
@@ -3629,6 +3639,7 @@ describe("WorkboardStore", () => {
         projectId: project.id,
         title: "Preserve task evidence",
         revision: backup.tasks[0].revision,
+        externalSource: backup.tasks[0].externalSource,
         comments: [comment],
         attachments: [attachment]
       });

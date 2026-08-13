@@ -53,30 +53,38 @@ afterEach(async () => {
 });
 
 describe("WorkboardStore tasksdir mode", () => {
-  it("keeps external GitHub identity in the ops sidecar across restarts", async () => {
+  it("keeps external GitHub identity and PR delivery links together in the ops sidecar across restarts", async () => {
     const store = await openStore();
     const externalSource = {
       provider: "github",
       repository: "acme/work",
-      kind: "issue",
-      number: 23,
-      url: "https://github.test/acme/work/issues/23",
+      kind: "pull_request",
+      number: 42,
+      url: "https://github.test/acme/work/pull/42",
       state: "open",
       openedAt: "2026-08-10T08:00:00.000Z",
-      attentionAfterAt: "2026-08-13T08:00:00.000Z"
+      attentionAfterAt: "2026-08-13T08:00:00.000Z",
+      headBranch: "dependabot/npm_and_yarn/vite-6.4.3",
+      baseBranch: "main"
     };
     const created = await store.createTask({
       projectId: "project_demo",
-      title: "GitHub issue #23",
-      role: "pm",
+      title: "GitHub PR #42",
+      role: "reviewer",
       status: "ready",
       workItemType: "chore",
       labels: ["external"],
-      externalSource
+      externalSource,
+      pullRequestUrl: externalSource.url,
+      branch: externalSource.headBranch
     });
 
     const restarted = await openStore();
-    expect(restarted.getTask(created.id).externalSource).toEqual(externalSource);
+    expect(restarted.getTask(created.id)).toMatchObject({
+      externalSource,
+      pullRequestUrl: externalSource.url,
+      branch: externalSource.headBranch
+    });
   });
 
   it("boots against a tasks dir, maps files to board tasks, and seeds no demo work items", async () => {

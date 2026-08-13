@@ -87,6 +87,8 @@ describe("GitHub intake synchronization", () => {
       status: "ready",
       role: "reviewer",
       workItemType: "chore",
+      pullRequestUrl: "https://github.test/acme/work/pull/12",
+      branch: "dependabot/npm_and_yarn/vite-6.4.3",
       labels: expect.arrayContaining(["external", "github", "pull-request", "dependencies"]),
       externalSource: {
         provider: "github",
