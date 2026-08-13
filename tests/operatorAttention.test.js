@@ -242,6 +242,36 @@ describe("operator attention selector", () => {
     expect(withLivingAgent.doThis).not.toContain("then spawn");
   });
 
+  it("describes a fresh mismatched task binding as off-script instead of stalled", () => {
+    const claimedTask = task("claimed", {
+      title: "Implement claim warnings",
+      status: "in_progress",
+      assignee: "implementer-frontend-1"
+    });
+    const result = buildOperatorAttention({
+      tasks: [claimedTask],
+      staleWork: [
+        {
+          task: claimedTask,
+          kind: "off_script",
+          reason: "presence_task_mismatch",
+          freshness: { summary: "Agent reports task_other instead" }
+        }
+      ],
+      agentRegistry: registry(activeAgent("implementer-frontend-1", "implementer")),
+      promptTemplate: PROMPT_TEMPLATE
+    });
+
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]).toMatchObject({
+      kind: "off_script",
+      taskId: "claimed",
+      what: expect.stringContaining("agent reports task_other instead"),
+      why: expect.stringContaining("live task binding disagree"),
+      doThis: expect.stringContaining("return the claim to Ready")
+    });
+  });
+
   it("keeps grooming's dedicated PM spawn remedy singular when no PM is active", () => {
     const result = buildOperatorAttention({
       tasks: [task("groom", { status: "backlog", priority: "", role: "" })],

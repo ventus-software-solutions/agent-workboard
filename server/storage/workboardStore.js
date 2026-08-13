@@ -1419,10 +1419,23 @@ export class WorkboardStore {
         };
       }
 
+      const currentTime = parseTimestamp(input.now);
+      const slotsById = new Map(this.data.agentSlots.map((slot) => [slot.id, slot]));
+      const currentWarning = this.describeStaleInProgressTask(task, slotsById, currentTime);
+      if (!currentWarning) {
+        return {
+          applied: false,
+          reason: "warning_resolved",
+          notice: "This warning already resolved — the healthy claim was not changed.",
+          task: this.describeTaskSummary(task),
+          currentClaim
+        };
+      }
+
       const actor = normalizeText(input.actor) || "operator";
       const note = normalizeText(input.note);
       if (action === "comment" && !note) throw httpError("A recovery comment is required.", 400);
-      const recoveredAt = parseTimestamp(input.now).toISOString();
+      const recoveredAt = currentTime.toISOString();
       if (note) {
         task.comments.unshift({ id: id("comment"), author: actor, body: note, createdAt: recoveredAt });
       }
@@ -3351,7 +3364,7 @@ export class WorkboardStore {
     const existing = this.data.agentPresence[agentId] || {};
     const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
     const state = normalizePresenceState(input.state) || existing.state || "active";
-    const currentTaskId = normalizeText(input.currentTaskId || input.currentTask);
+    const currentTaskId = normalizeText(input.currentTaskId || input.taskId || input.currentTask);
     const workMode = normalizeWorkMode(input.workMode) || existing.workMode || slot?.workMode || "";
     const message = normalizeText(input.message);
     const projectContext = this.resolveAgentProjectContext(agentId, input, {
@@ -3368,7 +3381,7 @@ export class WorkboardStore {
 
     if (currentTaskId) {
       nextPresence.currentTaskId = currentTaskId;
-    } else if ("currentTaskId" in input || "currentTask" in input || state !== "active") {
+    } else if ("currentTaskId" in input || "taskId" in input || "currentTask" in input || state !== "active") {
       delete nextPresence.currentTaskId;
     }
 
@@ -3441,9 +3454,9 @@ export class WorkboardStore {
         !presence.stale &&
         !presence.paused &&
         presence.state === "active" &&
-        presence.status === "online" &&
-        presence.currentTaskId === task.id
+        presence.status === "online"
     );
+    const presenceTaskMatches = Boolean(presenceFreshActive && presence.currentTaskId === task.id);
     const ownerProgressFresh = Boolean(ownerProgress?.fresh);
     const freshness = {
       windowMs: SLOT_LEASE_MS,
@@ -3451,6 +3464,7 @@ export class WorkboardStore {
       leaseHeartbeatAt: slot?.lease?.heartbeatAt || "",
       leaseExpiresAt: slot?.lease?.expiresAt || "",
       presenceFreshActive,
+      presenceTaskMatches,
       presenceHeartbeatAt: presence?.lastHeartbeat || presence?.updatedAt || "",
       presenceCurrentTaskId: presence?.currentTaskId || "",
       ownerProgressFresh,
@@ -3460,20 +3474,27 @@ export class WorkboardStore {
     };
 
     let reason = "";
+    let kind = "stalled";
     if (!assignee) {
       reason = "missing_assignee";
     } else if (!slot) {
       reason = "missing_slot";
     } else if (slot.paused) {
       reason = "paused_slot";
+    } else if (presenceFreshActive && !presenceTaskMatches) {
+      kind = "off_script";
+      reason = presence.currentTaskId ? "presence_task_mismatch" : "presence_task_missing";
     } else if (!slot.lease && !presence) {
       reason = "missing_heartbeat";
-    } else if (!leaseFresh && !presenceFreshActive && !ownerProgressFresh) {
+    } else if (!leaseFresh && !presenceTaskMatches && !ownerProgressFresh) {
       reason = "expired_heartbeat";
     }
 
     if (!reason) return null;
-    freshness.summary = staleWorkFreshnessSummary(reason);
+    freshness.summary =
+      reason === "presence_task_mismatch"
+        ? `Agent reports ${presence.currentTaskId} instead`
+        : staleWorkFreshnessSummary(reason);
 
     const suggestedActions = ["comment", "requeue", "block"];
     const canAcknowledge = Boolean(slot && !slot.paused);
@@ -3484,6 +3505,8 @@ export class WorkboardStore {
       claim: taskClaimSnapshot(task),
       projectId: task.projectId,
       assignee,
+      kind,
+      warningLabel: kind === "off_script" ? "OFF-SCRIPT" : "STALLED",
       reason,
       reasonLabel: staleWorkReasonLabel(reason),
       lastProgressAt: freshness.lastOwnerProgressAt || latestTaskProgressAt(task),
@@ -4907,7 +4930,9 @@ function staleWorkReasonLabel(reason) {
       missing_slot: "Missing slot",
       paused_slot: "Paused slot",
       missing_heartbeat: "Missing heartbeat",
-      expired_heartbeat: "Expired heartbeat"
+      expired_heartbeat: "Expired heartbeat",
+      presence_task_mismatch: "Different task reported",
+      presence_task_missing: "No task reported"
     }[reason] || "Needs attention"
   );
 }
@@ -4919,7 +4944,9 @@ function staleWorkFreshnessSummary(reason) {
       missing_slot: "Assignee has no configured slot",
       paused_slot: "Agent slot is paused",
       missing_heartbeat: "No heartbeat recorded",
-      expired_heartbeat: "No fresh heartbeat or owner progress"
+      expired_heartbeat: "No fresh heartbeat or owner progress",
+      presence_task_mismatch: "Agent reports a different current task",
+      presence_task_missing: "Active agent reports no current task"
     }[reason] || "Needs attention"
   );
 }

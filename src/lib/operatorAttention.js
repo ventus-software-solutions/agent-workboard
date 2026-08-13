@@ -6,6 +6,7 @@ const CATEGORY_RANK = {
   merge: 80,
   review_changes: 75,
   blocker: 70,
+  off_script: 65,
   stalled: 60,
   role_gap: 50,
   grooming: 30,
@@ -111,10 +112,11 @@ export function buildOperatorAttention({
     const task = item.task || tasks.find((candidate) => candidate.id === item.taskId);
     if (!task || task.status !== "in_progress" || stalledTaskIds.has(task.id)) continue;
     stalledTaskIds.add(task.id);
+    const kind = item.kind === "off_script" ? "off_script" : "stalled";
     actions.push(
       taskAction({
         task,
-        kind: "stalled",
+        kind,
         title: task.title,
         detail: item.freshness?.summary || item.reasonLabel || "The task owner has stopped reporting fresh progress.",
         remedy: "open_coordination",
@@ -285,6 +287,12 @@ function attentionCopy(action) {
         why: "This task is stuck until someone confirms ownership or returns it to the queue.",
         doThis: "Click Recover to inspect the claim and choose a safe recovery action."
       };
+    case "off_script":
+      return {
+        what: `${action.task?.assignee || "The assigned agent"} has “${action.title}” claimed, but ${lowercaseStart(action.detail || "its presence reports different work")}.`,
+        why: "The claim and the agent's live task binding disagree, so the board cannot trust which work is advancing.",
+        doThis: "Click Recover to inspect the binding or return the claim to Ready."
+      };
     case "role_gap":
       return {
         what: `${action.title}, but no active ${action.role} agent is available.`,
@@ -329,6 +337,11 @@ function stalledWhat(action) {
     return `The agent working on “${action.title}” stopped reporting a heartbeat.`;
   }
   return `The owner of “${action.title}” stopped reporting fresh progress.`;
+}
+
+function lowercaseStart(value) {
+  const text = String(value || "");
+  return text ? `${text[0].toLowerCase()}${text.slice(1)}` : text;
 }
 
 function isPendingOperatorApproval(task) {

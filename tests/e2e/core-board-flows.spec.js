@@ -1008,7 +1008,7 @@ test("splits tasks and coordination while preserving board state", async ({ page
 
   const coordinationLinks = [
     ["Talks", "#coordination-talks"],
-    ["Stale Work", "#coordination-stale-work"],
+    ["Claim Warnings", "#coordination-stale-work"],
     ["Cleanup", "#coordination-cleanup"],
     ["Blocked", "#coordination-blocked"],
     ["Review", "#coordination-review"]
@@ -1016,7 +1016,7 @@ test("splits tasks and coordination while preserving board state", async ({ page
   for (const [label, target] of coordinationLinks) {
     await expect(page.getByRole("link", { name: new RegExp(`^${label}:`) })).toHaveAttribute("href", target);
   }
-  await page.getByRole("link", { name: /^Stale Work:/ }).click();
+  await page.getByRole("link", { name: /^Claim Warnings:/ }).click();
   await expect(page).toHaveURL(/#coordination-stale-work$/);
   await expect(page.locator("#coordination-stale-work")).toBeInViewport();
 
@@ -1218,6 +1218,10 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
   await page.getByRole("button", { name: new RegExp(projectName) }).click();
   await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
 
+  const stalledCard = taskCard(page, staleTitle);
+  await expect(stalledCard.getByRole("button", { name: `STALLED: return ${staleTitle} to Ready` })).toBeVisible();
+  await expect(page.locator(".roleChip.warning", { hasText: "Implementer Agent" })).toContainText("1");
+
   const inboxCard = page.locator(".operatorAttentionItem.attentionKind-stalled").filter({ hasText: staleTitle });
   await expect(inboxCard).toBeVisible();
   await expect(inboxCard).toContainText("What happened:");
@@ -1251,6 +1255,77 @@ test("surfaces stale in-progress work and requeues it from the board", async ({ 
     author: "operator-ui",
     body: "Requeueing stale work from browser coverage."
   });
+});
+
+test("flags a fresh agent bound to different work as off-script and returns the claim to Ready", async ({ page }) => {
+  const projectName = uniqueName("E2E Off Script Project");
+  const projectKey = uniqueKey("OFF");
+  const claimedTitle = uniqueName("Claimed UI reliability work");
+  const reportedTitle = uniqueName("Reported unrelated work");
+
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+  const claimedResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: claimedTitle,
+      role: "implementer",
+      priority: "high",
+      status: "in_progress",
+      assignee: "implementer-frontend-1"
+    }
+  });
+  const reportedResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: reportedTitle,
+      role: "implementer",
+      status: "ready"
+    }
+  });
+  const claimedTask = (await claimedResponse.json()).task;
+  const reportedTask = (await reportedResponse.json()).task;
+  const presenceResponse = await page.request.post(`${apiBaseURL}/api/agents/implementer-frontend-1/presence`, {
+    data: {
+      state: "active",
+      taskId: reportedTask.id,
+      activeProjectId: project.id,
+      message: "Reporting the other task from browser coverage."
+    }
+  });
+  expect(presenceResponse.ok()).toBe(true);
+  expect((await presenceResponse.json()).presence).toMatchObject({ currentTaskId: reportedTask.id });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+
+  const inboxCard = page.locator(".operatorAttentionItem.attentionKind-off_script").filter({ hasText: claimedTitle });
+  await expect(inboxCard).toContainText("live task binding disagree");
+  await expect(inboxCard).toContainText(reportedTask.id);
+
+  const claimedCard = taskCard(page, claimedTitle);
+  const recovery = claimedCard.getByRole("button", { name: `OFF-SCRIPT: return ${claimedTitle} to Ready` });
+  await expect(recovery).toBeVisible();
+  await expect(page.locator(".roleChip.warning", { hasText: "Implementer Agent" })).toContainText("1");
+  await recovery.click();
+
+  await expect(page.locator('.kanbanColumn[data-status-id="ready"]')).toContainText(claimedTitle);
+  await expect(recovery).toHaveCount(0);
+  const updatedTask = (await (await page.request.get(`${apiBaseURL}/api/tasks/${claimedTask.id}`)).json()).task;
+  expect(updatedTask).toMatchObject({ status: "ready", assignee: "" });
+  expect(updatedTask.comments[0].body).toContain("Recovered off-script in-progress work");
+  expect(updatedTask.activity[0]).toMatchObject({ type: "stale_recovery.requeue", actor: "operator-ui" });
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/agents/implementer-frontend-1/presence`, {
+        data: { state: "idle", taskId: "", message: "Browser coverage complete." }
+      })
+    ).ok()
+  ).toBe(true);
 });
 
 test("refreshes an open board after external task changes without discarding drawer drafts", async ({ page }) => {

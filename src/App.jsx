@@ -651,6 +651,18 @@ export function App() {
       count: staleWork.length + blockedTasks.length + reviewTasks.length + testingTasks.length + staleAgents.length + cleanupAttention
     };
   }, [agentRegistry, projectTasks, staleWork, worktreeCleanup]);
+  const claimWarningsByTask = useMemo(
+    () => new Map(staleWork.map((item) => [item.task?.id || item.taskId, item]).filter(([taskId]) => taskId)),
+    [staleWork]
+  );
+  const roleClaimWarningCounts = useMemo(() => {
+    const counts = new Map();
+    for (const item of staleWork) {
+      const role = item.task?.role;
+      if (role) counts.set(role, (counts.get(role) || 0) + 1);
+    }
+    return counts;
+  }, [staleWork]);
 
   const viewTitle =
     view === "capabilities"
@@ -701,9 +713,10 @@ export function App() {
 
   async function recoverStaleWork(item, action) {
     const note = (staleWorkNotes[item.task.id] || "").trim();
+    const warningName = item.kind === "off_script" ? "off-script" : "stale";
     const defaultNotes = {
-      requeue: `Recovered stale in-progress work: requeued from ${item.assignee || "unassigned owner"}.`,
-      block: `Recovered stale in-progress work: moved to blocked from ${item.assignee || "unassigned owner"}.`,
+      requeue: `Recovered ${warningName} in-progress work: requeued from ${item.assignee || "unassigned owner"}.`,
+      block: `Recovered ${warningName} in-progress work: moved to blocked from ${item.assignee || "unassigned owner"}.`,
       acknowledge: `Acknowledged active ownership for ${item.assignee}.`
     };
 
@@ -837,18 +850,25 @@ export function App() {
           <div className="sectionLabel">Agent Roles</div>
           {meta.roles.map((role) => {
             const Icon = roleIcons[role.id] || Bot;
+            const warningCount = roleClaimWarningCounts.get(role.id) || 0;
             return (
               <button
                 key={role.id}
-                className={`roleChip ${filters.role === role.id ? "selected" : ""}`}
+                className={`roleChip ${filters.role === role.id ? "selected" : ""} ${warningCount ? "warning" : ""}`}
                 onClick={() => {
                   refreshTasks({ role: filters.role === role.id ? "" : role.id });
                   closeSidebarOverlay();
                 }}
-                title={role.summary}
+                title={warningCount ? `${role.summary} ${warningCount} claim warning${warningCount === 1 ? "" : "s"}.` : role.summary}
               >
                 <Icon size={15} />
                 <span>{role.label}</span>
+                {warningCount > 0 && (
+                  <span className="roleWarningCount" aria-label={`${warningCount} claim warning${warningCount === 1 ? "" : "s"}`}>
+                    <AlertCircle size={13} />
+                    {warningCount}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -1068,8 +1088,10 @@ export function App() {
             roles={meta.roles}
             workItemTypes={meta.workItemTypes}
             tasks={tasks}
+            claimWarningsByTask={claimWarningsByTask}
             selectedTaskId={selectedTaskId}
             onSelectTask={setSelectedTaskId}
+            onRecoverClaim={(item) => recoverStaleWork(item, "requeue")}
             onMoveTask={(task, status) => {
               if (status === "done" && task.status !== "done") {
                 setSelectedTaskId(task.id);
@@ -1321,7 +1343,19 @@ function WorkspaceTabs({ activeTab, taskCount, coordinationCount, activityCount,
   );
 }
 
-function TasksWorkspace({ filters, onFilterChange, statuses, roles, workItemTypes, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+function TasksWorkspace({
+  filters,
+  onFilterChange,
+  statuses,
+  roles,
+  workItemTypes,
+  tasks,
+  claimWarningsByTask,
+  selectedTaskId,
+  onSelectTask,
+  onMoveTask,
+  onRecoverClaim
+}) {
   return (
     <div className="tasksWorkspace">
       <div className="filterBar">
@@ -1375,9 +1409,11 @@ function TasksWorkspace({ filters, onFilterChange, statuses, roles, workItemType
         roles={roles}
         workItemTypes={workItemTypes}
         tasks={tasks}
+        claimWarningsByTask={claimWarningsByTask}
         selectedTaskId={selectedTaskId}
         onSelectTask={onSelectTask}
         onMoveTask={onMoveTask}
+        onRecoverClaim={onRecoverClaim}
       />
     </div>
   );
@@ -1405,7 +1441,7 @@ function CoordinationWorkspace({
     <div className="coordinationWorkspace">
       <div className="coordinationSummary">
         <CoordinationStat icon={MessageSquarePlus} label="Talks" value={talks.length} targetId="coordination-talks" />
-        <CoordinationStat icon={AlertCircle} label="Stale Work" value={staleWork.length} targetId="coordination-stale-work" />
+        <CoordinationStat icon={AlertCircle} label="Claim Warnings" value={staleWork.length} targetId="coordination-stale-work" />
         <CoordinationStat
           icon={Archive}
           label="Cleanup"
@@ -1441,8 +1477,8 @@ function CoordinationWorkspace({
             />
           ) : (
             <section className="coordinationPanel" id="coordination-stale-work">
-              <div className="sectionLabel">Stale Work</div>
-              <p>No stale in-progress work.</p>
+              <div className="sectionLabel">Claim Warnings</div>
+              <p>No stalled or off-script in-progress claims.</p>
             </section>
           )}
           <WorktreeCleanupPanel
@@ -2500,6 +2536,7 @@ function attentionIcon(kind) {
   if (kind === "review_changes") return AlertCircle;
   if (kind === "blocker") return AlertCircle;
   if (kind === "stalled") return WifiOff;
+  if (kind === "off_script") return AlertCircle;
   if (kind === "grooming") return ClipboardList;
   if (kind === "cleanup") return Archive;
   if (kind === "data_source") return Database;
@@ -2508,11 +2545,11 @@ function attentionIcon(kind) {
 
 function StaleWorkPanel({ id, items, notes, onNoteChange, onRecover, onSelectTask }) {
   return (
-    <section className="staleWorkPanel" id={id} aria-label="Stale in-progress work">
+    <section className="staleWorkPanel" id={id} aria-label="In-progress claim warnings">
       <div className="staleWorkHeader">
         <div>
           <div className="sectionLabel">Needs Attention</div>
-          <h3>Stale In-Progress Work</h3>
+          <h3>In-Progress Claim Warnings</h3>
         </div>
         <span>{items.length}</span>
       </div>
@@ -2524,6 +2561,7 @@ function StaleWorkPanel({ id, items, notes, onNoteChange, onRecover, onSelectTas
                 {item.task.title}
               </button>
               <div className="staleWorkMeta">
+                <span className={`claimWarningLabel claimWarning-${item.kind || "stalled"}`}>{item.warningLabel || "STALLED"}</span>
                 <span>{item.reasonLabel}</span>
                 <span>{item.assignee || "Unassigned"}</span>
                 <span>{formatShortDateTime(item.lastProgressAt)}</span>
@@ -2739,7 +2777,17 @@ function capabilityName(capabilities, capabilityId) {
   return capability?.name || capabilityId;
 }
 
-function KanbanBoard({ statuses, roles, workItemTypes, tasks, selectedTaskId, onSelectTask, onMoveTask }) {
+function KanbanBoard({
+  statuses,
+  roles,
+  workItemTypes,
+  tasks,
+  claimWarningsByTask,
+  selectedTaskId,
+  onSelectTask,
+  onMoveTask,
+  onRecoverClaim
+}) {
   const [draggedTaskId, setDraggedTaskId] = useState("");
   const [dropStatusId, setDropStatusId] = useState("");
   const dragSession = useRef(null);
@@ -2833,6 +2881,7 @@ function KanbanBoard({ statuses, roles, workItemTypes, tasks, selectedTaskId, on
                 <TaskCard
                   key={task.id}
                   task={task}
+                  claimWarning={claimWarningsByTask.get(task.id)}
                   roles={roles}
                   workItemTypes={workItemTypes}
                   selected={task.id === selectedTaskId}
@@ -2846,6 +2895,7 @@ function KanbanBoard({ statuses, roles, workItemTypes, tasks, selectedTaskId, on
                   }}
                   onMouseDown={(event) => handleMouseDown(event, task)}
                   onMove={(nextStatus) => onMoveTask(task, nextStatus)}
+                  onRecoverClaim={onRecoverClaim}
                   statuses={statuses}
                 />
               ))}
@@ -2860,6 +2910,7 @@ function KanbanBoard({ statuses, roles, workItemTypes, tasks, selectedTaskId, on
 
 function TaskCard({
   task,
+  claimWarning,
   roles,
   workItemTypes,
   statuses,
@@ -2867,7 +2918,8 @@ function TaskCard({
   dragging,
   onSelect,
   onMouseDown,
-  onMove
+  onMove,
+  onRecoverClaim
 }) {
   const role = roles.find((candidate) => candidate.id === task.role);
   const workItemType = workItemTypes.find((candidate) => candidate.id === task.workItemType) || workItemTypes.find((candidate) => candidate.id === "task");
@@ -2916,6 +2968,22 @@ function TaskCard({
             <UserRoundCheck size={13} />
             approval
           </span>
+        )}
+        {claimWarning && (
+          <button
+            type="button"
+            className={`claimWarningChip claimWarning-${claimWarning.kind || "stalled"}`}
+            aria-label={`${claimWarning.warningLabel || "STALLED"}: return ${task.title} to Ready`}
+            title={`${claimWarning.freshness?.summary || claimWarning.reasonLabel}. Return this claim to Ready.`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRecoverClaim(claimWarning);
+            }}
+          >
+            <AlertCircle size={13} />
+            <span>{claimWarning.warningLabel || "STALLED"}</span>
+            <small>Return to Ready</small>
+          </button>
         )}
         {task.attachments.length > 0 && (
           <span className="attachmentPill">

@@ -491,6 +491,7 @@ function sharedWorkflow() {
     "Ordinary implementers claim task, subtask, bug, spike, and chore work item types; leave epic/story containers for planner/decomposer agents unless an operator explicitly converts or decomposes them.",
     "Respect dependency and blocker relationships: ordinary work is claimable only when related prerequisite tasks are in review or done.",
     "Claim one task through `POST /api/tasks/{taskId}/claim` or MCP `claim_task`; include expected status/assignee when known.",
+    "While active, heartbeat with `update_presence` and bind `taskId` (or `currentTaskId`) to the task you believe you are working on; clear the binding when you leave that task.",
     "Create or switch to a task branch/worktree before editing files.",
     "Post a comment with your plan and expected evidence.",
     "For ordinary claimed tasks, that plan is your go-ahead to proceed; do not wait for a separate human yes unless the task needs explicit operator approval.",
