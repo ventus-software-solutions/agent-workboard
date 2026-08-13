@@ -208,6 +208,7 @@ export function App() {
   const boardVersionRef = useRef("");
   const boardProjectRef = useRef("");
   const pollBoardStateRef = useRef(null);
+  const pollingNeedsMetaRefreshRef = useRef(false);
   const initialLoadStartedRef = useRef(false);
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
@@ -350,6 +351,11 @@ export function App() {
 
     const checkedAt = new Date().toISOString();
     const result = await api.boardState({ projectId: selectedProjectId });
+    if (pollingNeedsMetaRefreshRef.current) {
+      const recoveredMeta = await api.meta();
+      setMeta(recoveredMeta);
+      pollingNeedsMetaRefreshRef.current = false;
+    }
     const previousVersion = boardVersionRef.current;
     const changed = Boolean(previousVersion && previousVersion !== result.state.version);
 
@@ -565,6 +571,7 @@ export function App() {
       intervalMs: LIVE_POLL_INTERVAL_MS,
       maxBackoffMs: LIVE_POLL_MAX_BACKOFF_MS,
       onError: (nextError, { nextDelayMs }) => {
+        pollingNeedsMetaRefreshRef.current = true;
         setRefreshState((current) => ({
           ...current,
           status: "reconnecting",

@@ -75,21 +75,50 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await expect(workflowCard).toContainText("Unassigned");
 });
 
-test("shows polling retry context instead of masking it as a recent restart", async ({ page }) => {
+test("refreshes runtime identity once after a mounted-page polling outage", async ({ page }) => {
+  let pollingUnavailable = false;
+  let restarted = false;
+  let metaRequests = 0;
+  const restartedAt = new Date(Date.now() - 30_000).toISOString();
+
+  await page.route("**/api/meta", async (route) => {
+    metaRequests += 1;
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (restarted) payload.server.startedAt = restartedAt;
+    await route.fulfill({ response, json: payload });
+  });
   await page.route("**/api/board-state**", async (route) => {
-    await route.fulfill({
-      status: 503,
-      contentType: "application/json",
-      body: JSON.stringify({ error: { message: "Synthetic poll failure" } })
-    });
+    if (pollingUnavailable) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { message: "Synthetic poll failure" } })
+      });
+      return;
+    }
+    await route.continue();
   });
 
   await page.goto(baseURL);
   const systemStatus = page.getByTestId("system-status-pill");
+  await expect(systemStatus).toContainText("Recent restart");
+  await page.waitForTimeout(3_000);
+  expect(metaRequests).toBe(1);
+
+  pollingUnavailable = true;
   await expect(systemStatus).toContainText("Reconnecting…");
   await expect(systemStatus.locator("time")).toContainText("Retry at");
   await expect(systemStatus).not.toContainText("Recent restart");
   await expect(systemStatus).toHaveAttribute("title", /Synthetic poll failure/);
+
+  restarted = true;
+  pollingUnavailable = false;
+  await expect(systemStatus).toContainText("Recent restart", { timeout: 10_000 });
+  await expect(systemStatus).toHaveAttribute("title", new RegExp(`Started ${restartedAt}`));
+  await expect.poll(() => metaRequests).toBe(2);
+  await page.waitForTimeout(3_000);
+  expect(metaRequests).toBe(2);
 });
 
 test("shows stage ownership and structured changes-requested verdicts on tasks", async ({ page }) => {
