@@ -363,6 +363,36 @@ describe("operator attention selector", () => {
       })
     );
   });
+
+  it("surfaces one project-scoped inbox line for safely mapped unknown source values", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("mapped", { status: "backlog", labels: ["unmapped-value"] })],
+      project: {
+        id: "project_folder",
+        name: "Folder project",
+        dataSource: {
+          tasksDir: "/repo/tasks",
+          health: {
+            status: "ready",
+            warnings: [
+              { kind: "status", value: "someday", target: "backlog", count: 2, files: ["a/task.md", "b/task.md"] },
+              { kind: "priority", value: "extreme", target: "none", count: 1, files: ["a/task.md"] }
+            ]
+          }
+        }
+      }
+    });
+
+    expect(result.actions.filter((action) => action.kind === "data_source_mapping")).toEqual([
+      expect.objectContaining({
+        id: "data-source-mapping:project_folder",
+        title: expect.stringContaining("unmapped tasks-folder values"),
+        what: expect.stringContaining("status=someday -> backlog (2)"),
+        why: expect.stringContaining("safe defaults"),
+        doThis: expect.stringContaining("update the task files")
+      })
+    ]);
+  });
 });
 
 describe("bootstrap prompt rendering", () => {

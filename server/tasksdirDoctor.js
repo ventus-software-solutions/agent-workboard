@@ -216,9 +216,9 @@ export async function inspectTasksDir(tasksDir) {
   if (layoutIssues.length > 0) blockers.push(`${layoutIssues.length} unsupported task.md layout(s)`);
   if (duplicates.length > 0) blockers.push(`${duplicates.length} duplicate task id(s)`);
   if (mismatches.length > 0) blockers.push(`${mismatches.length} id/folder mismatch(es)`);
-  if (unknownMappingValues.length > 0) {
-    blockers.push(`unknown mapping value(s): ${[...new Set(unknownMappingValues)].sort(compareText).join(", ")}`);
-  }
+  const warnings = unknownMappingValues.length > 0
+    ? [`unknown mapping value(s) safely mapped and labeled unmapped-value: ${[...new Set(unknownMappingValues)].sort(compareText).join(", ")}`]
+    : [];
 
   return {
     schemaVersion: 1,
@@ -227,6 +227,7 @@ export async function inspectTasksDir(tasksDir) {
     generatedAt: new Date().toISOString(),
     go: blockers.length === 0,
     blockers,
+    warnings,
     summary: {
       foldersScanned,
       taskFiles: files.length,
@@ -290,6 +291,7 @@ export function renderTasksdirDoctorReport(report) {
   section(lines, "Duplicate IDs", report.idChecks.duplicates, (item) => `${item.id}: ${item.files.join(", ")}`);
   section(lines, "Unsupported layouts", report.idChecks.layoutIssues, (item) => `${item.file}: ${item.reason}`);
   section(lines, "Import blockers", report.blockers, (item) => item);
+  section(lines, "Import warnings", report.warnings || [], (item) => item);
   lines.push("", report.go ? "Result: safe to enable tasksdir storage." : "Result: fix the blockers above before enabling tasksdir storage.");
   return `${lines.join("\n")}\n`;
 }

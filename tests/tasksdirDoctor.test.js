@@ -183,12 +183,14 @@ describe("tasksdir doctor", () => {
     expect(report.idChecks.layoutIssues).toEqual([
       expect.objectContaining({ file: "nested/deep/task.md", reason: expect.stringContaining("<folder>/task.md") })
     ]);
-    expect(report.blockers.join(" ")).toContain("unknown mapping");
+    expect(report.blockers.join(" ")).not.toContain("unknown mapping");
+    expect(report.warnings.join(" ")).toContain("unknown mapping");
 
     const human = renderTasksdirDoctorReport(report);
     expect(human).toContain("TASKSDIR PREFLIGHT: NO-GO");
     expect(human).toContain("broken/task.md");
     expect(human).toContain("surprising -> backlog: 1 [UNKNOWN]");
+    expect(human).toContain("safely mapped and labeled unmapped-value");
     expect(human).toContain("fix the blockers above");
 
     const stdout = captureStream();
@@ -254,6 +256,46 @@ describe("tasksdir doctor", () => {
       expect.arrayContaining([expect.objectContaining({ key: "board.touches" })])
     );
     expect(renderTasksdirDoctorReport(report)).toContain("TASKSDIR PREFLIGHT: NO-GO");
+  });
+
+  it("accepts the Vergleichshai vocabulary and tolerates future enums with visible warnings", async () => {
+    const root = await tempTasksDir();
+    const cases = [
+      ["critical", "cancelled", "improvement"],
+      ["medium", "in-review", "infrastructure"],
+      ["p1", "ready", "investigation"],
+      ["-", "ready", "security"],
+      [null, "ready", "test"],
+      ["normal", "ready", "verification"],
+      ["high", "ready", "decision"],
+      ["urgent", "ready", null]
+    ];
+    for (const [index, [priority, status, type]] of cases.entries()) {
+      await writeTask(root, `known-${index}`, [
+        `id: known-${index}`,
+        `title: Known ${index}`,
+        `status: ${status}`,
+        ...(type ? [`type: ${type}`] : []),
+        ...(priority ? [`priority: ${priority}`] : [])
+      ]);
+    }
+    await writeTask(root, "future", [
+      "id: future",
+      "title: Future values",
+      "status: someday",
+      "type: gizmo",
+      "priority: extreme"
+    ]);
+
+    const report = await inspectTasksDir(root);
+
+    expect(report.go).toBe(true);
+    expect(report.blockers).toEqual([]);
+    expect(report.summary).toMatchObject({ taskFiles: 9, parsed: 9, failed: 0 });
+    expect(report.mappingPreview.status.unknown).toEqual([
+      expect.objectContaining({ value: "someday", target: "backlog" })
+    ]);
+    expect(report.warnings).toEqual([expect.stringContaining("status=someday")]);
   });
 
   it("parses a generated 550-folder tree and reports its measured size and duration", async () => {

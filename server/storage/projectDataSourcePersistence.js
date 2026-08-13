@@ -61,6 +61,7 @@ export class ProjectDataSourcePersistence {
         project.dataSource = withHealth(project.dataSource, {
           status: "ready",
           message: "",
+          warnings: cloneArray(projectData?.tasksdirDiagnostics?.unmappedValues),
           checkedAt: new Date().toISOString()
         });
       } catch (error) {
@@ -218,7 +219,10 @@ function withHealth(dataSource, health) {
   return {
     tasksDir: path.resolve(dataSource.tasksDir),
     ...(text(dataSource.repoDir) ? { repoDir: path.resolve(dataSource.repoDir) } : {}),
-    health
+    health: {
+      ...health,
+      warnings: cloneArray(health.warnings)
+    }
   };
 }
 
