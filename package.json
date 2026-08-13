@@ -40,6 +40,7 @@
     "docs:preview": "vitepress preview docs",
     "start": "node server/index.js",
     "mcp": "node server/mcp.js",
+    "tasksdir:doctor": "node server/tasksdirDoctor.js",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },

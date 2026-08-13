@@ -112,6 +112,15 @@ Set `WORKBOARD_STORAGE=json` to use the plain JSON file store instead.
 
 Set `WORKBOARD_STORAGE=tasksdir` (plus `WORKBOARD_TASKS_DIR=/abs/path/to/tasks`) to persist work items as markdown task folders (`<task-id>/task.md` with YAML frontmatter and a markdown body) in a git-tracked directory. Mutations rewrite only the affected task file, atomically; unknown frontmatter keys and the markdown body round-trip byte-for-byte. Everything that is not a work item (agent slots, presence, talks, capabilities, projects, and per-task comments/activity) stays in the ops store under `WORKBOARD_DATA_DIR`. The board never runs git commands; committing the tasks directory stays the operator's job.
 
+Before pointing the board at an existing task tree, run the read-only preflight doctor:
+
+```bash
+npm run tasksdir:doctor -- /absolute/path/to/tasks
+npm run tasksdir:doctor -- /absolute/path/to/tasks --json
+```
+
+The report parses every `task.md`, previews legacy status/type/priority mappings, inventories unknown frontmatter keys (which remain preserved), detects duplicate IDs and folder/ID mismatches, and reports total size and elapsed time. `GO` exits with code `0`; actionable import blockers produce `NO-GO` and exit code `1`; invocation or filesystem errors exit with code `2`. The doctor never writes to the inspected tree.
+
 ## Development
 
 ```bash
