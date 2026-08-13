@@ -1,4 +1,4 @@
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -98,6 +98,24 @@ describe("per-project tasks-directory persistence", () => {
     expect(store.listTasks({ projectId: degraded.id })).toHaveLength(4);
   });
 
+  it("degrades only a project whose runtime task file has malformed frontmatter", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const folderProject = await store.createProject({ name: "Malformed Folder Project", dataSource: { tasksDir } });
+    const healthy = await store.createProject({ name: "Healthy Sibling" });
+    await writeFile(path.join(tasksDir, "task_docs_cleanup", "task.md"), "---\nid: task_docs_cleanup\nstatus: ready\n");
+
+    const degraded = await store.refreshProjectDataSource(folderProject.id);
+    expect(degraded.dataSource.health).toMatchObject({
+      status: "error",
+      code: "INVALID_TASK_FILE",
+      message: expect.stringContaining("missing closing frontmatter delimiter")
+    });
+    expect(store.listTasks({ projectId: folderProject.id })).toHaveLength(0);
+    const healthyTask = await store.createTask({ projectId: healthy.id, title: "Sibling remains writable" });
+    expect(store.getTask(healthyTask.id).title).toBe("Sibling remains writable");
+  });
+
   it("keeps stale-file CAS failures inside the folder-backed project revision space", async () => {
     const store = new WorkboardStore({ dataDir, storageMode: "json" });
     await store.init();
@@ -131,6 +149,40 @@ describe("per-project tasks-directory persistence", () => {
     await expect(store.createProject({ name: "Second Binding", dataSource: { tasksDir } })).rejects.toMatchObject({
       status: 409,
       details: { reason: "tasksdir_already_bound" }
+    });
+  });
+
+  it("rejects filesystem aliases for an already-bound tasks directory", async () => {
+    const aliasDir = path.join(dataDir, "external-tasks-alias");
+    await symlink(tasksDir, aliasDir, process.platform === "win32" ? "junction" : "dir");
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const first = await store.createProject({ name: "Canonical Binding", dataSource: { tasksDir } });
+    await expect(store.createProject({ name: "Alias Binding", dataSource: { tasksDir: aliasDir } })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "tasksdir_already_bound" }
+    });
+    expect(first.dataSource.tasksDir).toBe(await realpath(tasksDir));
+  });
+
+  it("omits bindings from portable backups and rejects binding injection on import", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const project = await store.createProject({ name: "Portable Folder Project", dataSource: { tasksDir } });
+    const backup = store.exportProjectBackup(project.id);
+    expect(backup.project).not.toHaveProperty("dataSource");
+
+    await store.importProjectBackup({ ...backup, tasks: [] }, { actor: "restore-agent" });
+    expect(store.getProject(project.id).dataSource.tasksDir).toBe(project.dataSource.tasksDir);
+
+    await expect(
+      store.importProjectBackup(
+        { ...backup, tasks: [], project: { ...backup.project, dataSource: { tasksDir: path.join(dataDir, "injected") } } },
+        { actor: "restore-agent" }
+      )
+    ).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_backup_data_source_forbidden", field: "project.dataSource" }
     });
   });
 

@@ -3,6 +3,7 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { TasksdirWorkboardPersistence } from "./tasksdirPersistence.js";
+import { canonicalizeProjectDataSource, pathIdentity } from "./projectDataSource.js";
 
 const PROJECT_SIDECARS_KEY = "projectTasksdirSidecars";
 const LOCK_RETRY_MS = 20;
@@ -30,6 +31,9 @@ export class ProjectDataSourcePersistence {
     if (!data) return null;
 
     const projects = cloneArray(data.projects);
+    for (const project of projects) {
+      if (hasTasksDirectory(project)) project.dataSource = await canonicalizeProjectDataSource(project.dataSource, { migrating: true });
+    }
     const externalProjectIds = new Set(projects.filter(hasTasksDirectory).map((project) => project.id));
     const tasks = cloneArray(data.tasks).filter((task) => !externalProjectIds.has(task.projectId));
     const sidecarsByProject = objectValue(data[PROJECT_SIDECARS_KEY]);
@@ -129,9 +133,9 @@ export class ProjectDataSourcePersistence {
   }
 
   adapterFor(project, bridge) {
-    const tasksDir = path.resolve(project.dataSource.tasksDir);
+    const tasksDir = project.dataSource.tasksDir;
     const cached = this.adapters.get(project.id);
-    if (cached?.tasksDir === tasksDir) {
+    if (cached?.tasksDirKey === pathIdentity(tasksDir)) {
       cached.bridge.setSnapshot(bridge.snapshot);
       return cached.adapter;
     }
@@ -141,7 +145,7 @@ export class ProjectDataSourcePersistence {
       ops: bridge,
       defaultProjectKey: project.key || this.defaultProjectKey
     });
-    this.adapters.set(project.id, { tasksDir, adapter, bridge });
+    this.adapters.set(project.id, { tasksDir, tasksDirKey: pathIdentity(tasksDir), adapter, bridge });
     return adapter;
   }
 
@@ -153,7 +157,7 @@ export class ProjectDataSourcePersistence {
       tasksdirSidecars: clone(objectValue(sidecars))
     };
     const cached = this.adapters.get(project.id);
-    if (cached?.tasksDir === path.resolve(project.dataSource.tasksDir)) {
+    if (cached?.tasksDirKey === pathIdentity(project.dataSource.tasksDir)) {
       cached.bridge.setSnapshot(snapshot);
       return cached.bridge;
     }
@@ -162,7 +166,7 @@ export class ProjectDataSourcePersistence {
 
   projectLockPath(project) {
     const digest = createHash("sha256")
-      .update(`${project.id}\0${path.resolve(project.dataSource.tasksDir)}`)
+      .update(pathIdentity(project.dataSource.tasksDir))
       .digest("hex")
       .slice(0, 20);
     return path.join(this.dataDir, "project-locks", `${digest}.lock`);

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { realpath } from "node:fs/promises";
 
 export function normalizeProjectDataSource(value, { migrating = false } = {}) {
   if (value === undefined || value === null || value === "") return null;
@@ -27,6 +28,31 @@ export function normalizeProjectDataSource(value, { migrating = false } = {}) {
     };
   }
   return normalized;
+}
+
+export async function canonicalizeProjectDataSource(value, options = {}) {
+  const normalized = normalizeProjectDataSource(value, options);
+  if (!normalized) return null;
+  return {
+    ...normalized,
+    tasksDir: await canonicalPath(normalized.tasksDir),
+    ...(normalized.repoDir ? { repoDir: await canonicalPath(normalized.repoDir) } : {})
+  };
+}
+
+export async function canonicalPath(value) {
+  const resolved = path.resolve(String(value || ""));
+  try {
+    return await realpath(resolved);
+  } catch (error) {
+    if (error.code === "ENOENT") return resolved;
+    throw error;
+  }
+}
+
+export function pathIdentity(value) {
+  const resolved = path.resolve(String(value || ""));
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 export function assertProjectDataSourceAvailable(project) {

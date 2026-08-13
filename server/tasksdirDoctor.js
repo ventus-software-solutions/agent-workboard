@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
-import { parseTaskFile, serializeTaskFile } from "./storage/frontmatterTaskFile.js";
+import { parseTaskFile, serializeTaskFile, validateTaskFileStructure } from "./storage/frontmatterTaskFile.js";
 import { previewFileTaskMapping } from "./storage/tasksdirPersistence.js";
 
 const KNOWN_TOP_LEVEL_KEYS = new Set([
@@ -29,7 +30,6 @@ const KNOWN_BOARD_KEYS = new Set([
   "blockedBy",
   "parentTaskId"
 ]);
-const TOP_LEVEL_PAIR_RE = /^([A-Za-z0-9_][A-Za-z0-9_.-]*):(.*)$/;
 
 function relativeFile(root, filePath) {
   return path.relative(root, filePath).split(path.sep).join("/");
@@ -58,43 +58,7 @@ async function discoverTaskFiles(root) {
 
   for (const folder of topFolders) await walk(path.join(root, folder.name));
   files.sort((a, b) => compareText(relativeFile(root, a), relativeFile(root, b)));
-  return { files, foldersScanned: topFolders.length };
-}
-
-function validateFrontmatter(raw) {
-  const lines = String(raw).split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") {
-    return [{ line: 1, reason: "missing opening frontmatter delimiter (---)" }];
-  }
-
-  const closeIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
-  if (closeIndex === -1) {
-    return [{ line: Math.max(1, lines.length), reason: "missing closing frontmatter delimiter (---)" }];
-  }
-
-  const failures = [];
-  let hasParent = false;
-  for (let index = 1; index < closeIndex; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      hasParent = false;
-      continue;
-    }
-    if (!/^\s/.test(line) && TOP_LEVEL_PAIR_RE.test(line)) {
-      hasParent = true;
-      continue;
-    }
-    if (/^\s/.test(line) && hasParent) continue;
-    failures.push({
-      line: index + 1,
-      reason: /^\s/.test(line)
-        ? "orphaned indented frontmatter content"
-        : "expected a frontmatter key followed by a colon"
-    });
-    hasParent = false;
-  }
-  return failures;
+  return { files, folders: topFolders.map((folder) => folder.name).sort(compareText), foldersScanned: topFolders.length };
 }
 
 function addCount(map, key, file, extra = {}) {
@@ -122,7 +86,7 @@ function mappingTarget(kind, item) {
 export async function inspectTasksDir(tasksDir) {
   const startedAt = performance.now();
   const root = path.resolve(String(tasksDir || ""));
-  const { files, foldersScanned } = await discoverTaskFiles(root);
+  const { files, folders, foldersScanned } = await discoverTaskFiles(root);
   const failures = [];
   const layoutIssues = [];
   const mismatches = [];
@@ -135,6 +99,9 @@ export async function inspectTasksDir(tasksDir) {
   };
   let totalBytes = 0;
   let unknownKeysPreserved = true;
+  const fingerprint = createHash("sha256");
+  for (const folder of folders) fingerprint.update("directory\0").update(folder).update("\0");
+  for (const filePath of files) fingerprint.update("file\0").update(relativeFile(root, filePath)).update("\0");
 
   for (const filePath of files) {
     const file = relativeFile(root, filePath);
@@ -142,12 +109,13 @@ export async function inspectTasksDir(tasksDir) {
     try {
       raw = await readFile(filePath, "utf8");
       totalBytes += Buffer.byteLength(raw);
+      fingerprint.update(raw).update("\0");
     } catch (error) {
       failures.push({ file, line: null, reason: `could not read file: ${error.message}` });
       continue;
     }
 
-    const structuralFailures = validateFrontmatter(raw);
+    const structuralFailures = validateTaskFileStructure(raw);
     if (structuralFailures.length > 0) {
       failures.push(...structuralFailures.map((failure) => ({ file, ...failure })));
       continue;
@@ -253,6 +221,7 @@ export async function inspectTasksDir(tasksDir) {
   return {
     schemaVersion: 1,
     tasksDir: root,
+    sourceFingerprint: fingerprint.digest("hex"),
     generatedAt: new Date().toISOString(),
     go: blockers.length === 0,
     blockers,

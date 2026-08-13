@@ -123,6 +123,8 @@ npm run tasksdir:doctor -- /absolute/path/to/tasks --json
 
 The report parses every `task.md`, previews legacy status/type/priority mappings, inventories unknown frontmatter keys (which remain preserved), detects duplicate IDs and folder/ID mismatches, and reports total size and elapsed time. `GO` exits with code `0`; actionable import blockers produce `NO-GO` and exit code `1`; invocation or filesystem errors exit with code `2`. The doctor never writes to the inspected tree.
 
+Project creation binds its confirmation to the canonical physical directory and the exact inspected tree; any change requires a new preflight. Project backups are portable and deliberately omit local `dataSource` paths. Restore them into an ops-backed project, or create the destination folder-backed project through the preflight flow first and then import the backup into that existing project.
+
 ## Development
 
 ```bash

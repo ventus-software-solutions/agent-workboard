@@ -3,7 +3,12 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 import { createWorkboardPersistence } from "./persistence.js";
-import { assertProjectDataSourceAvailable, normalizeProjectDataSource } from "./projectDataSource.js";
+import {
+  assertProjectDataSourceAvailable,
+  canonicalizeProjectDataSource,
+  normalizeProjectDataSource,
+  pathIdentity
+} from "./projectDataSource.js";
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 import { isSafeHttpUrl } from "../../shared/taskLinks.js";
@@ -1681,7 +1686,7 @@ export class WorkboardStore {
       throw Object.assign(new Error("Project name is required."), { status: 400 });
     }
 
-    const dataSource = normalizeProjectDataSource(input.dataSource);
+    const dataSource = await canonicalizeProjectDataSource(input.dataSource);
     if (dataSource && !this.projectDataSourcesSupported()) {
       throw httpError(
         "Per-project tasks folders require WORKBOARD_STORAGE=sqlite or json. The instance-global tasksdir mode remains a single-tree compatibility fallback.",
@@ -1695,7 +1700,8 @@ export class WorkboardStore {
       if (
         dataSource &&
         this.data.projects.some(
-          (candidate) => candidate.dataSource?.tasksDir && path.resolve(candidate.dataSource.tasksDir) === dataSource.tasksDir
+          (candidate) =>
+            candidate.dataSource?.tasksDir && pathIdentity(candidate.dataSource.tasksDir) === pathIdentity(dataSource.tasksDir)
         )
       ) {
         throw httpError("That tasks directory is already bound to another project.", 409, {

@@ -10,6 +10,7 @@ import { clientDisconnectMiddleware, finishHttpError } from "./httpResilience.js
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
 import { cleanupWorktree, createWorktreeCleanupReport, validateWorktreeCleanupRequest } from "./worktreeCleanup.js";
 import { inspectTasksDir } from "./tasksdirDoctor.js";
+import { canonicalPath, pathIdentity } from "./storage/projectDataSource.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -229,7 +230,7 @@ export function createApp({
       if (!tasksDirInput) {
         throw Object.assign(new Error("tasksDir is required for project preflight."), { status: 400 });
       }
-      const tasksDir = path.resolve(tasksDirInput);
+      const tasksDir = await canonicalPath(tasksDirInput);
       const report = await tasksdirDoctor(tasksDir);
       if (!report.go) {
         res.json({ report, confirmationToken: "" });
@@ -239,7 +240,12 @@ export function createApp({
         if (confirmation.expiresAt < Date.now()) projectPreflights.delete(token);
       }
       const confirmationToken = randomUUID();
-      projectPreflights.set(confirmationToken, { tasksDir, expiresAt: Date.now() + 10 * 60_000 });
+      projectPreflights.set(confirmationToken, {
+        tasksDir,
+        tasksDirIdentity: pathIdentity(tasksDir),
+        sourceFingerprint: report.sourceFingerprint,
+        expiresAt: Date.now() + 10 * 60_000
+      });
       res.json({ report, confirmationToken });
     } catch (error) {
       if (!error.status) {
@@ -253,15 +259,33 @@ export function createApp({
   app.post("/api/projects", async (req, res, next) => {
     try {
       if (req.body.dataSource?.tasksDir) {
-        const tasksDir = path.resolve(String(req.body.dataSource.tasksDir).trim());
+        const tasksDir = await canonicalPath(String(req.body.dataSource.tasksDir).trim());
         const confirmation = projectPreflights.get(req.body.preflightToken);
         projectPreflights.delete(req.body.preflightToken);
-        if (!confirmation || confirmation.tasksDir !== tasksDir || confirmation.expiresAt < Date.now()) {
+        if (
+          !confirmation ||
+          confirmation.tasksDirIdentity !== pathIdentity(tasksDir) ||
+          confirmation.expiresAt < Date.now()
+        ) {
           throw Object.assign(new Error("Run a successful tasks-directory preflight and confirm its report first."), {
             status: 409,
             details: { reason: "tasksdir_preflight_required", tasksDir }
           });
         }
+        const currentReport = await tasksdirDoctor(tasksDir);
+        if (!currentReport.go || currentReport.sourceFingerprint !== confirmation.sourceFingerprint) {
+          throw Object.assign(new Error("The tasks directory changed after preflight. Review a fresh report before creating the project."), {
+            status: 409,
+            details: {
+              reason: "tasksdir_preflight_stale",
+              tasksDir,
+              expectedFingerprint: confirmation.sourceFingerprint,
+              actualFingerprint: currentReport.sourceFingerprint,
+              report: currentReport
+            }
+          });
+        }
+        req.body.dataSource.tasksDir = tasksDir;
       }
       const project = await store.createProject(req.body);
       res.status(201).json({ project });

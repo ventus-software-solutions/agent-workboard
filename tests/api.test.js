@@ -82,6 +82,30 @@ describe("Agent Workboard API", () => {
     expect(response.body.report.blockers).not.toHaveLength(0);
   });
 
+  it("rejects a tasks tree that drifts after a successful preflight", async () => {
+    const tasksDir = path.join(tempDir, "drifting-tasks");
+    await cp(path.resolve("tests/fixtures/tasksdir"), tasksDir, { recursive: true });
+    const checked = await request(app).post("/api/projects/preflight").send({ tasksDir }).expect(200);
+    expect(checked.body.report).toMatchObject({ go: true, sourceFingerprint: expect.any(String) });
+
+    await writeFile(path.join(tasksDir, "task_docs_cleanup", "task.md"), "---\nid: broken-after-check\n");
+    const rejected = await request(app)
+      .post("/api/projects")
+      .send({
+        name: "Drifted source",
+        dataSource: { tasksDir },
+        preflightToken: checked.body.confirmationToken
+      })
+      .expect(409);
+    expect(rejected.body.error.details).toMatchObject({
+      reason: "tasksdir_preflight_stale",
+      expectedFingerprint: checked.body.report.sourceFingerprint,
+      actualFingerprint: expect.any(String),
+      report: { go: false }
+    });
+    expect(store.listProjects()).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "Drifted source" })]));
+  });
+
   it("uses a bound project repoDir for project-scoped integration status", async () => {
     const tasksDir = path.join(tempDir, "status-tasks");
     await mkdir(tasksDir, { recursive: true });
