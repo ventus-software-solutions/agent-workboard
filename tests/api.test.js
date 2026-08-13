@@ -25,6 +25,17 @@ afterEach(async () => {
 });
 
 describe("Agent Workboard API", () => {
+  it("exposes process start, version, and active storage mode in meta", async () => {
+    app = createApp({ store, startedAt: "2026-08-13T09:00:00.000Z", version: "9.8.7" });
+
+    const meta = await request(app).get("/api/meta").expect(200);
+    expect(meta.body.server).toEqual({
+      startedAt: "2026-08-13T09:00:00.000Z",
+      version: "9.8.7",
+      storageMode: "json"
+    });
+  });
+
   it("edits deployment process rules and injects them into every role doc only when non-empty", async () => {
     const emptyDoc = await request(app).get("/api/agent-docs/implementer?format=md").expect(200);
     expect(emptyDoc.text).not.toContain("Deployment process rules (OVERRIDE defaults)");
