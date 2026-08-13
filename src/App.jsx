@@ -60,6 +60,7 @@ const priorityClass = {
 };
 
 const talkKinds = ["update", "blocker", "review-request", "handoff", "question", "decision", "system"];
+const TALK_PAGE_SIZE = 25;
 const workModeOptions = [
   { id: "single-task", label: "Single task" },
   { id: "drain-role-queue", label: "Drain queue" },
@@ -1299,11 +1300,16 @@ function CoordinationWorkspace({
   return (
     <div className="coordinationWorkspace">
       <div className="coordinationSummary">
-        <CoordinationStat icon={MessageSquarePlus} label="Talks" value={talks.length} />
-        <CoordinationStat icon={AlertCircle} label="Stale Work" value={staleWork.length} />
-        <CoordinationStat icon={Archive} label="Cleanup" value={worktreeCleanup.counts?.cleanupReady || 0} />
-        <CoordinationStat icon={Clock3} label="Blocked" value={attention.blockedTasks.length} />
-        <CoordinationStat icon={ShieldCheck} label="Review" value={attention.reviewTasks.length} />
+        <CoordinationStat icon={MessageSquarePlus} label="Talks" value={talks.length} targetId="coordination-talks" />
+        <CoordinationStat icon={AlertCircle} label="Stale Work" value={staleWork.length} targetId="coordination-stale-work" />
+        <CoordinationStat
+          icon={Archive}
+          label="Cleanup"
+          value={worktreeCleanup.counts?.cleanupReady || 0}
+          targetId="coordination-cleanup"
+        />
+        <CoordinationStat icon={Clock3} label="Blocked" value={attention.blockedTasks.length} targetId="coordination-blocked" />
+        <CoordinationStat icon={ShieldCheck} label="Review" value={attention.reviewTasks.length} targetId="coordination-review" />
       </div>
 
       <div className="coordinationGrid">
@@ -1321,6 +1327,7 @@ function CoordinationWorkspace({
         <div className="coordinationSide">
           {staleWork.length > 0 ? (
             <StaleWorkPanel
+              id="coordination-stale-work"
               items={staleWork}
               notes={staleWorkNotes}
               onNoteChange={onStaleWorkNoteChange}
@@ -1328,12 +1335,13 @@ function CoordinationWorkspace({
               onSelectTask={onSelectTask}
             />
           ) : (
-            <section className="coordinationPanel">
+            <section className="coordinationPanel" id="coordination-stale-work">
               <div className="sectionLabel">Stale Work</div>
               <p>No stale in-progress work.</p>
             </section>
           )}
           <WorktreeCleanupPanel
+            id="coordination-cleanup"
             report={worktreeCleanup}
             onRefresh={onRefreshWorktreeCleanup}
             onSelectTask={onSelectTask}
@@ -1443,23 +1451,23 @@ function activityTypeClass(type) {
   return (type || "event").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
 }
 
-function CoordinationStat({ icon: Icon, label, value }) {
+function CoordinationStat({ icon: Icon, label, value, targetId }) {
   return (
-    <article className="coordinationStat">
+    <a className="coordinationStat" href={`#${targetId}`} aria-label={`${label}: ${value}. Jump to section`}>
       <Icon size={16} />
       <span>{label}</span>
       <strong>{value}</strong>
-    </article>
+    </a>
   );
 }
 
-function WorktreeCleanupPanel({ report, onRefresh, onSelectTask, onCleanup, cleanupActionKey }) {
+function WorktreeCleanupPanel({ id, report, onRefresh, onSelectTask, onCleanup, cleanupActionKey }) {
   const items = (report.items || []).filter((item) => item.status !== "active-keep");
   const activeCount = report.counts?.active || 0;
   const cleanupDisabled = report.cleanup?.mutationsEnabled === false;
 
   return (
-    <section className="worktreeCleanupPanel" aria-label="Worktree cleanup queue">
+    <section className="worktreeCleanupPanel" id={id} aria-label="Worktree cleanup queue">
       <div className="worktreeCleanupHeader">
         <div>
           <div className="sectionLabel">Repository</div>
@@ -1560,17 +1568,17 @@ function CoordinationAttention({ attention, onSelectTask }) {
         </div>
         <span>{attention.count}</span>
       </div>
-      <AttentionTaskList label="Blocked" tasks={attention.blockedTasks} onSelectTask={onSelectTask} />
-      <AttentionTaskList label="Review" tasks={attention.reviewTasks} onSelectTask={onSelectTask} />
+      <AttentionTaskList id="coordination-blocked" label="Blocked" tasks={attention.blockedTasks} onSelectTask={onSelectTask} />
+      <AttentionTaskList id="coordination-review" label="Review" tasks={attention.reviewTasks} onSelectTask={onSelectTask} />
       <AttentionTaskList label="Testing" tasks={attention.testingTasks} onSelectTask={onSelectTask} />
       <AttentionAgentList agents={attention.staleAgents} />
     </section>
   );
 }
 
-function AttentionTaskList({ label, tasks, onSelectTask }) {
+function AttentionTaskList({ id, label, tasks, onSelectTask }) {
   return (
-    <div className="attentionList">
+    <div className="attentionList" id={id}>
       <div className="attentionListHeader">
         <span>{label}</span>
         <strong>{tasks.length}</strong>
@@ -1906,7 +1914,15 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
     mentions: "",
     body: ""
   });
+  const [visibleTalkCount, setVisibleTalkCount] = useState(TALK_PAGE_SIZE);
   const activeFilterCount = [filters.kind, filters.agentId, filters.taskId].filter(Boolean).length;
+  const talkScopeId = talks[0]?.projectId || tasks[0]?.projectId || "";
+  const visibleTalks = talks.slice(0, visibleTalkCount);
+  const remainingTalkCount = Math.max(0, talks.length - visibleTalks.length);
+
+  useEffect(() => {
+    setVisibleTalkCount(TALK_PAGE_SIZE);
+  }, [filters.kind, filters.agentId, filters.taskId, talkScopeId]);
 
   async function submitTalk() {
     await onPost(draft);
@@ -1914,14 +1930,16 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
   }
 
   return (
-    <section className="talksPanel">
+    <section className="talksPanel" id="coordination-talks">
       <div className="talksHeader">
         <div>
           <div className="eyebrow">Agent Talks</div>
           <h3>Coordination</h3>
         </div>
         <div className="talksHeaderMeta">
-          <span>{talks.length} shown</span>
+          <span>
+            {visibleTalks.length} of {talks.length} shown
+          </span>
           {activeFilterCount > 0 && (
             <button className="ghostButton" onClick={() => onFilterChange({ kind: "", agentId: "", taskId: "" })}>
               <Filter size={15} />
@@ -2025,7 +2043,7 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
       </div>
 
       <div className="talkList">
-        {talks.map((message) => (
+        {visibleTalks.map((message) => (
           <article className={`talkMessage talkKind-${message.kind}`} key={message.id}>
             <div className="talkMessageHeader">
               <span className="talkKind">{message.kind}</span>
@@ -2044,6 +2062,17 @@ function AgentTalksPanel({ talks, tasks, filters, onFilterChange, onSelectTask, 
           </article>
         ))}
         {talks.length === 0 && <div className="talkEmpty">No talks</div>}
+        {remainingTalkCount > 0 && (
+          <div className="talkPagination">
+            <span>{remainingTalkCount} older messages</span>
+            <button
+              className="ghostButton"
+              onClick={() => setVisibleTalkCount((count) => count + TALK_PAGE_SIZE)}
+            >
+              Load {Math.min(TALK_PAGE_SIZE, remainingTalkCount)} more
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -2253,9 +2282,9 @@ function attentionIcon(kind) {
   return Bot;
 }
 
-function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask }) {
+function StaleWorkPanel({ id, items, notes, onNoteChange, onRecover, onSelectTask }) {
   return (
-    <section className="staleWorkPanel" aria-label="Stale in-progress work">
+    <section className="staleWorkPanel" id={id} aria-label="Stale in-progress work">
       <div className="staleWorkHeader">
         <div>
           <div className="sectionLabel">Needs Attention</div>

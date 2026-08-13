@@ -577,6 +577,20 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await expect(page.getByTestId("stale-work-card").filter({ hasText: staleTitle })).toBeVisible();
   await expect(drawer.getByLabel("Title")).toHaveValue(draftTitle);
 
+  const coordinationLinks = [
+    ["Talks", "#coordination-talks"],
+    ["Stale Work", "#coordination-stale-work"],
+    ["Cleanup", "#coordination-cleanup"],
+    ["Blocked", "#coordination-blocked"],
+    ["Review", "#coordination-review"]
+  ];
+  for (const [label, target] of coordinationLinks) {
+    await expect(page.getByRole("link", { name: new RegExp(`^${label}:`) })).toHaveAttribute("href", target);
+  }
+  await page.getByRole("link", { name: /^Stale Work:/ }).click();
+  await expect(page).toHaveURL(/#coordination-stale-work$/);
+  await expect(page.locator("#coordination-stale-work")).toBeInViewport();
+
   const talkListBox = await page.locator(".talkList").boundingBox();
   const talkComposerBox = await page.locator(".talkComposerPanel").boundingBox();
   expect(talkListBox?.height ?? 0).toBeGreaterThan(320);
@@ -616,6 +630,41 @@ test("splits tasks and coordination while preserving board state", async ({ page
   await expect(page.locator(".talksControlDeck")).toBeVisible();
   const talksOverflow = await page.locator(".talksPanel").evaluate((panel) => panel.scrollWidth > panel.clientWidth + 1);
   expect(talksOverflow).toBe(false);
+});
+
+test("paginates Agent Talks newest first and loads the remaining boundary", async ({ page }) => {
+  const projectName = uniqueName("E2E Paginated Talks Project");
+  const projectKey = uniqueKey("PGT");
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: projectKey }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+
+  for (let index = 0; index < 26; index += 1) {
+    const talkResponse = await page.request.post(`${apiBaseURL}/api/projects/${project.id}/talks`, {
+      data: {
+        authorAgentId: "pagination-agent",
+        kind: "update",
+        body: `Pagination message ${String(index).padStart(2, "0")}`
+      }
+    });
+    expect(talkResponse.ok()).toBe(true);
+  }
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await page.getByRole("tab", { name: /Coordination/ }).click();
+
+  await expect(page.locator(".talkMessage")).toHaveCount(25);
+  await expect(page.locator(".talksHeaderMeta")).toContainText("25 of 26 shown");
+  await expect(page.locator(".talksPanel")).toContainText("Pagination message 25");
+  await expect(page.locator(".talksPanel")).not.toContainText("Pagination message 00");
+
+  await page.getByRole("button", { name: "Load 1 more" }).click();
+  await expect(page.locator(".talkMessage")).toHaveCount(26);
+  await expect(page.locator(".talksHeaderMeta")).toContainText("26 of 26 shown");
+  await expect(page.locator(".talksPanel")).toContainText("Pagination message 00");
 });
 
 test("shows project activity audit events without opening every task", async ({ page }) => {
