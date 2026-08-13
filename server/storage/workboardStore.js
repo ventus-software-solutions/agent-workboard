@@ -4,6 +4,7 @@ import path from "node:path";
 import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 import { createWorkboardPersistence } from "./persistence.js";
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
+import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -42,15 +43,6 @@ const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
 const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
 const MAX_DEPLOYMENT_PROCESS_OVERRIDES_LENGTH = 50000;
-const UPSTREAM_STATUSES_BY_ROLE = {
-  implementer: ["ready", "backlog"],
-  reviewer: ["in_progress", "ready"],
-  tester: ["review", "in_progress"],
-  pm: ["backlog", "ready"],
-  researcher: ["ready", "backlog"],
-  operator: ["blocked"]
-};
-
 export const ROLES = [
   {
     id: "pm",
@@ -4264,7 +4256,7 @@ function tasksForUpstreamSignal(tasks, activeProjectId, allProjects) {
 
 function buildUpstreamSignal(roleInput, tasks = []) {
   const role = normalizeText(roleInput) || "implementer";
-  const statuses = UPSTREAM_STATUSES_BY_ROLE[role] || UPSTREAM_STATUSES_BY_ROLE.implementer;
+  const statuses = feederStatusesForRole(role);
   const counts = Object.fromEntries(statuses.map((status) => [status, tasks.filter((task) => task.status === status).length]));
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
   const recheckAfterSeconds = total >= 5 ? 60 : total >= 2 ? 90 : total === 1 ? 120 : 180;
