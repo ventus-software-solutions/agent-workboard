@@ -87,6 +87,8 @@ describe("Agent Workboard API", () => {
       role: "pm"
     });
     expect(pmDoc.body.agent.workflow).toContain("Only then look for another task.");
+    expect(pmDoc.body.agent.workflow.join("\n")).toContain("identityToken");
+    expect(pmDoc.body.agent.mcp.then).toContain("release_agent_slot");
     expect(pmDoc.body.agent.worktree.join("\n")).toContain("git worktree add");
     expect(pmDoc.body.agent.cautions.join("\n")).toContain("Do not edit the main checkout directly");
 
@@ -2183,12 +2185,49 @@ describe("Agent Workboard API", () => {
       })
       .expect(409);
 
-    expect(rejected.body.error.message).toContain("No available agent slot for implementer-backend");
+    expect(rejected.body.error.message).toContain("implementer-backend");
+    expect(rejected.body.error.message).toMatch(/lease/);
     expect(rejected.body.error.details).toMatchObject({
       typeId: "implementer-backend",
       capacity: 4,
       active: 4
     });
+    expect(rejected.body.error.details.leasedSlots).toHaveLength(4);
+    expect(rejected.body.error.details.leasedSlots[0].expiresAt).toBeTruthy();
+    expect(rejected.body.error.details.earliestFreeAt).toBeTruthy();
+  });
+
+  it("force-releases a slot via the API and returns its in-progress tasks to ready", async () => {
+    const project = (
+      await request(app)
+        .post("/api/projects")
+        .send({ name: "Force Release API Project" })
+    ).body.project;
+    await request(app)
+      .post("/api/bootstrap")
+      .send({ agentId: "implementer-backend-1", runtimeId: "release-api-runtime", now: "2026-06-12T15:00:00.000Z" })
+      .expect(200);
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Release me via API",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-backend-1"
+        })
+    ).body.task;
+
+    const released = await request(app)
+      .post("/api/agent-slots/implementer-backend-1/release")
+      .send({ actor: "operator", now: "2026-06-12T15:10:00.000Z" })
+      .expect(200);
+    expect(released.body).toMatchObject({ released: true, agentId: "implementer-backend-1" });
+    expect(released.body.returnedTasks.map((item) => item.taskId)).toEqual([task.id]);
+
+    const fetched = await request(app).get(`/api/tasks/${task.id}`).expect(200);
+    expect(fetched.body.task).toMatchObject({ status: "ready", assignee: "" });
   });
 
   it("requires completion evidence when marking a task done", async () => {
