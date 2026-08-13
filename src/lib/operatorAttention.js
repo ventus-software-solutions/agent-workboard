@@ -1,5 +1,7 @@
 const CLAIMABLE_WORK_ITEM_TYPES = new Set(["task", "subtask", "bug", "spike", "chore"]);
 const GROOMING_STALE_DAYS = 7;
+const DEFAULT_PROMPT_TEMPLATE =
+  "You are {agentType}. Read {origin}/api/agent-docs/{agentType}?format=md and do what it tells you.";
 
 const CATEGORY_RANK = {
   approval: 90,
@@ -89,7 +91,9 @@ export function buildOperatorAttention({
         title: task.title,
         detail: item.reason || "The task owner has stopped reporting fresh progress.",
         remedy: "open_coordination",
-        tasks
+        tasks,
+        staleReason: item.reason || "",
+        staleItem: item
       })
     );
   }
@@ -108,7 +112,8 @@ export function buildOperatorAttention({
             ? `${task.assignee} has no active slot lease; recover or reassign this claim.`
             : "In-progress work has no owner; assign or requeue it.",
           remedy: "open_coordination",
-          tasks
+          tasks,
+          staleReason: task.assignee ? "missing_slot" : "missing_assignee"
         })
       );
     }
@@ -127,6 +132,8 @@ export function buildOperatorAttention({
       remedy: "copy_prompt",
       prompt,
       role,
+      waitingCount: waitingTasks.length,
+      waitingSummary: waitingStatusSummary(waitingTasks),
       taskId: waitingTasks[0]?.id || "",
       downstreamCount
     });
@@ -143,6 +150,9 @@ export function buildOperatorAttention({
       remedy: "groom",
       taskId: groomingTasks[0].id,
       prompt: buildBootstrapPrompt({ template: promptTemplate, agentType: "pm", origin }),
+      role: "pm",
+      itemCount: groomingTasks.length,
+      reasonCounts,
       downstreamCount: groomingTasks.reduce((total, task) => total + downstreamImpact(task, tasks), 0)
     });
   }
@@ -167,9 +177,13 @@ export function buildOperatorAttention({
   }
 
   actions.sort(compareActions);
+  const presentedActions = actions.map((action) => ({
+    ...action,
+    ...describeOperatorAction(action, { activeRoles, promptTemplate, origin, now })
+  }));
 
   return {
-    actions,
+    actions: presentedActions,
     activeAgentCount: activeAgents.length,
     nextExpectedEvent: describeNextExpectedEvent({ tasks, activeAgents }),
     groomingStaleDays: GROOMING_STALE_DAYS
@@ -177,14 +191,187 @@ export function buildOperatorAttention({
 }
 
 export function buildBootstrapPrompt({ template, agentType, origin }) {
-  if (!template || !agentType) return "";
-  return template
+  if (!agentType) return "";
+  return (template || DEFAULT_PROMPT_TEMPLATE)
     .replaceAll("{agentType}", agentType)
     .replaceAll("{origin}", origin)
     .replace(/https?:\/\/localhost(?::\d+)?/g, origin);
 }
 
-function taskAction({ task, kind, title, detail, remedy, tasks = [] }) {
+export function describeOperatorAction(
+  action,
+  { activeRoles = new Map(), promptTemplate = "", origin = "http://localhost:8088", now = new Date() } = {}
+) {
+  const requiredRole = requiredRoleForAction(action);
+  const requiredRoleLabel = displayRole(requiredRole);
+  const liveRoleCount = activeRoleCount(activeRoles, requiredRole);
+  const spawnPrompt =
+    requiredRole && liveRoleCount === 0
+      ? buildBootstrapPrompt({ template: promptTemplate, agentType: requiredRole, origin })
+      : "";
+  const copy = actionSentenceSet(action, now);
+
+  return {
+    ...copy,
+    requiredRole,
+    requiredRoleLabel,
+    liveRoleCount,
+    spawnPrompt,
+    spawnLeadIn: spawnPrompt ? `Then spawn ${indefiniteArticle(requiredRole)} ${requiredRoleLabel} with:` : ""
+  };
+}
+
+function actionSentenceSet(action, now) {
+  if (action.kind === "approval") {
+    const request = action.task?.blocker?.requestedAction || action.task?.blocker?.reason || "an operator decision";
+    return {
+      what: `An agent needs your decision: ${asSentence(request)}`,
+      why: "The task cannot continue until you approve or deny the request.",
+      doThis: "Approve or deny the request and leave a short decision note."
+    };
+  }
+
+  if (action.kind === "merge") {
+    return {
+      what: "Review approved this delivery, and it is waiting for its final merge.",
+      why: "The finished work will not reach the shared branch until someone completes delivery.",
+      doThis: "Click Open delivery, confirm the green checks, and merge it under the deployment rules."
+    };
+  }
+
+  if (action.kind === "blocker") {
+    const blockerType = humanize(action.task?.blocker?.type || "unspecified").toLowerCase();
+    const blockerDetail = action.task?.blocker?.reason || action.task?.blocker?.requestedAction || "the exact blocker is not recorded";
+    return {
+      what: `This task is blocked by ${blockerType}: ${asSentence(blockerDetail)}`,
+      why: "No agent can advance it until the blocker is resolved or the task is rerouted.",
+      doThis: "Click Fix blocker, resolve or precisely update the blocker, and return the task to the right queue."
+    };
+  }
+
+  if (action.kind === "stalled") {
+    return {
+      what: staleWhatHappened(action, now),
+      why: "This task is stuck until someone returns it to the queue or records a blocker.",
+      doThis: "Click Recover to return it to the queue or record the exact blocker."
+    };
+  }
+
+  if (action.kind === "role_gap") {
+    const count = action.waitingCount || 1;
+    const role = action.role || "required";
+    const roleLabel = displayRole(role);
+    return {
+      what: `${count} ${roleLabel} ${count === 1 ? "item is" : "items are"} waiting, but no ${roleLabel} agent is running.`,
+      why: `${action.waitingSummary || "The waiting work"} cannot advance until that role is staffed.`,
+      doThis: "Copy the spawn prompt."
+    };
+  }
+
+  if (action.kind === "grooming") {
+    const count = action.itemCount || 1;
+    return {
+      what: `${count} backlog ${count === 1 ? "item is" : "items are"} missing routing details or have gone stale.`,
+      why: "Implementers cannot reliably choose or claim this work until its priority and ownership are clear.",
+      doThis: "Click Groom now and assign the missing priority, role, or current scope."
+    };
+  }
+
+  if (action.kind === "cleanup") {
+    const branch = action.cleanupItem?.branch || "a merged branch";
+    if (action.remedy === "copy_commands") {
+      return {
+        what: `The clean worktree for ${branch} is ready to remove, but this deployment cannot modify the host.`,
+        why: "Leaving merged worktrees behind consumes disk space and makes active delivery state harder to read.",
+        doThis: "Copy the host commands and run them in the repository checkout."
+      };
+    }
+    return {
+      what: `The merged branch ${branch} still has a clean worktree on disk.`,
+      why: "Leaving merged worktrees behind consumes disk space and makes active delivery state harder to read.",
+      doThis: "Click Clean to remove the worktree and its merged local branch."
+    };
+  }
+
+  return {
+    what: "The workboard found an attention item that it does not yet know how to explain.",
+    why: "It may need action, but the board cannot safely infer the impact from this unfamiliar item.",
+    doThis: action.taskId
+      ? "Open the related task and inspect its full history before acting."
+      : "Inspect the item details and ask the owning role to clarify the required action."
+  };
+}
+
+function staleWhatHappened(action, now) {
+  const assignee = action.task?.assignee || action.staleItem?.assignee || "The assigned agent";
+  if (action.staleReason === "missing_assignee") {
+    return "This task is marked in progress, but nobody owns it.";
+  }
+  if (action.staleReason === "missing_slot") {
+    return `${assignee} owns this task, but no configured agent slot exists for that assignee.`;
+  }
+  if (action.staleReason === "paused_slot") {
+    return `${assignee}'s slot is paused while this task is still marked in progress.`;
+  }
+  if (action.staleReason === "missing_heartbeat") {
+    return `${assignee}'s slot never sent a heartbeat for this in-progress task.`;
+  }
+  if (action.staleReason === "expired_heartbeat") {
+    const elapsed = staleElapsed(action.staleItem, now);
+    return `The agent working on this stopped reporting progress${elapsed ? ` (no heartbeat for ${elapsed})` : ""}.`;
+  }
+  return "The workboard marked this in-progress task as stale, but it does not recognize the reason.";
+}
+
+function staleElapsed(item, now) {
+  if (!item) return "";
+  const candidates = [
+    item.freshness?.leaseHeartbeatAt,
+    item.freshness?.presenceHeartbeatAt,
+    item.freshness?.lastOwnerProgressAt,
+    item.lastProgressAt
+  ]
+    .map((value) => Date.parse(value || ""))
+    .filter(Number.isFinite);
+  if (candidates.length === 0) return "";
+  const elapsedMs = now.getTime() - Math.max(...candidates);
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return "";
+  const minutes = Math.max(1, Math.round(elapsedMs / 60_000));
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function requiredRoleForAction(action) {
+  if (action.kind === "role_gap") return action.role || "";
+  if (action.kind === "grooming") return "pm";
+  if (action.kind === "merge") return "reviewer";
+  if (action.kind === "cleanup") return "";
+  return action.role || action.task?.role || "";
+}
+
+function activeRoleCount(activeRoles, role) {
+  if (!role) return 0;
+  if (activeRoles instanceof Map) return activeRoles.get(role) || 0;
+  return Number(activeRoles?.[role]) || 0;
+}
+
+function indefiniteArticle(value) {
+  return /^[aeiou]/i.test(String(value || "")) ? "an" : "a";
+}
+
+function displayRole(role) {
+  return role === "pm" ? "PM" : role;
+}
+
+function asSentence(value) {
+  const text = String(value || "").trim();
+  if (!text) return "The exact detail is not recorded.";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+function taskAction({ task, kind, title, detail, remedy, tasks = [], ...metadata }) {
   return {
     id: `${kind}:${task.id}`,
     kind,
@@ -193,7 +380,8 @@ function taskAction({ task, kind, title, detail, remedy, tasks = [] }) {
     remedy,
     taskId: task.id,
     task,
-    downstreamCount: downstreamImpact(task, tasks)
+    downstreamCount: downstreamImpact(task, tasks),
+    ...metadata
   };
 }
 
@@ -303,7 +491,9 @@ function groomingSummary(counts) {
 function waitingStatusSummary(tasks) {
   const counts = new Map();
   for (const task of tasks) counts.set(task.status, (counts.get(task.status) || 0) + 1);
-  return [...counts.entries()].map(([status, count]) => `${count} ${humanize(status)}`).join(" and ");
+  return [...counts.entries()]
+    .map(([status, count]) => `${count} ${humanize(status).toLowerCase()} ${count === 1 ? "item" : "items"}`)
+    .join(" and ");
 }
 
 function describeNextExpectedEvent({ tasks, activeAgents }) {

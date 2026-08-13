@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildBootstrapPrompt, buildOperatorAttention } from "../src/lib/operatorAttention.js";
+import {
+  buildBootstrapPrompt,
+  buildOperatorAttention,
+  describeOperatorAction
+} from "../src/lib/operatorAttention.js";
 
 const PROMPT_TEMPLATE =
   "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you.";
@@ -87,7 +91,11 @@ describe("operator attention selector", () => {
     expect(result.actions[0]).toMatchObject({ kind: "approval", taskId: "approval", downstreamCount: 4 });
     expect(result.actions.find((action) => action.id === "role-gap:implementer")).toMatchObject({
       remedy: "copy_prompt",
-      prompt: expect.stringContaining("http://workboard.test/api/agent-docs/implementer")
+      prompt: expect.stringContaining("http://workboard.test/api/agent-docs/implementer"),
+      spawnPrompt: expect.stringContaining("http://workboard.test/api/agent-docs/implementer"),
+      what: expect.stringContaining("no implementer agent is running"),
+      why: expect.stringContaining("cannot advance"),
+      doThis: "Copy the spawn prompt."
     });
     expect(result.actions.find((action) => action.kind === "grooming")).toMatchObject({
       remedy: "groom",
@@ -172,6 +180,30 @@ describe("operator attention selector", () => {
     expect(result.nextExpectedEvent).toBe("agent progress or delivery evidence");
   });
 
+  it("carries stale-work reason details through the selector into the rendered sentence contract", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("stalled", { status: "in_progress", assignee: "implementer-1" })],
+      staleWork: [
+        {
+          taskId: "stalled",
+          reason: "expired_heartbeat",
+          freshness: { leaseHeartbeatAt: "2026-08-13T11:26:00.000Z" }
+        }
+      ],
+      agentRegistry: registry(),
+      promptTemplate: PROMPT_TEMPLATE,
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    expect(result.actions[0]).toMatchObject({
+      kind: "stalled",
+      staleReason: "expired_heartbeat",
+      what: expect.stringContaining("no heartbeat for 34m"),
+      doThis: expect.stringContaining("Click Recover")
+    });
+    expect(result.actions[0].what).not.toContain("expired_heartbeat");
+  });
+
   it("recognizes explicit legacy approval comments until structured review verdicts land", () => {
     const result = buildOperatorAttention({
       tasks: [task("legacy-review", { status: "review", comments: [{ body: "VERDICT: APPROVE - focused tests pass." }] })],
@@ -204,6 +236,120 @@ describe("operator attention selector", () => {
     expect(result.actions).toEqual([
       expect.objectContaining({ id: "role-gap:reviewer", kind: "role_gap", remedy: "copy_prompt" })
     ]);
+  });
+
+  it.each([
+    [
+      "approval",
+      {
+        kind: "approval",
+        taskId: "approval",
+        task: task("approval", {
+          role: "implementer",
+          blocker: { requestedAction: "Choose the delivery policy" }
+        })
+      },
+      "An agent needs your decision"
+    ],
+    ["merge", { kind: "merge", taskId: "merge", task: task("merge") }, "waiting for its final merge"],
+    [
+      "blocker",
+      {
+        kind: "blocker",
+        taskId: "blocked",
+        task: task("blocked", { blocker: { type: "external_issue", reason: "Vendor outage" } })
+      },
+      "blocked by external issue"
+    ],
+    [
+      "stalled",
+      {
+        kind: "stalled",
+        taskId: "stalled",
+        task: task("stalled", { status: "in_progress", assignee: "implementer-1" }),
+        staleReason: "expired_heartbeat",
+        staleItem: { freshness: { leaseHeartbeatAt: "2026-08-13T11:26:00.000Z" } }
+      },
+      "no heartbeat for 34m"
+    ],
+    [
+      "role_gap",
+      { kind: "role_gap", role: "reviewer", waitingCount: 2, waitingSummary: "2 review", taskId: "review" },
+      "no reviewer agent is running"
+    ],
+    ["grooming", { kind: "grooming", role: "pm", itemCount: 3, taskId: "groom" }, "3 backlog items"],
+    [
+      "cleanup",
+      { kind: "cleanup", remedy: "cleanup", cleanupItem: { branch: "implementer/merged" } },
+      "still has a clean worktree"
+    ]
+  ])("renders plain-language What / Why / Do this sentences for %s cards", (_kind, action, expectedWhat) => {
+    const copy = describeOperatorAction(action, {
+      activeRoles: new Map([
+        ["implementer", 1],
+        ["reviewer", 1],
+        ["pm", 1]
+      ]),
+      promptTemplate: PROMPT_TEMPLATE,
+      origin: "http://workboard.test",
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    expect(copy.what).toContain(expectedWhat);
+    expect(copy.why).toMatch(/[.!?]$/);
+    expect(copy.doThis).toMatch(/[.!?]$/);
+    expect(`${copy.what} ${copy.why} ${copy.doThis}`).not.toContain("expired_heartbeat");
+  });
+
+  it.each([
+    ["missing_assignee", "nobody owns it"],
+    ["missing_slot", "no configured agent slot exists"],
+    ["paused_slot", "slot is paused"],
+    ["missing_heartbeat", "never sent a heartbeat"],
+    ["expired_heartbeat", "stopped reporting progress"],
+    ["future_stale_reason", "does not recognize the reason"]
+  ])("explains the %s stale-work reason without exposing a state code", (staleReason, expected) => {
+    const copy = describeOperatorAction(
+      {
+        kind: "stalled",
+        taskId: "stalled",
+        task: task("stalled", { status: "in_progress", assignee: "implementer-1" }),
+        staleReason
+      },
+      { activeRoles: new Map([["implementer", 1]]) }
+    );
+
+    expect(copy.what).toContain(expected);
+    expect(copy.what).not.toContain(staleReason);
+  });
+
+  it("appends a role-specific spawn prompt only when that role has no living agent", () => {
+    const action = {
+      kind: "blocker",
+      taskId: "blocked",
+      task: task("blocked", {
+        role: "implementer",
+        blocker: { type: "dependency", reason: "Waiting for schema" }
+      })
+    };
+    const options = { promptTemplate: PROMPT_TEMPLATE, origin: "https://board.example" };
+
+    expect(describeOperatorAction(action, { ...options, activeRoles: new Map() })).toMatchObject({
+      requiredRole: "implementer",
+      liveRoleCount: 0,
+      spawnPrompt: expect.stringContaining("https://board.example/api/agent-docs/implementer")
+    });
+    expect(
+      describeOperatorAction(action, { ...options, activeRoles: new Map([["implementer", 1]]) }).spawnPrompt
+    ).toBe("");
+  });
+
+  it("uses an honest generic sentence set for an unknown attention type", () => {
+    expect(describeOperatorAction({ kind: "future_alert", taskId: "future" })).toMatchObject({
+      what: expect.stringContaining("does not yet know how to explain"),
+      why: expect.stringContaining("cannot safely infer"),
+      doThis: expect.stringContaining("Open the related task")
+    });
   });
 });
 

@@ -2328,17 +2328,43 @@ button {
   font-weight: 700;
 }
 
-.operatorAttentionBody > p {
+.operatorAttentionSentences {
+  display: grid;
+  gap: 5px;
+}
+
+.operatorAttentionSentences p {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
   margin: 0;
   color: #aeb9c1;
   font-size: 12px;
   line-height: 1.4;
 }
 
+.operatorAttentionSentences strong {
+  color: #d8e0e5;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.operatorInlinePrompt {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #11181c;
+  color: #cfe6ed;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
 .operatorAttentionActions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 148px;
 }
@@ -2442,6 +2468,11 @@ button {
 
   .operatorApprovalNote {
     grid-template-columns: 1fr;
+  }
+
+  .operatorAttentionSentences p {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }
 

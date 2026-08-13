@@ -65,6 +65,21 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await expect(workflowCard).toContainText("Unassigned");
 });
 
+test("explains every operator-inbox card with an imperative three-line remedy", async ({ page }) => {
+  await page.goto(baseURL);
+
+  const inbox = page.getByTestId("operator-attention");
+  const implementerGap = inbox.locator(".operatorAttentionItem", { hasText: "implementer item is waiting" });
+  await expect(implementerGap).toBeVisible();
+  await expect(implementerGap.getByText("What happened", { exact: true })).toBeVisible();
+  await expect(implementerGap.getByText("Why it matters", { exact: true })).toBeVisible();
+  await expect(implementerGap.getByText("Do this", { exact: true })).toBeVisible();
+  await expect(implementerGap).toContainText("no implementer agent is running");
+  await expect(implementerGap).toContainText("Then spawn an implementer with:");
+  await expect(implementerGap.getByRole("button", { name: "Copy spawn prompt" })).toBeEnabled();
+  await expect(implementerGap).not.toContainText("role_gap");
+});
+
 test("edits deployment process rules from Settings and updates generated agent docs", async ({ page }) => {
   const rules = "- Deliver through a branch and PR.\n- Coordinator merges foundation-class changes.";
 
