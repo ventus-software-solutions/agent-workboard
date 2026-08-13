@@ -48,6 +48,7 @@ import { HelpPopover } from "./components/HelpPopover.jsx";
 import { LinkifiedText } from "./components/LinkifiedText.jsx";
 import { SafeMarkdown } from "./components/SafeMarkdown.jsx";
 import { TaskDeliveryLinks } from "./components/TaskDeliveryLinks.jsx";
+import { taskDeliveryShortfall } from "../shared/deliveryCompleteness.js";
 
 const DRAG_START_THRESHOLD = 8;
 
@@ -718,9 +719,11 @@ export function App() {
         promptTemplate: agentDocsOverview.usage?.promptTemplate || "",
         origin: typeof window === "undefined" ? "http://localhost:8088" : window.location.origin,
         projectId: selectedProjectId,
-        project: selectedProject
+        project: selectedProject,
+        deploymentSettings,
+        integrationStatus: meta.integrationStatus
       }),
-    [agentDocsOverview, agentRegistry, projectTasks, selectedProject, selectedProjectId, staleWork, worktreeCleanup]
+    [agentDocsOverview, agentRegistry, deploymentSettings, meta.integrationStatus, projectTasks, selectedProject, selectedProjectId, staleWork, worktreeCleanup]
   );
 
   const coordinationAttention = useMemo(() => {
@@ -1175,6 +1178,7 @@ export function App() {
             statuses={meta.statuses}
             roles={meta.roles}
             workItemTypes={meta.workItemTypes}
+            deliveryContext={{ deploymentSettings, integrationStatus: meta.integrationStatus }}
             tasks={tasks}
             claimWarningsByTask={claimWarningsByTask}
             selectedTaskId={selectedTaskId}
@@ -1499,6 +1503,7 @@ function TasksWorkspace({
   statuses,
   roles,
   workItemTypes,
+  deliveryContext,
   tasks,
   claimWarningsByTask,
   selectedTaskId,
@@ -1584,6 +1589,7 @@ function TasksWorkspace({
         statuses={statuses}
         roles={roles}
         workItemTypes={workItemTypes}
+        deliveryContext={deliveryContext}
         tasks={tasks}
         claimWarningsByTask={claimWarningsByTask}
         selectedTaskId={selectedTaskId}
@@ -2645,7 +2651,9 @@ function OperatorAttentionPanel({
                             ? "Inspect overlap"
                             : action.kind === "external"
                               ? "Open item"
-                              : "Fix blocker"}
+                              : action.kind === "delivery"
+                                ? "Open task"
+                                : "Fix blocker"}
                       </span>
                     </button>
                   )}
@@ -2712,6 +2720,7 @@ function OperatorAttentionPanel({
 function attentionIcon(kind) {
   if (kind === "approval") return UserRoundCheck;
   if (kind === "merge") return GitMerge;
+  if (kind === "delivery") return AlertCircle;
   if (kind === "review_changes") return AlertCircle;
   if (kind === "blocker") return AlertCircle;
   if (kind === "stalled") return WifiOff;
@@ -2962,6 +2971,7 @@ function KanbanBoard({
   statuses,
   roles,
   workItemTypes,
+  deliveryContext,
   tasks,
   claimWarningsByTask,
   selectedTaskId,
@@ -3065,6 +3075,7 @@ function KanbanBoard({
                   claimWarning={claimWarningsByTask.get(task.id)}
                   roles={roles}
                   workItemTypes={workItemTypes}
+                  deliveryShortfall={taskDeliveryShortfall(task, deliveryContext)}
                   selected={task.id === selectedTaskId}
                   dragging={task.id === draggedTaskId}
                   onSelect={() => {
@@ -3091,6 +3102,7 @@ function KanbanBoard({
 
 function TaskCard({
   task,
+  deliveryShortfall,
   claimWarning,
   roles,
   workItemTypes,
@@ -3140,6 +3152,7 @@ function TaskCard({
           <span className="changesRequestedPill">Changes requested ({task.reviewVerdict.findingsCount})</span>
         )}
         {task.reviewVerdict?.decision === "approve" && <span className="reviewApprovedPill">Review approved</span>}
+        {deliveryShortfall && <span className="deliveryIncompletePill" title={deliveryShortfall.detail}>Delivery incomplete</span>}
         {workflowCue && <span className="workflowPill">{workflowCue}</span>}
         {dependencyState !== "clear" && <span className={`relationshipPill ${dependencyState}`}>{relationshipStateLabel(dependencyState)}</span>}
         {task.collision?.detected && (

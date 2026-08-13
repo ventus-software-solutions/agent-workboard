@@ -203,6 +203,27 @@ describe("Agent Workboard API", () => {
     expect(integrationStatusProvider).toHaveBeenCalledWith({ cwd: path.resolve(tempDir) });
   });
 
+  it("asks integration status to inspect delivery branches for review tasks", async () => {
+    const project = await store.createProject({ name: "Delivery branch status" });
+    await store.createTask({
+      projectId: project.id,
+      title: "Review pushed delivery",
+      status: "review",
+      branch: "implementer/delivery-check"
+    });
+    const integrationStatusProvider = vi.fn(({ branches = [] } = {}) => ({
+      sourceOfTruth: "test",
+      deliveryBranches: branches.map((branch) => ({ branch, state: "pushed" }))
+    }));
+    app = createApp({ store, integrationStatusProvider });
+
+    const response = await request(app).get(`/api/integration-status?projectId=${project.id}`).expect(200);
+    expect(integrationStatusProvider).toHaveBeenCalledWith({ branches: ["implementer/delivery-check"] });
+    expect(response.body.integrationStatus.deliveryBranches).toEqual([
+      { branch: "implementer/delivery-check", state: "pushed" }
+    ]);
+  });
+
   it("edits deployment process rules and injects them into every role doc only when non-empty", async () => {
     const emptyDoc = await request(app).get("/api/agent-docs/implementer?format=md").expect(200);
     expect(emptyDoc.text).not.toContain("Deployment process rules (OVERRIDE defaults)");

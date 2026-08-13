@@ -832,6 +832,42 @@ test("renders safe task markdown and makes filters, task pickers, and assignee v
   await page.getByLabel("Talk task filter", { exact: true }).selectOption(childResult.task.id);
 });
 
+test("flags incomplete review delivery on the card and in the operator inbox", async ({ page }) => {
+  const projectName = uniqueName("E2E Delivery Completeness Project");
+  const projectKey = uniqueKey("DLC");
+  const taskTitle = uniqueName("Review without delivery links");
+  const settingsResponse = await page.request.patch(`${apiBaseURL}/api/deployment-settings`, {
+    data: {
+      processOverrides: "Deliver implementation through a pushed branch and pull request before review.",
+      actor: "e2e"
+    }
+  });
+  expect(settingsResponse.ok()).toBe(true);
+  try {
+    const projectResult = await postJson(page, "/api/projects", { name: projectName, key: projectKey });
+    await postJson(page, "/api/tasks", {
+      projectId: projectResult.project.id,
+      title: taskTitle,
+      status: "review",
+      role: "implementer",
+      priority: "normal"
+    });
+
+    await page.goto(baseURL);
+    await page.getByRole("button", { name: new RegExp(projectName) }).click();
+    const card = taskCard(page, taskTitle);
+    await expect(card.locator(".deliveryIncompletePill")).toHaveText("Delivery incomplete");
+    const attention = page.locator('[data-kind="delivery"]', { hasText: taskTitle });
+    await expect(attention).toContainText("Delivery branch is missing");
+    await expect(attention).toContainText("Pull request URL is missing");
+  } finally {
+    const resetResponse = await page.request.patch(`${apiBaseURL}/api/deployment-settings`, {
+      data: { processOverrides: "", actor: "e2e" }
+    });
+    expect(resetResponse.ok()).toBe(true);
+  }
+});
+
 test("shows, filters, creates, and edits work item types in the task UI", async ({ page }) => {
   const projectName = uniqueName("E2E Work Type Project");
   const projectKey = uniqueKey("TYP");

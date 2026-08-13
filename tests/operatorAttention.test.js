@@ -39,6 +39,27 @@ function activeAgent(id, role) {
 }
 
 describe("operator attention selector", () => {
+  it("surfaces one exact delivery shortfall action for review work", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("delivery", { status: "review", branch: "implementer/local-only", pullRequestUrl: "" })],
+      agentRegistry: registry(activeAgent("reviewer-agent", "reviewer")),
+      deploymentSettings: { processOverrides: "Use a pushed branch and pull request for implementation delivery." },
+      integrationStatus: {
+        deliveryBranches: [{ branch: "implementer/local-only", state: "unpushed", ahead: 1 }]
+      }
+    });
+
+    expect(result.actions.filter((action) => action.kind === "delivery")).toEqual([
+      expect.objectContaining({
+        taskId: "delivery",
+        remedy: "open_task",
+        detail: expect.stringMatching(/1 unpushed commit.*Pull request URL is missing/),
+        what: expect.stringContaining("incomplete delivery evidence"),
+        doThis: expect.stringContaining("push the branch")
+      })
+    ]);
+  });
+
   it("aggregates every operator-facing category and orders greater downstream impact first", () => {
     const tasks = [
       task("approval", {
