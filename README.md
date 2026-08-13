@@ -98,6 +98,7 @@ All settings are environment variables. All are optional.
 | `WORKBOARD_STORAGE` | `sqlite` | `sqlite`, `json`, or `tasksdir`. See [Storage](#storage). |
 | `WORKBOARD_TASKS_DIR` | unset | Required for `tasksdir` mode: absolute path to the git-tracked `tasks/` directory that holds the work items. |
 | `WORKBOARD_OPS_STORAGE` | `json` | Ops-store backend (`json` or `sqlite`) used for non-work-item state in `tasksdir` mode. |
+| `WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS` | unset | Escape hatch: lets `tasksdir` mode boot over an ops store that still holds json/sqlite work items, knowingly discarding them. Without it, that boot fails fast. |
 | `WORKBOARD_DEFAULT_PROJECT_KEY` | unset | Project key agents land in when they have not chosen one. Falls back to `DEMO`. |
 | `WORKBOARD_WORKTREE_ROOT` | `..` | Where the worktree commands in agent instructions point. Defaults to a sibling of the repo. |
 | `WORKBOARD_REPO_DIR` | repo root | Repository the board inspects for branch and worktree status. |

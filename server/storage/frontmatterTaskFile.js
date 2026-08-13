@@ -54,15 +54,43 @@ function parseFlowList(text) {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) return parsed;
   } catch {
-    // fall through to the naive flow parser for unquoted items
+    // fall through to the quote-aware flow parser for unquoted items
   }
   const inner = text.replace(/^\[/, "").replace(/\]$/, "").trim();
   if (!inner) return [];
-  return inner
-    .split(",")
+  return splitFlowItems(inner)
     .map((item) => parseScalar(item))
     .filter((item) => item !== null)
     .map(String);
+}
+
+// Splits flow-list items on commas outside quotes, so mixed lists like
+// [docs, "with, comma"] keep quoted items intact.
+function splitFlowItems(inner) {
+  const items = [];
+  let current = "";
+  let quote = null;
+  let escaped = false;
+  for (const char of inner) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+    } else if (quote) {
+      current += char;
+      if (quote === '"' && char === "\\") escaped = true;
+      else if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      current += char;
+    } else if (char === ",") {
+      items.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current.trim()) items.push(current);
+  return items;
 }
 
 export function renderScalar(value) {

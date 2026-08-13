@@ -493,7 +493,14 @@ export class WorkboardStore {
   }) {
     this.dataDir = dataDir;
     this.defaultProjectKey = defaultProjectKey ? slugify(defaultProjectKey, "") : "";
-    this.persistence = createWorkboardPersistence({ dataDir, storageMode, sqliteCommand, tasksDir, opsStorageMode });
+    this.persistence = createWorkboardPersistence({
+      dataDir,
+      storageMode,
+      sqliteCommand,
+      tasksDir,
+      opsStorageMode,
+      defaultProjectKey: this.defaultProjectKey
+    });
     this.dbPath = this.persistence.path;
     this.lockPath = this.persistence.lockPath;
     this.uploadsDir = path.join(dataDir, "uploads");

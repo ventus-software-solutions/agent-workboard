@@ -41,7 +41,8 @@ export function createWorkboardPersistence({
   storageMode = "json",
   sqliteCommand = process.env.SQLITE3_BIN || "sqlite3",
   tasksDir = process.env.WORKBOARD_TASKS_DIR,
-  opsStorageMode = process.env.WORKBOARD_OPS_STORAGE || "json"
+  opsStorageMode = process.env.WORKBOARD_OPS_STORAGE || "json",
+  defaultProjectKey = ""
 }) {
   const mode = normalizeStorageMode(storageMode);
   if (mode === "sqlite") {
@@ -55,7 +56,7 @@ export function createWorkboardPersistence({
       });
     }
     const ops = createWorkboardPersistence({ dataDir, storageMode: opsMode, sqliteCommand });
-    return new TasksdirWorkboardPersistence({ tasksDir, ops });
+    return new TasksdirWorkboardPersistence({ tasksDir, ops, defaultProjectKey });
   }
   return new JsonWorkboardPersistence({ dataDir });
 }

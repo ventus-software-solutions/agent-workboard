@@ -1,4 +1,5 @@
-import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,14 @@ async function snapshotFiles() {
 
 function taskFilePath(folder) {
   return path.join(tasksDir, folder, "task.md");
+}
+
+async function writeTaskFolder(folder, id, { status = "todo", type = "bug", title = id } = {}) {
+  await mkdir(path.join(tasksDir, folder), { recursive: true });
+  await writeFile(
+    taskFilePath(folder),
+    `---\nid: ${id}\ntitle: "${title}"\nowner: unassigned\nstatus: ${status}\ntype: ${type}\npriority: unset\nlabels:\ncreated: 2026-08-13\n---\nBody of ${id}.\n`
+  );
 }
 
 beforeEach(async () => {
@@ -185,6 +194,8 @@ describe("WorkboardStore tasksdir mode", () => {
     const reverted = store.getTask(FBR_BUG);
     expect(reverted.priority).toBe("low");
     expect(reverted.activity.some((event) => event.type === "update.rejected")).toBe(true);
+    // the failed mutation's own audit events are rolled back, not left beside the rejection
+    expect(reverted.activity.filter((event) => event.type === "updated")).toHaveLength(0);
 
     // the rejection survives a restart via the ops sidecar
     const reloaded = await openStore();
@@ -258,6 +269,97 @@ describe("WorkboardStore tasksdir mode", () => {
       tasksDir: path.join(tempDir, "no-such-tasks")
     });
     await expect(missing.init()).rejects.toThrow(/does not exist/);
+  });
+
+  it("binds a duplicated frontmatter id to the canonical folder (folder name == id)", async () => {
+    // A copied folder with a stale id: must never hijack the canonical task,
+    // regardless of readdir order (dupe_a sorts before the canonical folder,
+    // zz_copy after it).
+    await writeTaskFolder("plain_bug", "plain_bug");
+    await writeTaskFolder("dupe_a", "plain_bug", { title: "stale copy A" });
+    await writeTaskFolder("zz_copy", "plain_bug", { title: "stale copy Z" });
+
+    const store = await openStore();
+    const matches = store.listTasks({}).filter((task) => task.id === "plain_bug");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].title).toBe("plain_bug");
+
+    const before = await snapshotFiles();
+    const task = store.getTask("plain_bug");
+    await store.updateTask("plain_bug", { priority: "high", expectedRevision: task.revision }, "operator");
+
+    const after = await snapshotFiles();
+    expect(after.get("plain_bug")).toContain("priority: high");
+    expect(after.get("dupe_a")).toBe(before.get("dupe_a"));
+    expect(after.get("zz_copy")).toBe(before.get("zz_copy"));
+  });
+
+  it("keeps an operator-promoted idea ready across restarts", async () => {
+    const store = await openStore();
+    expect(store.getTask("idea_realtime_sync").status).toBe("backlog");
+
+    await store.updateTask("idea_realtime_sync", { status: "ready" }, "operator");
+    expect((await readFile(taskFilePath("idea_realtime_sync"), "utf8"))).toContain("status: ready");
+
+    const reloaded = await openStore();
+    expect(reloaded.getTask("idea_realtime_sync")).toMatchObject({ status: "ready", workItemType: "spike" });
+  });
+
+  it("refuses to boot over an ops store that still holds snapshot work items, unless overridden", async () => {
+    const jsonStore = new WorkboardStore({ dataDir, storageMode: "json" });
+    await jsonStore.init(); // seeds demo work items into the snapshot
+
+    await expect(openStore()).rejects.toThrow(/already contains 2 stored work item/);
+
+    process.env.WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS = "1";
+    try {
+      const store = await openStore();
+      expect(store.listTasks({}).map((task) => task.id)).not.toContain("task_demo_impl");
+    } finally {
+      delete process.env.WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS;
+    }
+  });
+
+  it("assigns new external task folders to the configured default project key", async () => {
+    const bootstrap = await openStore();
+    const team = await bootstrap.createProject({ name: "Team Build", key: "TEAM-BUILD" });
+
+    // a git pull brings a task folder the board has no sidecar for
+    await writeTaskFolder("ext_new_task", "ext_new_task");
+
+    const store = new WorkboardStore({ dataDir, storageMode: "tasksdir", tasksDir, defaultProjectKey: "team build" });
+    await store.init();
+    expect(store.getTask("ext_new_task").projectId).toBe(team.id);
+    // tasks already bound via their sidecar keep their project
+    expect(store.getTask(FBR_BUG).projectId).toBe("project_demo");
+  });
+
+  it("does not log a reconcile event for a content-neutral mtime touch", async () => {
+    const store = await openStore();
+    const filePath = taskFilePath(FBR_BUG);
+    await writeFile(filePath, await readFile(filePath, "utf8")); // same bytes
+    const future = new Date(Date.now() + 5000);
+    await utimes(filePath, future, future);
+
+    const task = store.getTask(FBR_BUG);
+    await store.updateTask(FBR_BUG, { priority: "high", expectedRevision: task.revision }, "operator");
+
+    const updated = store.getTask(FBR_BUG);
+    expect(updated.priority).toBe("high");
+    expect(updated.activity.some((event) => event.type === "external.reconciled")).toBe(false);
+    expect(await readFile(filePath, "utf8")).toContain("priority: high");
+  });
+
+  it("sweeps stale tmp litter from a task folder on the next write", async () => {
+    const store = await openStore();
+    const litterPath = `${taskFilePath(FBR_BUG)}.deadbeef.tmp`;
+    await writeFile(litterPath, "crash leftover");
+
+    const task = store.getTask(FBR_BUG);
+    await store.updateTask(FBR_BUG, { priority: "urgent", expectedRevision: task.revision }, "operator");
+
+    expect(existsSync(litterPath)).toBe(false);
+    expect(await readFile(taskFilePath(FBR_BUG), "utf8")).toContain("priority: urgent");
   });
 
   it("does not touch task files when only ops state changes", async () => {

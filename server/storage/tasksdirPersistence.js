@@ -7,7 +7,7 @@
 // a write touches only task folders whose mapped file content actually changed.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   getBoardValue,
@@ -124,9 +124,10 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     status = "done";
     legacyClosed = "not_relevant";
   }
-  // Ideas need operator approval before they are claimable: keep them out of
-  // the ready pool instead of inventing a per-task claimable flag.
-  if (rawType === "idea" && status === "ready") {
+  // Ideas need operator approval before they are claimable: legacy `todo`
+  // lands in backlog instead of ready. Board-written `ready` is authoritative,
+  // so an operator promotion sticks across restarts.
+  if (rawType === "idea" && rawStatus === "todo") {
     status = "backlog";
   }
 
@@ -353,7 +354,7 @@ function newTaskDoc(view, id, newline = "\n") {
 }
 
 export class TasksdirWorkboardPersistence {
-  constructor({ tasksDir, ops }) {
+  constructor({ tasksDir, ops, defaultProjectKey = "" }) {
     const normalized = asText(tasksDir);
     if (!normalized) {
       throw storageError(
@@ -366,8 +367,10 @@ export class TasksdirWorkboardPersistence {
     this.ops = ops;
     this.path = ops.path;
     this.lockPath = ops.lockPath;
+    this.defaultProjectKey = asText(defaultProjectKey);
     this.entries = new Map(); // folder -> { folder, filePath, fingerprint, doc, view, id }
     this.byId = new Map(); // task id -> entry
+    this.sidecarCache = new Map(); // task id -> last persisted sidecar (rollback base for stale rejects)
   }
 
   async read() {
@@ -375,12 +378,19 @@ export class TasksdirWorkboardPersistence {
     await this.scanTaskFiles();
     if (!opsData) return null;
 
+    if (Array.isArray(opsData.tasks) && opsData.tasks.length > 0 && !process.env.WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS) {
+      throw storageError(
+        `Refusing to run tasksdir mode over ${this.path}: the ops store already contains ${opsData.tasks.length} stored work item(s) from a previous json/sqlite board, and the first tasksdir write would silently discard them. Point WORKBOARD_DATA_DIR at a fresh directory (or export/migrate the stored tasks first), or set WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS=1 to knowingly discard them.`
+      );
+    }
+
     const sidecars =
       opsData.tasksdirSidecars && typeof opsData.tasksdirSidecars === "object" && !Array.isArray(opsData.tasksdirSidecars)
         ? opsData.tasksdirSidecars
         : {};
-    const fallbackProjectId = resolveFallbackProjectId(opsData);
+    const fallbackProjectId = this.resolveFallbackProjectId(opsData);
     const tasks = [];
+    this.sidecarCache = new Map();
     for (const entry of this.byId.values()) {
       const sidecar = sidecars[entry.id] || {};
       const task = boardTaskFromView(entry.id, entry.view, asText(sidecar.projectId) || fallbackProjectId);
@@ -389,6 +399,7 @@ export class TasksdirWorkboardPersistence {
       task.activity = cloneArray(sidecar.activity);
       task.approvalHistory = cloneArray(sidecar.approvalHistory);
       tasks.push(task);
+      this.sidecarCache.set(entry.id, clone(sidecarOfTask(task)));
     }
 
     const { tasksdirSidecars, ...rest } = opsData;
@@ -408,7 +419,9 @@ export class TasksdirWorkboardPersistence {
       }
     }
 
-    // Detect external edits before writing anything (requirement 3).
+    // Detect all external edits before writing anything (requirement 3), so a
+    // conflict on one task never leaves another task's file write behind.
+    const conflicted = [];
     for (const plan of plans) {
       if (plan.type !== "patch") continue;
       const fileStat = await statOrNull(plan.entry.filePath);
@@ -432,18 +445,34 @@ export class TasksdirWorkboardPersistence {
       plan.entry.fingerprint = fingerprint;
 
       if (conflicts.length > 0) {
-        await this.rejectStaleWrite(data, plan, conflicts);
+        // Keep the file's version: roll the in-memory task back to the file
+        // state and the last persisted sidecar, so the failed mutation's own
+        // events do not linger next to the rejection record.
+        applyViewToTask(plan.task, freshView);
+        this.restoreSidecar(plan.task);
+        plan.task.activity.unshift({
+          id: eventId(),
+          actor: "tasksdir",
+          type: "update.rejected",
+          message: `Rejected stale write: task.md changed externally since the last read (conflicting keys: ${conflicts.join(", ")}).`,
+          createdAt: nowIso()
+        });
+        plan.type = "conflict";
+        conflicted.push({ taskId: plan.task.id, conflicts });
+        continue;
       }
 
       plan.nextView = merged;
       applyViewToTask(plan.task, merged);
-      plan.task.activity.unshift({
-        id: eventId(),
-        actor: "tasksdir",
-        type: "external.reconciled",
-        message: `Reconciled an external task.md edit with the board update (external keys kept: ${externalKeys.join(", ") || "none"}).`,
-        createdAt: nowIso()
-      });
+      if (externalKeys.length > 0) {
+        plan.task.activity.unshift({
+          id: eventId(),
+          actor: "tasksdir",
+          type: "external.reconciled",
+          message: `Reconciled an external task.md edit with the board update (external keys kept: ${externalKeys.join(", ")}).`,
+          createdAt: nowIso()
+        });
+      }
       if (sameValue(plan.nextView, plan.entry.view)) plan.type = "noop";
     }
 
@@ -452,26 +481,31 @@ export class TasksdirWorkboardPersistence {
       else if (plan.type === "patch") await this.patchTaskFile(plan);
     }
 
-    await this.ops.write(buildOpsData(data));
+    const opsData = buildOpsData(data);
+    await this.ops.write(opsData);
+    this.sidecarCache = new Map(Object.entries(opsData.tasksdirSidecars).map(([id, sidecar]) => [id, clone(sidecar)]));
+
+    if (conflicted.length > 0) {
+      const first = conflicted[0];
+      throw Object.assign(
+        new Error(`Task ${first.taskId} was modified externally in the tasks directory. Reload and retry.`),
+        {
+          status: 409,
+          reason: "stale_task_file",
+          taskId: first.taskId,
+          conflicts: first.conflicts,
+          conflictedTaskIds: conflicted.map((item) => item.taskId)
+        }
+      );
+    }
   }
 
-  // Same-key conflict with an external edit: keep the file's version, record
-  // the rejection on the task, persist ops state, and surface the existing
-  // stale-write shape (409) to the caller.
-  async rejectStaleWrite(data, plan, conflicts) {
-    applyViewToTask(plan.task, plan.entry.view);
-    plan.task.activity.unshift({
-      id: eventId(),
-      actor: "tasksdir",
-      type: "update.rejected",
-      message: `Rejected stale write: task.md changed externally since the last read (conflicting keys: ${conflicts.join(", ")}).`,
-      createdAt: nowIso()
-    });
-    await this.ops.write(buildOpsData(data));
-    throw Object.assign(
-      new Error(`Task ${plan.task.id} was modified externally in the tasks directory. Reload and retry.`),
-      { status: 409, reason: "stale_task_file", taskId: plan.task.id, conflicts }
-    );
+  restoreSidecar(task) {
+    const cached = this.sidecarCache.get(task.id);
+    task.comments = cloneArray(cached?.comments);
+    task.attachments = cloneArray(cached?.attachments);
+    task.activity = cloneArray(cached?.activity);
+    task.approvalHistory = cloneArray(cached?.approvalHistory);
   }
 
   async createTaskFile(plan) {
@@ -489,6 +523,13 @@ export class TasksdirWorkboardPersistence {
     applyViewToDoc(entry.doc, entry.view, plan.nextView);
     await atomicWrite(entry.filePath, serializeTaskFile(entry.doc));
     await this.cacheEntry(entry.folder, entry.filePath, entry.doc, plan.nextView, entry.id);
+  }
+
+  resolveFallbackProjectId(opsData) {
+    const projects = Array.isArray(opsData.projects) ? opsData.projects : [];
+    const byKey = this.defaultProjectKey ? projects.find((project) => project.key === this.defaultProjectKey) : null;
+    const active = projects.find((project) => !project.archived);
+    return byKey?.id || active?.id || projects[0]?.id || "";
   }
 
   async cacheEntry(folder, filePath, doc, view, id) {
@@ -535,8 +576,17 @@ export class TasksdirWorkboardPersistence {
         entry = { folder, filePath, fingerprint, doc, view, id };
         this.entries.set(folder, entry);
       }
-      if (this.byId.has(entry.id)) {
-        console.warn(`[tasksdir] Duplicate task id ${entry.id} in ${folder}; keeping ${this.byId.get(entry.id).folder}.`);
+      const existing = this.byId.get(entry.id);
+      if (existing) {
+        // Duplicate frontmatter id (e.g. a copied folder with a stale id:).
+        // The folder whose name equals the id is canonical — board-created
+        // folders guarantee folder == id — so writes never land in the copy.
+        if (entry.folder === entry.id && existing.folder !== existing.id) {
+          console.warn(`[tasksdir] Duplicate task id ${entry.id}: using ${entry.folder}, ignoring ${existing.folder}.`);
+          this.byId.set(entry.id, entry);
+        } else {
+          console.warn(`[tasksdir] Duplicate task id ${entry.id} in ${folder}; keeping ${existing.folder}.`);
+        }
         continue;
       }
       this.byId.set(entry.id, entry);
@@ -551,28 +601,28 @@ export class TasksdirWorkboardPersistence {
 function buildOpsData(data) {
   const sidecars = {};
   for (const task of Array.isArray(data.tasks) ? data.tasks : []) {
-    sidecars[task.id] = {
-      projectId: task.projectId,
-      comments: task.comments || [],
-      attachments: task.attachments || [],
-      activity: task.activity || [],
-      approvalHistory: task.approvalHistory || []
-    };
+    sidecars[task.id] = sidecarOfTask(task);
   }
   const { tasks, tasksdirSidecars, ...rest } = data;
   return { ...rest, tasks: [], tasksdirSidecars: sidecars };
 }
 
-function resolveFallbackProjectId(opsData) {
-  const projects = Array.isArray(opsData.projects) ? opsData.projects : [];
-  const defaultKey = asText(process.env.WORKBOARD_DEFAULT_PROJECT_KEY).toUpperCase().replace(/[^A-Z0-9]+/g, "-");
-  const byKey = defaultKey ? projects.find((project) => project.key === defaultKey) : null;
-  const active = projects.find((project) => !project.archived);
-  return byKey?.id || active?.id || projects[0]?.id || "";
+function sidecarOfTask(task) {
+  return {
+    projectId: task.projectId,
+    comments: task.comments || [],
+    attachments: task.attachments || [],
+    activity: task.activity || [],
+    approvalHistory: task.approvalHistory || []
+  };
+}
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function cloneArray(value) {
-  return Array.isArray(value) ? JSON.parse(JSON.stringify(value)) : [];
+  return Array.isArray(value) ? clone(value) : [];
 }
 
 function safeFolderName(id) {
@@ -580,10 +630,34 @@ function safeFolderName(id) {
   return cleaned || `task-${randomUUID().slice(0, 8)}`;
 }
 
+// Atomic write plus tmp hygiene: sweep crash litter from earlier attempts in
+// this folder, and never leave our own tmp behind on failure.
 async function atomicWrite(filePath, content) {
+  await removeStaleTmpFiles(filePath);
   const tmpPath = `${filePath}.${randomUUID()}.tmp`;
-  await writeFile(tmpPath, content);
-  await rename(tmpPath, filePath);
+  try {
+    await writeFile(tmpPath, content);
+    await rename(tmpPath, filePath);
+  } catch (error) {
+    await rm(tmpPath, { force: true });
+    throw error;
+  }
+}
+
+async function removeStaleTmpFiles(filePath) {
+  const dirPath = path.dirname(filePath);
+  const base = path.basename(filePath);
+  let names;
+  try {
+    names = await readdir(dirPath);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name.startsWith(`${base}.`) && name.endsWith(".tmp")) {
+      await rm(path.join(dirPath, name), { force: true });
+    }
+  }
 }
 
 async function statOrNull(filePath) {

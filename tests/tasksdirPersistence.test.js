@@ -112,10 +112,24 @@ describe("legacy status/type/priority mapping", () => {
     for (const label of extraLabels) expect(view.labels).toContain(label);
   });
 
-  it("keeps ideas out of the claimable ready pool", () => {
+  it("keeps legacy todo ideas out of the claimable ready pool", () => {
     const { view } = mapFileTask(docFromFrontmatter([...base, "status: todo", "type: idea"]), "t1");
     expect(view.status).toBe("backlog");
     expect(view.workItemType).toBe("spike");
+  });
+
+  it("respects a board-written ready on an idea so operator promotion sticks", () => {
+    const { view } = mapFileTask(docFromFrontmatter([...base, "status: ready", "type: idea"]), "t1");
+    expect(view.status).toBe("ready");
+    expect(view.workItemType).toBe("spike");
+  });
+
+  it("parses mixed flow lists with quoted commas intact", () => {
+    const { view } = mapFileTask(
+      docFromFrontmatter(["id: t1", 'title: "T"', "status: ready", "type: bug", 'labels: [docs, "with, comma", plain]']),
+      "t1"
+    );
+    expect(view.labels).toEqual(["docs", "with, comma", "plain"]);
   });
 
   it("maps owner and priority sentinels", () => {
