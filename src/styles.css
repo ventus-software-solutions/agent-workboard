@@ -795,6 +795,23 @@ button {
   border-radius: 8px;
   background: #181d23;
   color: #aeb9c6;
+  text-decoration: none;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.coordinationStat:hover,
+.coordinationStat:focus-visible {
+  border-color: #657587;
+  background: #202730;
+}
+
+.talksPanel,
+.staleWorkPanel,
+.worktreeCleanupPanel,
+.attentionList {
+  scroll-margin-top: 12px;
 }
 
 .coordinationStat strong {
@@ -1008,6 +1025,16 @@ button {
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
+}
+
+.talkPagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 2px 2px;
+  color: #8f9dab;
+  font-size: 12px;
 }
 
 .talkMessage {
