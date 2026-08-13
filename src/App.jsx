@@ -48,7 +48,7 @@ import { HelpPopover } from "./components/HelpPopover.jsx";
 import { LinkifiedText } from "./components/LinkifiedText.jsx";
 import { SafeMarkdown } from "./components/SafeMarkdown.jsx";
 import { TaskDeliveryLinks } from "./components/TaskDeliveryLinks.jsx";
-import { taskDeliveryShortfall } from "../shared/deliveryCompleteness.js";
+import { reviewDeliverySignature, taskDeliveryShortfall } from "../shared/deliveryCompleteness.js";
 
 const DRAG_START_THRESHOLD = 8;
 
@@ -217,6 +217,7 @@ export function App() {
   const boardProjectRef = useRef("");
   const pollBoardStateRef = useRef(null);
   const pollingNeedsMetaRefreshRef = useRef(false);
+  const reviewDeliverySignatureRef = useRef("");
   const initialLoadStartedRef = useRef(false);
   const routeWriteModeRef = useRef("replace");
 
@@ -337,6 +338,7 @@ export function App() {
           { integrationStatus: metaResult.integrationStatus }
         ];
     setMeta({ ...metaResult, integrationStatus: integrationResult.integrationStatus });
+    reviewDeliverySignatureRef.current = `${nextProjectId}:${reviewDeliverySignature(taskListsResult.projectTasks)}`;
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
     setTasks(taskListsResult.filteredTasks);
@@ -366,6 +368,11 @@ export function App() {
     setTasks(taskListsResult.filteredTasks);
     setProjectTasks(taskListsResult.projectTasks);
     setStaleWork(staleResult.tasks);
+    const nextDeliverySignature = `${selectedProjectId}:${reviewDeliverySignature(taskListsResult.projectTasks)}`;
+    if (reviewDeliverySignatureRef.current !== nextDeliverySignature) {
+      await refreshIntegrationStatus(selectedProjectId);
+      reviewDeliverySignatureRef.current = nextDeliverySignature;
+    }
     return taskListsResult.filteredTasks;
   }
 
@@ -399,7 +406,7 @@ export function App() {
     const checkedAt = new Date().toISOString();
     const result = await api.boardState({ projectId: selectedProjectId });
     if (pollingNeedsMetaRefreshRef.current) {
-      const recoveredMeta = await api.meta();
+      const recoveredMeta = await api.meta(selectedProjectId);
       setMeta(recoveredMeta);
       pollingNeedsMetaRefreshRef.current = false;
     }

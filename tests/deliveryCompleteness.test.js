@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deliveryRequirements, taskDeliveryShortfall } from "../shared/deliveryCompleteness.js";
+import { deliveryRequirements, reviewDeliverySignature, taskDeliveryShortfall } from "../shared/deliveryCompleteness.js";
 
 const settings = {
   processOverrides: "Deliver implementation through a pushed branch and pull request before review."
@@ -10,6 +10,20 @@ function task(patch = {}) {
 }
 
 describe("delivery completeness", () => {
+  it("changes the refresh signature only when review delivery metadata changes", () => {
+    const baseline = reviewDeliverySignature([
+      task({ id: "review-b", branch: "b", pullRequestUrl: "https://example.test/b" }),
+      task({ id: "review-a", branch: "a", pullRequestUrl: "https://example.test/a" }),
+      task({ id: "active", status: "in_progress", branch: "ignored" })
+    ]);
+    expect(baseline).toBe(reviewDeliverySignature([
+      task({ id: "active", status: "done", branch: "still-ignored" }),
+      task({ id: "review-a", branch: "a", pullRequestUrl: "https://example.test/a" }),
+      task({ id: "review-b", branch: "b", pullRequestUrl: "https://example.test/b" })
+    ]));
+    expect(reviewDeliverySignature([task({ id: "review-a", branch: "changed" })])).not.toBe(baseline);
+  });
+
   it("derives the configured delivery shape from deployment process rules", () => {
     expect(deliveryRequirements(settings)).toEqual({
       enabled: true,

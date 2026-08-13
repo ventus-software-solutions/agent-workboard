@@ -835,7 +835,10 @@ test("renders safe task markdown and makes filters, task pickers, and assignee v
 test("flags incomplete review delivery on the card and in the operator inbox", async ({ page }) => {
   const projectName = uniqueName("E2E Delivery Completeness Project");
   const projectKey = uniqueKey("DLC");
-  const taskTitle = uniqueName("Review without delivery links");
+  const taskTitle = uniqueName("Live review delivery handoff");
+  const deliveryBranch = "implementer/live-delivery-handoff";
+  let exposeUnpushedBranch = false;
+  let integrationRequests = 0;
   const settingsResponse = await page.request.patch(`${apiBaseURL}/api/deployment-settings`, {
     data: {
       processOverrides: "Deliver implementation through a pushed branch and pull request before review.",
@@ -845,21 +848,62 @@ test("flags incomplete review delivery on the card and in the operator inbox", a
   expect(settingsResponse.ok()).toBe(true);
   try {
     const projectResult = await postJson(page, "/api/projects", { name: projectName, key: projectKey });
-    await postJson(page, "/api/tasks", {
+    const taskResult = await postJson(page, "/api/tasks", {
       projectId: projectResult.project.id,
       title: taskTitle,
-      status: "review",
+      status: "in_progress",
       role: "implementer",
       priority: "normal"
+    });
+    await page.route("**/api/integration-status?projectId=*", async (route) => {
+      if (!route.request().url().includes(`projectId=${projectResult.project.id}`)) {
+        await route.continue();
+        return;
+      }
+      integrationRequests += 1;
+      await route.fulfill({
+        json: {
+          integrationStatus: {
+            sourceOfTruth: "origin-main",
+            baseRef: "origin/main",
+            localRef: "main",
+            remoteRef: "origin/main",
+            currentBranch: "main",
+            ahead: 0,
+            behind: 0,
+            clean: true,
+            pushDebt: false,
+            deliveryBranches: exposeUnpushedBranch
+              ? [{ branch: deliveryBranch, state: "unpushed", ahead: 1, behind: 0 }]
+              : []
+          }
+        }
+      });
     });
 
     await page.goto(baseURL);
     await page.getByRole("button", { name: new RegExp(projectName) }).click();
     const card = taskCard(page, taskTitle);
+    await expect(card).toBeVisible();
+    await expect(card.locator(".deliveryIncompletePill")).toHaveCount(0);
+    const baselineIntegrationRequests = integrationRequests;
+
+    exposeUnpushedBranch = true;
+    const handoffResponse = await page.request.patch(`${apiBaseURL}/api/tasks/${taskResult.task.id}`, {
+      data: {
+        status: "review",
+        branch: deliveryBranch,
+        pullRequestUrl: "https://github.test/acme/work/pull/42",
+        expectedRevision: taskResult.task.revision,
+        actor: "implementer-e2e"
+      }
+    });
+    expect(handoffResponse.ok()).toBe(true);
+
     await expect(card.locator(".deliveryIncompletePill")).toHaveText("Delivery incomplete");
     const attention = page.locator('[data-kind="delivery"]', { hasText: taskTitle });
-    await expect(attention).toContainText("Delivery branch is missing");
-    await expect(attention).toContainText("Pull request URL is missing");
+    await expect(attention).toContainText("1 unpushed commit");
+    await expect.poll(() => integrationRequests).toBeGreaterThan(baselineIntegrationRequests);
   } finally {
     const resetResponse = await page.request.patch(`${apiBaseURL}/api/deployment-settings`, {
       data: { processOverrides: "", actor: "e2e" }

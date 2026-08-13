@@ -14,6 +14,14 @@ export function deliveryRequirements(deploymentSettings = {}) {
   };
 }
 
+export function reviewDeliverySignature(tasks = []) {
+  return (tasks || [])
+    .filter((task) => task?.status === "review")
+    .map((task) => [text(task.id), text(task.branch), text(task.pullRequestUrl)].join("\u001f"))
+    .sort()
+    .join("\u001e");
+}
+
 export function taskDeliveryShortfall(task, { deploymentSettings = {}, integrationStatus = {} } = {}) {
   const requirements = deliveryRequirements(deploymentSettings);
   if (!requirements.enabled || task?.status !== "review") return null;

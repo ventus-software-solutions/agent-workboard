@@ -37,7 +37,7 @@ export async function request(path, options = {}) {
 }
 
 export const api = {
-  meta: () => request("/api/meta"),
+  meta: (projectId = "") => request(`/api/meta${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
   deploymentSettings: () => request("/api/deployment-settings"),
   updateDeploymentSettings: (settings) =>
     request("/api/deployment-settings", { method: "PATCH", body: JSON.stringify(settings) }),
