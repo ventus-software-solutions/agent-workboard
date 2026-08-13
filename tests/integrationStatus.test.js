@@ -139,7 +139,7 @@ describe("integration status guidance", () => {
     const previousRepoDir = process.env.WORKBOARD_REPO_DIR;
     process.env.WORKBOARD_REPO_DIR = repoDir;
     try {
-      const store = new WorkboardStore({ dataDir });
+      const store = new WorkboardStore({ dataDir, storageMode: "json" });
       await store.init();
       const app = createApp({ store });
 

@@ -13,7 +13,7 @@ let app;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-api-"));
-  store = new WorkboardStore({ dataDir: tempDir });
+  store = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
   await store.init();
   app = createApp({ store });
 });
@@ -245,7 +245,7 @@ describe("Agent Workboard API", () => {
     );
 
     const importDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-import-api-"));
-    const importStore = new WorkboardStore({ dataDir: importDir });
+    const importStore = new WorkboardStore({ dataDir: importDir, storageMode: "json" });
     await importStore.init();
     const importApp = createApp({ store: importStore });
     try {
@@ -1667,7 +1667,7 @@ describe("Agent Workboard API", () => {
   });
 
   it("returns active project context from bootstrap, agent docs, and slot registry", async () => {
-    store = new WorkboardStore({ dataDir: tempDir, defaultProjectKey: "TEAM" });
+    store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", defaultProjectKey: "TEAM" });
     await store.init();
     app = createApp({ store });
     const team = (await request(app).post("/api/projects").send({ name: "Team Board", key: "TEAM" }).expect(201)).body.project;

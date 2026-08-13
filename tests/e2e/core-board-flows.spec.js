@@ -17,7 +17,7 @@ let viteServer;
 
 test.beforeAll(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-e2e-"));
-  const store = new WorkboardStore({ dataDir });
+  const store = new WorkboardStore({ dataDir, storageMode: "json" });
   await store.init();
 
   const apiApp = createApp({ store });

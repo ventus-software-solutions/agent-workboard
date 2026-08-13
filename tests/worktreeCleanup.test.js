@@ -404,7 +404,7 @@ prunable gitdir file points to non-existent location
   it("removes cleanup-ready worktrees and records task evidence", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-cleanup-"));
     cleanupPaths.push(dataDir);
-    const store = new WorkboardStore({ dataDir });
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
     await store.init();
     const project = await store.createProject({ name: "Cleanup action project" });
     const task = await store.createTask({
@@ -481,7 +481,7 @@ prunable gitdir file points to non-existent location
   it("rejects stale cleanup requests when the reported head no longer matches", async () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-cleanup-stale-"));
     cleanupPaths.push(dataDir);
-    const store = new WorkboardStore({ dataDir });
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
     await store.init();
     const project = await store.createProject({ name: "Cleanup stale action project" });
     const staleTask = await store.createTask({
