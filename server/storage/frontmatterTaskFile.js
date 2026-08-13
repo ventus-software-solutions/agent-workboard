@@ -10,6 +10,50 @@ const CHILD_PAIR_RE = /^(\s+)([A-Za-z0-9_][A-Za-z0-9_.-]*):(.*)$/;
 const LIST_ITEM_RE = /^\s+-\s+(.*)$/;
 const BARE_SCALAR_RE = /^[A-Za-z0-9_][A-Za-z0-9_.:/@-]*$/;
 
+export function validateTaskFileStructure(raw) {
+  const lines = String(raw ?? "").split(/\r?\n/);
+  if (lines[0]?.trim() !== DELIMITER) {
+    return [{ line: 1, reason: "missing opening frontmatter delimiter (---)" }];
+  }
+
+  const closeIndex = lines.findIndex((line, index) => index > 0 && line.trim() === DELIMITER);
+  if (closeIndex === -1) {
+    return [{ line: Math.max(1, lines.length), reason: "missing closing frontmatter delimiter (---)" }];
+  }
+
+  const failures = [];
+  let hasParent = false;
+  for (let index = 1; index < closeIndex; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      hasParent = false;
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      if (!/^\s/.test(line)) hasParent = false;
+      continue;
+    }
+    if (!/^\s/.test(line) && PAIR_RE.test(line)) {
+      hasParent = true;
+      continue;
+    }
+    if (/^\s/.test(line) && hasParent && (CHILD_PAIR_RE.test(line) || LIST_ITEM_RE.test(line))) {
+      continue;
+    }
+    failures.push({
+      line: index + 1,
+      reason: !/^\s/.test(line)
+        ? "expected a frontmatter key followed by a colon"
+        : hasParent
+          ? "expected an indented child key followed by a colon, list item (- value), or comment"
+          : "orphaned indented frontmatter content"
+    });
+    hasParent = false;
+  }
+  return failures;
+}
+
 export function detectNewline(text) {
   return text.includes("\r\n") ? "\r\n" : "\n";
 }

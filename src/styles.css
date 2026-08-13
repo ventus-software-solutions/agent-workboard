@@ -3077,6 +3077,63 @@ button {
   min-height: 104px;
 }
 
+.projectPreflight {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #4c5b67;
+  border-radius: 8px;
+  background: #172028;
+  color: #cbd7e1;
+  overflow: hidden;
+}
+
+.projectPreflight.go {
+  border-color: #3f8b71;
+}
+
+.projectPreflight.noGo,
+.projectPreflight.error {
+  border-color: #9c5f5f;
+}
+
+.projectPreflight ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.projectPreflight details {
+  min-width: 0;
+}
+
+.projectPreflight summary {
+  cursor: pointer;
+  color: #8edcf3;
+}
+
+.projectPreflight pre {
+  max-height: 260px;
+  margin: 8px 0 0;
+  padding: 9px;
+  border-radius: 6px;
+  background: #0c1217;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.projectPreflightConfirmation {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.projectPreflightConfirmation input {
+  width: auto;
+  margin-top: 2px;
+}
+
 .wide {
   grid-column: 1 / -1;
 }

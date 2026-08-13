@@ -13,6 +13,7 @@ import {
   getBoardValue,
   getValue,
   parseTaskFile,
+  validateTaskFileStructure,
   renderList,
   serializeTaskFile,
   setBoardValue,
@@ -476,7 +477,7 @@ export class TasksdirWorkboardPersistence {
       if (fingerprint === plan.entry.fingerprint) continue;
 
       const raw = await readFile(plan.entry.filePath, "utf8");
-      const freshDoc = parseTaskFile(raw);
+      const freshDoc = parseValidatedTaskFile(raw, plan.entry.filePath);
       const baseView = plan.entry.view;
       const { view: freshView } = mapFileTask(freshDoc, plan.entry.folder, { fallbackTimestamp: baseView.createdAt });
       const { merged, conflicts } = threeWayMergeViews(baseView, plan.nextView, freshView);
@@ -615,7 +616,7 @@ export class TasksdirWorkboardPersistence {
       let entry = this.entries.get(folder);
       if (!entry || entry.fingerprint !== fingerprint) {
         const raw = await readFile(filePath, "utf8");
-        const doc = parseTaskFile(raw);
+        const doc = parseValidatedTaskFile(raw, filePath);
         const { id, view } = mapFileTask(doc, folder, {
           fallbackTimestamp: entry?.view.createdAt || nowIso()
         });
@@ -718,4 +719,16 @@ async function statOrNull(filePath) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function parseValidatedTaskFile(raw, filePath) {
+  const [failure] = validateTaskFileStructure(raw);
+  if (failure) {
+    throw storageError(`Invalid task file ${filePath}:${failure.line}: ${failure.reason}`, {
+      code: "INVALID_TASK_FILE",
+      filePath,
+      line: failure.line
+    });
+  }
+  return parseTaskFile(raw);
 }

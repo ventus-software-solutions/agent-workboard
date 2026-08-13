@@ -3,6 +3,12 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 import { createWorkboardPersistence } from "./persistence.js";
+import {
+  assertProjectDataSourceAvailable,
+  canonicalizeProjectDataSource,
+  normalizeProjectDataSource,
+  pathIdentity
+} from "./projectDataSource.js";
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 import { isSafeHttpUrl } from "../../shared/taskLinks.js";
@@ -682,6 +688,10 @@ export class WorkboardStore {
 
   migrateData() {
     let migrated = false;
+    if (!Array.isArray(this.data.projects)) {
+      this.data.projects = [];
+      migrated = true;
+    }
     if (this.ensureDeploymentSettings()) {
       migrated = true;
     }
@@ -700,6 +710,15 @@ export class WorkboardStore {
     if (!Array.isArray(this.data.capabilities)) {
       this.data.capabilities = [];
       migrated = true;
+    }
+
+    for (const project of this.data.projects) {
+      const dataSource = normalizeProjectDataSource(project.dataSource, { migrating: true });
+      if (JSON.stringify(project.dataSource || null) !== JSON.stringify(dataSource)) {
+        if (dataSource) project.dataSource = dataSource;
+        else delete project.dataSource;
+        migrated = true;
+      }
     }
 
     for (const task of this.data.tasks || []) {
@@ -1648,33 +1667,75 @@ export class WorkboardStore {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  projectDataSourcesSupported() {
+    return this.persistence.projectDataSources === true;
+  }
+
+  async refreshProjectDataSource(projectIdInput) {
+    const projectId = normalizeText(projectIdInput);
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.migrateData();
+      return this.getProject(projectId);
+    });
+  }
+
   async createProject(input) {
     const name = normalizeText(input.name);
     if (!name) {
       throw Object.assign(new Error("Project name is required."), { status: 400 });
     }
 
-    const createdAt = now();
-    const project = {
-      id: id("project"),
-      key: slugify(input.key || name),
-      name,
-      description: normalizeText(input.description),
-      createdAt,
-      updatedAt: createdAt,
-      archived: false
-    };
-    this.data.projects.push(project);
-    this.data.events.push({
-      id: id("event"),
-      projectId: project.id,
-      actor: normalizeText(input.actor) || "operator",
-      type: "project.created",
-      message: `Created project ${project.name}.`,
-      createdAt
+    const dataSource = await canonicalizeProjectDataSource(input.dataSource);
+    if (dataSource && !this.projectDataSourcesSupported()) {
+      throw httpError(
+        "Per-project tasks folders require WORKBOARD_STORAGE=sqlite or json. The instance-global tasksdir mode remains a single-tree compatibility fallback.",
+        409,
+        { reason: "project_data_sources_unavailable_in_global_tasksdir" }
+      );
+    }
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      if (
+        dataSource &&
+        this.data.projects.some(
+          (candidate) =>
+            candidate.dataSource?.tasksDir && pathIdentity(candidate.dataSource.tasksDir) === pathIdentity(dataSource.tasksDir)
+        )
+      ) {
+        throw httpError("That tasks directory is already bound to another project.", 409, {
+          reason: "tasksdir_already_bound",
+          tasksDir: dataSource.tasksDir
+        });
+      }
+
+      const createdAt = now();
+      const project = {
+        id: id("project"),
+        key: slugify(input.key || name),
+        name,
+        description: normalizeText(input.description),
+        ...(dataSource ? { dataSource } : {}),
+        createdAt,
+        updatedAt: createdAt,
+        archived: false
+      };
+      this.data.projects.push(project);
+      this.data.events.push({
+        id: id("event"),
+        projectId: project.id,
+        actor: normalizeText(input.actor) || "operator",
+        type: "project.created",
+        message: dataSource
+          ? `Created project ${project.name} from tasks directory ${dataSource.tasksDir}.`
+          : `Created project ${project.name}.`,
+        createdAt
+      });
+      await this.writeData(this.data);
+      this.data = await this.readData();
+      return this.getProject(project.id);
     });
-    await this.save();
-    return project;
   }
 
   listTasks(filters = {}) {
@@ -2315,6 +2376,7 @@ export class WorkboardStore {
     if (!project) {
       throw Object.assign(new Error("Project not found."), { status: 404 });
     }
+    assertProjectDataSourceAvailable(project);
 
     const title = normalizeTaskTitle(input.title);
     const status = readTaskEnumField(input, "status", STATUS_IDS, "backlog");

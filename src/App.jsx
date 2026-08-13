@@ -276,7 +276,7 @@ export function App() {
     ]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [taskListsResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult] = nextProjectId
+    const [taskListsResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult, integrationResult] = nextProjectId
       ? await Promise.all([
           fetchTaskLists(nextProjectId, {
             q: filters.q,
@@ -288,7 +288,8 @@ export function App() {
           api.staleInProgressTasks({ projectId: nextProjectId }),
           api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
           api.projectActivity(nextProjectId, activityFilters),
-          fetchWorktreeCleanup()
+          fetchWorktreeCleanup(),
+          api.integrationStatus(nextProjectId)
         ])
       : [
           { filteredTasks: [], projectTasks: [] },
@@ -296,9 +297,10 @@ export function App() {
           { tasks: [] },
           { capabilities: [] },
           { activity: [] },
-          emptyWorktreeCleanup()
+          emptyWorktreeCleanup(),
+          { integrationStatus: metaResult.integrationStatus }
         ];
-    setMeta(metaResult);
+    setMeta({ ...metaResult, integrationStatus: integrationResult.integrationStatus });
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
     setTasks(taskListsResult.filteredTasks);
@@ -328,6 +330,12 @@ export function App() {
     setProjectTasks(taskListsResult.projectTasks);
     setStaleWork(staleResult.tasks);
     return taskListsResult.filteredTasks;
+  }
+
+  async function refreshIntegrationStatus(projectId = selectedProjectId) {
+    const result = await api.integrationStatus(projectId);
+    setMeta((current) => ({ ...current, integrationStatus: result.integrationStatus }));
+    return result.integrationStatus;
   }
 
   async function refreshTalks(overrides = {}, projectId = selectedProjectId) {
@@ -545,7 +553,8 @@ export function App() {
       refreshTalks(),
       refreshActivity(),
       refreshCapabilities(),
-      refreshAgentSlots()
+      refreshAgentSlots(),
+      refreshIntegrationStatus()
     ]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
 
@@ -617,9 +626,10 @@ export function App() {
         worktreeCleanup,
         promptTemplate: agentDocsOverview.usage?.promptTemplate || "",
         origin: typeof window === "undefined" ? "http://localhost:8088" : window.location.origin,
-        projectId: selectedProjectId
+        projectId: selectedProjectId,
+        project: selectedProject
       }),
-    [agentDocsOverview, agentRegistry, projectTasks, selectedProjectId, staleWork, worktreeCleanup]
+    [agentDocsOverview, agentRegistry, projectTasks, selectedProject, selectedProjectId, staleWork, worktreeCleanup]
   );
 
   const coordinationAttention = useMemo(() => {
@@ -975,6 +985,10 @@ export function App() {
             onDecideApproval={(task, payload) => mutate(() => api.decideOperatorApproval(task.id, payload))}
             onCleanup={runWorktreeCleanup}
             cleanupActionKey={cleanupActionKey}
+            onRetryDataSource={async () => {
+              await api.refreshProjectDataSource(selectedProjectId);
+              await loadAll(selectedProjectId);
+            }}
           />
         )}
 
@@ -1103,6 +1117,7 @@ export function App() {
       {isCreatingProject && (
         <CreateProjectDialog
           onClose={() => setIsCreatingProject(false)}
+          onPreflight={(payload) => api.preflightProject(payload)}
           onCreate={(payload) =>
             mutate(async () => {
               const result = await api.createProject(payload);
@@ -2263,7 +2278,8 @@ function OperatorAttentionPanel({
   onOpenCoordination,
   onDecideApproval,
   onCleanup,
-  cleanupActionKey
+  cleanupActionKey,
+  onRetryDataSource
 }) {
   const [approvalNotes, setApprovalNotes] = useState({});
   const [pendingActionId, setPendingActionId] = useState("");
@@ -2437,6 +2453,12 @@ function OperatorAttentionPanel({
                       <span>{copiedActionId === action.id ? "Copied" : "Copy host commands"}</span>
                     </button>
                   )}
+                  {action.remedy === "retry_data_source" && (
+                    <button className="attentionPrimaryAction" onClick={onRetryDataSource}>
+                      <RefreshCw size={14} />
+                      <span>Retry source</span>
+                    </button>
+                  )}
                 </div>
               </article>
             );
@@ -2455,6 +2477,7 @@ function attentionIcon(kind) {
   if (kind === "stalled") return WifiOff;
   if (kind === "grooming") return ClipboardList;
   if (kind === "cleanup") return Archive;
+  if (kind === "data_source") return Database;
   return Bot;
 }
 
@@ -3716,27 +3739,112 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
   );
 }
 
-function CreateProjectDialog({ onClose, onCreate }) {
-  const [draft, setDraft] = useState({ name: "", key: "", description: "" });
+function CreateProjectDialog({ onClose, onCreate, onPreflight }) {
+  const [draft, setDraft] = useState({ name: "", key: "", description: "", tasksDir: "", repoDir: "" });
+  const [preflight, setPreflight] = useState({ pending: false, report: null, confirmationToken: "", error: "" });
+  const [confirmed, setConfirmed] = useState(false);
+  const hasTasksDir = Boolean(draft.tasksDir.trim());
+
+  function updateDraft(patch) {
+    setDraft((current) => ({ ...current, ...patch }));
+    if (Object.prototype.hasOwnProperty.call(patch, "tasksDir")) {
+      setPreflight({ pending: false, report: null, confirmationToken: "", error: "" });
+      setConfirmed(false);
+    }
+  }
+
+  async function runPreflight() {
+    setPreflight({ pending: true, report: null, confirmationToken: "", error: "" });
+    setConfirmed(false);
+    try {
+      const result = await onPreflight({ tasksDir: draft.tasksDir, repoDir: draft.repoDir });
+      setPreflight({ pending: false, report: result.report, confirmationToken: result.confirmationToken || "", error: "" });
+    } catch (error) {
+      setPreflight({ pending: false, report: null, confirmationToken: "", error: error.message });
+    }
+  }
+
+  function createPayload() {
+    const { tasksDir, repoDir, ...project } = draft;
+    if (!tasksDir.trim()) return project;
+    return {
+      ...project,
+      dataSource: {
+        tasksDir: tasksDir.trim(),
+        ...(repoDir.trim() ? { repoDir: repoDir.trim() } : {})
+      },
+      preflightToken: preflight.confirmationToken
+    };
+  }
+
+  const sourceReady = !hasTasksDir || (preflight.report?.go && preflight.confirmationToken && confirmed);
   return (
     <Dialog title="New project" onClose={onClose}>
       <div className="formGrid">
         <label>
           Name
-          <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+          <input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} />
         </label>
         <label>
           Key
-          <input value={draft.key} onChange={(event) => setDraft({ ...draft, key: event.target.value })} />
+          <input value={draft.key} onChange={(event) => updateDraft({ key: event.target.value })} />
         </label>
         <label className="wide">
           Description
           <textarea
             value={draft.description}
-            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+            onChange={(event) => updateDraft({ description: event.target.value })}
           />
         </label>
-        <button className="primaryButton wide" onClick={() => onCreate(draft)} disabled={!draft.name.trim()}>
+        <label className="wide">
+          Tasks folder path <span className="muted">(optional)</span>
+          <input
+            value={draft.tasksDir}
+            onChange={(event) => updateDraft({ tasksDir: event.target.value })}
+            placeholder="C:\\repo\\tasks"
+          />
+        </label>
+        <label className="wide">
+          Repository path <span className="muted">(optional)</span>
+          <input
+            value={draft.repoDir}
+            onChange={(event) => updateDraft({ repoDir: event.target.value })}
+            placeholder="C:\\repo"
+          />
+        </label>
+        {hasTasksDir && (
+          <button className="ghostButton wide" onClick={runPreflight} disabled={preflight.pending}>
+            <ShieldCheck size={17} />
+            <span>{preflight.pending ? "Checking folder…" : "Check tasks folder"}</span>
+          </button>
+        )}
+        {preflight.error && <div className="projectPreflight error wide">{preflight.error}</div>}
+        {preflight.report && (
+          <div className={`projectPreflight wide ${preflight.report.go ? "go" : "noGo"}`}>
+            <strong>{preflight.report.go ? "Preflight passed" : "Preflight blocked"}</strong>
+            <span>
+              {preflight.report.summary.parsed} parsed, {preflight.report.summary.failed} failed across {preflight.report.summary.taskFiles} task files
+            </span>
+            {preflight.report.blockers.length > 0 && (
+              <ul>{preflight.report.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+            )}
+            <details>
+              <summary>Full doctor report</summary>
+              <pre>{JSON.stringify(preflight.report, null, 2)}</pre>
+            </details>
+            {preflight.report.go && (
+              <label className="projectPreflightConfirmation">
+                <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+                I reviewed this report and want to bind the project to this folder.
+              </label>
+            )}
+          </div>
+        )}
+        <button
+          className="primaryButton wide"
+          onClick={() => onCreate(createPayload())}
+          disabled={!draft.name.trim() || !sourceReady}
+        >
           <Archive size={17} />
           <span>Create project</span>
         </button>

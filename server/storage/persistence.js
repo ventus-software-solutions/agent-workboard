@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TasksdirWorkboardPersistence } from "./tasksdirPersistence.js";
+import { ProjectDataSourcePersistence } from "./projectDataSourcePersistence.js";
 
 const WORKBOARD_STORAGE_MODES = new Set(["json", "sqlite", "tasksdir"]);
 const OPS_STORAGE_MODES = new Set(["json", "sqlite"]);
@@ -42,11 +43,13 @@ export function createWorkboardPersistence({
   sqliteCommand = process.env.SQLITE3_BIN || "sqlite3",
   tasksDir = process.env.WORKBOARD_TASKS_DIR,
   opsStorageMode = process.env.WORKBOARD_OPS_STORAGE || "json",
-  defaultProjectKey = ""
+  defaultProjectKey = "",
+  enableProjectDataSources = true
 }) {
   const mode = normalizeStorageMode(storageMode);
   if (mode === "sqlite") {
-    return new SqliteWorkboardPersistence({ dataDir, sqliteCommand });
+    const ops = new SqliteWorkboardPersistence({ dataDir, sqliteCommand });
+    return enableProjectDataSources ? new ProjectDataSourcePersistence({ ops, defaultProjectKey }) : ops;
   }
   if (mode === "tasksdir") {
     const opsMode = String(opsStorageMode || "json").trim().toLowerCase();
@@ -55,10 +58,16 @@ export function createWorkboardPersistence({
         status: 500
       });
     }
-    const ops = createWorkboardPersistence({ dataDir, storageMode: opsMode, sqliteCommand });
+    const ops = createWorkboardPersistence({
+      dataDir,
+      storageMode: opsMode,
+      sqliteCommand,
+      enableProjectDataSources: false
+    });
     return new TasksdirWorkboardPersistence({ tasksDir, ops, defaultProjectKey });
   }
-  return new JsonWorkboardPersistence({ dataDir });
+  const ops = new JsonWorkboardPersistence({ dataDir });
+  return enableProjectDataSources ? new ProjectDataSourcePersistence({ ops, defaultProjectKey }) : ops;
 }
 
 class JsonWorkboardPersistence {

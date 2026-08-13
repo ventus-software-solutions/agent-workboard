@@ -55,6 +55,31 @@ afterEach(async () => {
 });
 
 describe("tasksdir doctor", () => {
+  it("rejects malformed nested frontmatter instead of treating it as an opaque continuation", async () => {
+    const root = await tempTasksDir();
+    await writeTask(root, "malformed-nested", [
+      "id: malformed-nested",
+      "title: Malformed nested metadata",
+      "status: ready",
+      "type: task",
+      "priority: normal",
+      "board:",
+      "  role implementer"
+    ]);
+
+    const report = await inspectTasksDir(root);
+
+    expect(report.go).toBe(false);
+    expect(report.summary).toMatchObject({ taskFiles: 1, parsed: 0, failed: 1 });
+    expect(report.parse.failed).toEqual([
+      expect.objectContaining({
+        file: "malformed-nested/task.md",
+        line: 8,
+        reason: expect.stringContaining("child key followed by a colon")
+      })
+    ]);
+  });
+
   it("produces an actionable no-go report without changing an imperfect source tree", async () => {
     const root = await tempTasksDir();
     await writeTask(root, "alpha", [

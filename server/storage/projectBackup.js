@@ -4,11 +4,13 @@ export const PROJECT_BACKUP_PACKAGE_VERSION = 1;
 const MAX_TASK_LABELS = 12;
 
 export function buildProjectBackup({ project, tasks, events, exportedAt }) {
+  const portableProject = cloneJson(project);
+  delete portableProject.dataSource;
   return {
     packageType: PROJECT_BACKUP_PACKAGE_TYPE,
     packageVersion: PROJECT_BACKUP_PACKAGE_VERSION,
     exportedAt,
-    project: cloneJson(project),
+    project: portableProject,
     tasks: cloneJson(tasks),
     events: cloneJson(events)
   };
@@ -59,6 +61,12 @@ function normalizeBackupProject(value, { now }) {
   }
 
   const createdAt = normalizeText(source.createdAt) || now();
+  if (Object.prototype.hasOwnProperty.call(source, "dataSource")) {
+    throw httpError("Project backups cannot create or replace a tasks-folder binding. Create the project through a successful preflight instead.", 409, {
+      reason: "project_backup_data_source_forbidden",
+      field: "project.dataSource"
+    });
+  }
   return {
     id: projectId,
     key: slugify(source.key || name),

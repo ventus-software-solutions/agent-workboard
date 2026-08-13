@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import request from "supertest";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../server/app.js";
 import { buildAgentDoc } from "../server/agentDocs.js";
 import { WorkboardStore } from "../server/storage/workboardStore.js";
@@ -34,6 +34,117 @@ describe("Agent Workboard API", () => {
       version: "9.8.7",
       storageMode: "json"
     });
+  });
+
+  it("gates folder-backed project creation on a successful doctor report and explicit confirmation", async () => {
+    const tasksDir = path.join(tempDir, "imported-tasks");
+    await cp(path.resolve("tests/fixtures/tasksdir"), tasksDir, { recursive: true });
+    const projectInput = {
+      name: "Folder-backed API project",
+      key: "FOLDER-API",
+      dataSource: { tasksDir, repoDir: tempDir }
+    };
+
+    const notChecked = await request(app).post("/api/projects").send(projectInput).expect(409);
+    expect(notChecked.body.error.details).toMatchObject({ reason: "tasksdir_preflight_required", tasksDir });
+
+    const checked = await request(app).post("/api/projects/preflight").send({ tasksDir, repoDir: tempDir }).expect(200);
+    expect(checked.body).toMatchObject({
+      report: { go: true, summary: { taskFiles: 4, parsed: 4, failed: 0 } },
+      confirmationToken: expect.any(String)
+    });
+
+    const created = await request(app)
+      .post("/api/projects")
+      .send({ ...projectInput, preflightToken: checked.body.confirmationToken })
+      .expect(201);
+    expect(created.body.project).toMatchObject({
+      key: "FOLDER-API",
+      dataSource: { tasksDir: path.resolve(tasksDir), repoDir: path.resolve(tempDir), health: { status: "ready" } }
+    });
+    const importedTasks = await request(app).get(`/api/tasks?projectId=${created.body.project.id}`).expect(200);
+    expect(importedTasks.body.tasks).toHaveLength(4);
+
+    await request(app)
+      .post("/api/projects")
+      .send({ ...projectInput, name: "Cannot reuse confirmation", key: "NO-REUSE", preflightToken: checked.body.confirmationToken })
+      .expect(409);
+  });
+
+  it("returns a no-go report without a confirmation token for a broken tasks tree", async () => {
+    const tasksDir = path.join(tempDir, "broken-tasks");
+    await mkdir(path.join(tasksDir, "broken"), { recursive: true });
+    await writeFile(path.join(tasksDir, "broken", "task.md"), "title: missing frontmatter\n");
+
+    const response = await request(app).post("/api/projects/preflight").send({ tasksDir }).expect(200);
+    expect(response.body.confirmationToken).toBe("");
+    expect(response.body.report).toMatchObject({ go: false, summary: { taskFiles: 1, failed: 1 } });
+    expect(response.body.report.blockers).not.toHaveLength(0);
+  });
+
+  it("returns no confirmation token when nested frontmatter syntax is malformed", async () => {
+    const tasksDir = path.join(tempDir, "malformed-nested-tasks");
+    const taskDir = path.join(tasksDir, "malformed-nested");
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      path.join(taskDir, "task.md"),
+      "---\nid: malformed-nested\ntitle: Malformed nested metadata\nstatus: ready\ntype: task\npriority: normal\nboard:\n  role implementer\n---\nBody\n"
+    );
+
+    const response = await request(app).post("/api/projects/preflight").send({ tasksDir }).expect(200);
+
+    expect(response.body.confirmationToken).toBe("");
+    expect(response.body.report).toMatchObject({ go: false, summary: { taskFiles: 1, parsed: 0, failed: 1 } });
+    expect(response.body.report.parse.failed).toEqual([
+      expect.objectContaining({
+        file: "malformed-nested/task.md",
+        line: 8,
+        reason: expect.stringContaining("child key followed by a colon")
+      })
+    ]);
+  });
+
+  it("rejects a tasks tree that drifts after a successful preflight", async () => {
+    const tasksDir = path.join(tempDir, "drifting-tasks");
+    await cp(path.resolve("tests/fixtures/tasksdir"), tasksDir, { recursive: true });
+    const checked = await request(app).post("/api/projects/preflight").send({ tasksDir }).expect(200);
+    expect(checked.body.report).toMatchObject({ go: true, sourceFingerprint: expect.any(String) });
+
+    await writeFile(path.join(tasksDir, "task_docs_cleanup", "task.md"), "---\nid: broken-after-check\n");
+    const rejected = await request(app)
+      .post("/api/projects")
+      .send({
+        name: "Drifted source",
+        dataSource: { tasksDir },
+        preflightToken: checked.body.confirmationToken
+      })
+      .expect(409);
+    expect(rejected.body.error.details).toMatchObject({
+      reason: "tasksdir_preflight_stale",
+      expectedFingerprint: checked.body.report.sourceFingerprint,
+      actualFingerprint: expect.any(String),
+      report: { go: false }
+    });
+    expect(store.listProjects()).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "Drifted source" })]));
+  });
+
+  it("uses a bound project repoDir for project-scoped integration status", async () => {
+    const tasksDir = path.join(tempDir, "status-tasks");
+    await mkdir(tasksDir, { recursive: true });
+    const project = await store.createProject({
+      name: "Scoped repository status",
+      dataSource: { tasksDir, repoDir: tempDir }
+    });
+    const integrationStatusProvider = vi.fn(({ cwd } = {}) => ({
+      sourceOfTruth: "test",
+      baseRef: "origin/main",
+      cwd: cwd || "global"
+    }));
+    app = createApp({ store, integrationStatusProvider });
+
+    const response = await request(app).get(`/api/integration-status?projectId=${project.id}`).expect(200);
+    expect(response.body.integrationStatus.cwd).toBe(path.resolve(tempDir));
+    expect(integrationStatusProvider).toHaveBeenCalledWith({ cwd: path.resolve(tempDir) });
   });
 
   it("edits deployment process rules and injects them into every role doc only when non-empty", async () => {
