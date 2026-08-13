@@ -98,7 +98,18 @@ function inlineMarkdown(source) {
     if (link) {
       const href = safeMarkdownHref(link[2]);
       return href
-        ? <a key={index} href={href} target="_blank" rel="noreferrer noopener">{link[1]}</a>
+        ? (
+          <a
+            key={index}
+            href={href}
+            target="_blank"
+            rel="noreferrer noopener"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {link[1]}
+          </a>
+        )
         : <Fragment key={index}>{link[1]}</Fragment>;
     }
     if (token.startsWith("**") && token.endsWith("**")) return <strong key={index}>{token.slice(2, -2)}</strong>;

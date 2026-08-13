@@ -793,6 +793,12 @@ test("renders safe task markdown and makes filters, task pickers, and assignee v
   await expect(card.locator(".safeMarkdown strong")).toHaveText("safe emphasis");
   await expect(card.locator(".safeMarkdown")).not.toContainText("## Gap");
   await expect(card.locator(".safeMarkdown img")).toHaveCount(0);
+  await page.context().route("https://example.com/spec", (route) => route.fulfill({ body: "docs" }));
+  const docsPopupPromise = page.waitForEvent("popup");
+  await card.getByRole("link", { name: "docs" }).click();
+  const docsPopup = await docsPopupPromise;
+  await docsPopup.close();
+  await expect(page.locator(".drawer")).toHaveCount(0);
 
   await page.getByPlaceholder("Search tasks").fill(childTitle);
   const filterBanner = page.getByRole("region", { name: "Active task filters" });
