@@ -12,6 +12,9 @@ services:
       WORKBOARD_STORAGE: sqlite
       WORKBOARD_REPO_DIR: /workspace
       WORKBOARD_CLEANUP_MUTATIONS: "false"
+      WORKBOARD_GITHUB_REPOSITORY: "${WORKBOARD_GITHUB_REPOSITORY:-}"
+      WORKBOARD_GITHUB_TOKEN: "${WORKBOARD_GITHUB_TOKEN:-}"
+      WORKBOARD_GITHUB_PROJECT_KEY: "${WORKBOARD_GITHUB_PROJECT_KEY:-}"
     volumes:
       - ./.workboard-data:/data
       - ./:/workspace:ro

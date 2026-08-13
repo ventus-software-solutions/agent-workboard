@@ -25,6 +25,7 @@ const PROCESS_STARTED_AT = new Date().toISOString();
 
 export function createApp({
   store,
+  githubIntake = null,
   integrationStatusProvider = getIntegrationStatus,
   tasksdirDoctor = inspectTasksDir,
   worktreeCleanupProvider = createWorktreeCleanupReport,
@@ -50,6 +51,29 @@ export function createApp({
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "agent-workboard" });
+  });
+
+  app.get("/api/github-intake", (_req, res) => {
+    res.json({
+      intake: githubIntake?.status?.() || {
+        enabled: false,
+        repository: "",
+        tokenConfigured: false,
+        running: false,
+        syncing: false
+      }
+    });
+  });
+
+  app.post("/api/github-intake/sync", async (_req, res, next) => {
+    try {
+      if (!githubIntake?.sync) {
+        throw Object.assign(new Error("GitHub intake is not configured for this server."), { status: 503 });
+      }
+      res.json({ sync: await githubIntake.sync(), intake: githubIntake.status() });
+    } catch (error) {
+      next(error);
+    }
   });
 
   app.get("/api/meta", (req, res) => {

@@ -1,3 +1,5 @@
+import { agedExternalSource } from "../../shared/externalSource.js";
+
 const CLAIMABLE_WORK_ITEM_TYPES = new Set(["task", "subtask", "bug", "spike", "chore"]);
 const GROOMING_STALE_DAYS = 7;
 
@@ -7,6 +9,7 @@ const CATEGORY_RANK = {
   review_changes: 75,
   blocker: 70,
   off_script: 65,
+  external: 65,
   stalled: 60,
   collision: 55,
   role_gap: 50,
@@ -165,6 +168,22 @@ export function buildOperatorAttention({
     }
   }
 
+  for (const task of tasks) {
+    const aged = agedExternalSource(task, now);
+    if (!aged) continue;
+    const kindLabel = aged.source.kind === "pull_request" ? "pull request" : "issue";
+    actions.push(
+      taskAction({
+        task,
+        kind: "external",
+        title: task.title,
+        detail: `GitHub ${kindLabel} #${aged.source.number} has been open for ${aged.ageDays} days (attention threshold: ${aged.thresholdDays} days).`,
+        remedy: "open_task",
+        tasks
+      })
+    );
+  }
+
   const activeAgentIds = new Set(activeAgents.map((agent) => agent.id));
   for (const task of tasks) {
     if (task.status !== "in_progress" || stalledTaskIds.has(task.id)) continue;
@@ -275,7 +294,7 @@ function taskAction({ task, kind, title, detail, remedy, tasks = [], reason = ""
 
 export function describeOperatorAction(action, { activeRoles = new Map(), promptTemplate = "", origin = "http://localhost:8088" } = {}) {
   const role = action.role || action.task?.role || (action.kind === "grooming" ? "pm" : "");
-  const spawnPrompt = role && (activeRoles.get(role) || 0) === 0
+  const spawnPrompt = action.kind !== "external" && role && (activeRoles.get(role) || 0) === 0
     ? buildBootstrapPrompt({ template: promptTemplate, agentType: role, origin })
     : "";
   const copy = attentionCopy(action);
@@ -337,6 +356,12 @@ function attentionCopy(action) {
         what: action.detail || `“${action.title}” has overlapping file-scope hints.`,
         why: "Parallel edits may conflict or invalidate verification after either branch merges.",
         doThis: "Click Inspect overlap, coordinate sequencing, and rebase before delivery."
+      };
+    case "external":
+      return {
+        what: action.detail || `External GitHub work “${action.title}” is older than its attention threshold.`,
+        why: "External pull requests and issues can otherwise wait outside the board without an owner noticing.",
+        doThis: "Click Open item to inspect the GitHub work, its board owner, and the next safe step."
       };
     case "role_gap":
       return {

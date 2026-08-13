@@ -113,3 +113,8 @@ Projects and tasks:
 - `POST /api/tasks/:taskId/comments`
 - `POST /api/tasks/:taskId/attachments`
 - `GET /api/tasks/:taskId/attachments/:attachmentId/download`
+
+Optional external intake:
+
+- `GET /api/github-intake` (configuration and last-sync status; never returns the token)
+- `POST /api/github-intake/sync` (run the configured GitHub REST pass now)

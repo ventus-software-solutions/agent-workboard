@@ -2841,6 +2841,11 @@ button {
   color: #ffc0c8;
 }
 
+.attentionKind-external .operatorAttentionIcon {
+  background: #2d4053;
+  color: #b9ddff;
+}
+
 .operatorAttentionBody {
   display: grid;
   gap: 5px;

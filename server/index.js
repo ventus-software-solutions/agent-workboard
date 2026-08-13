@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createApp } from "./app.js";
+import { GitHubIntakeService, readGitHubIntakeConfig } from "./githubIntake.js";
 import { formatListenUrl, isNetworkExposedHost, readListenConfig } from "./listenConfig.js";
 import { installProcessErrorGuards } from "./processResilience.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
@@ -13,7 +14,9 @@ const storageMode = process.env.WORKBOARD_STORAGE || "sqlite";
 const store = new WorkboardStore({ dataDir, storageMode });
 await store.init();
 
-const app = createApp({ store });
+const githubIntake = new GitHubIntakeService({ store, config: readGitHubIntakeConfig(process.env) });
+const app = createApp({ store, githubIntake });
+githubIntake.start();
 app.listen(listenConfig.port, listenConfig.host, () => {
   console.log(`Agent Workboard listening on ${formatListenUrl(listenConfig)} (bound to ${listenConfig.host})`);
   if (isNetworkExposedHost(listenConfig.host)) {

@@ -14,6 +14,7 @@ import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 import { isSafeHttpUrl } from "../../shared/taskLinks.js";
 import { normalizeTaskTouches, taskTouchesOverlap } from "../../shared/taskTouches.js";
+import { externalSourceKey, normalizeExternalSource } from "../../shared/externalSource.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -106,7 +107,8 @@ const FULL_TASK_EDIT_FIELDS = [
   "dependsOn",
   "blockedBy",
   "parentTaskId",
-  "childTaskIds"
+  "childTaskIds",
+  "externalSource"
 ];
 const BLOCKER_TYPE_IDS = new Set(BLOCKER_TYPES);
 const OPERATOR_APPROVAL_DECISION_IDS = new Set(OPERATOR_APPROVAL_DECISIONS);
@@ -767,6 +769,11 @@ export class WorkboardStore {
       const touches = normalizeTaskTouchesForMigration(task.touches);
       if (JSON.stringify(task.touches) !== JSON.stringify(touches)) {
         task.touches = touches;
+        migrated = true;
+      }
+      const externalSource = normalizeTaskExternalSource(task.externalSource, { migrating: true });
+      if (JSON.stringify(task.externalSource ?? null) !== JSON.stringify(externalSource)) {
+        task.externalSource = externalSource;
         migrated = true;
       }
       const workItemType = normalizeWorkItemType(task.workItemType, { migrating: true });
@@ -2512,6 +2519,7 @@ export class WorkboardStore {
       assignee: normalizeText(input.assignee),
       labels: normalizeTaskLabels(input.labels),
       touches: normalizeTaskTouchesInput(input.touches),
+      externalSource: normalizeTaskExternalSource(input.externalSource),
       dependsOn: relationships.dependsOn,
       blockedBy: relationships.blockedBy,
       parentTaskId: relationships.parentTaskId,
@@ -2673,6 +2681,17 @@ export class WorkboardStore {
     }
     if ("touches" in patch) {
       normalizeTaskTouchesInput(patch.touches, { defaultValue: task.touches });
+    }
+    let nextExternalSource = task.externalSource || null;
+    if ("externalSource" in patch) {
+      nextExternalSource = normalizeTaskExternalSource(patch.externalSource);
+      if (task.externalSource && externalSourceKey(task.externalSource) !== externalSourceKey(nextExternalSource)) {
+        throw httpError("Task externalSource identity cannot be changed or removed after it is linked.", 409, {
+          taskId: task.id,
+          currentExternalSource: externalSourceKey(task.externalSource),
+          requestedExternalSource: externalSourceKey(nextExternalSource)
+        });
+      }
     }
 
     if (requiresRevision) {
@@ -2862,6 +2881,10 @@ export class WorkboardStore {
         task.touches = touches;
         changes.push("touches");
       }
+    }
+    if ("externalSource" in patch && JSON.stringify(task.externalSource || null) !== JSON.stringify(nextExternalSource)) {
+      task.externalSource = nextExternalSource;
+      changes.push("externalSource");
     }
 
     if (nextRelationships) {
@@ -4392,6 +4415,15 @@ function normalizeTaskTouchesInput(value, options = {}) {
     return normalizeTaskTouches(value, options);
   } catch (error) {
     throw httpError(error.message, 400, { field: "touches" });
+  }
+}
+
+function normalizeTaskExternalSource(value, { migrating = false } = {}) {
+  try {
+    return normalizeExternalSource(value);
+  } catch (error) {
+    if (migrating) return null;
+    throw httpError(error.message || "Task externalSource is invalid.", 400, { field: "externalSource" });
   }
 }
 

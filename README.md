@@ -103,6 +103,15 @@ All settings are environment variables. All are optional.
 | `WORKBOARD_WORKTREE_ROOT` | `..` | Where the worktree commands in agent instructions point. Defaults to a sibling of the repo. |
 | `WORKBOARD_WORKTREE_PREFIX` | `wt-agent-workboard` | Directory-name prefix used by generated worktree commands and cleanup matching. |
 | `WORKBOARD_REPO_DIR` | repo root | Repository the board inspects for branch and worktree status. |
+| `WORKBOARD_GITHUB_REPOSITORY` | unset | Enables GitHub intake for one repository in `owner/repo` form. When unset, no GitHub requests or timer are started. |
+| `WORKBOARD_GITHUB_TOKEN` | `GITHUB_TOKEN` or unset | Optional REST bearer token. Use a token that can read issues and pull requests for private repositories or higher rate limits. The token is never returned by the status API. |
+| `WORKBOARD_GITHUB_PROJECT_KEY` | default project | Project that receives imported external items. |
+| `WORKBOARD_GITHUB_API_URL` | `https://api.github.com` | REST base URL, including an enterprise API prefix when needed. |
+| `WORKBOARD_GITHUB_SYNC_INTERVAL_MS` | `300000` | Poll interval in milliseconds. Set to `0` to disable the timer while keeping on-demand sync available. |
+| `WORKBOARD_GITHUB_EXTERNAL_AGE_DAYS` | `3` | Days an open imported item may age before it appears in the operator inbox. |
+| `WORKBOARD_GITHUB_MAX_PAGES` | `20` | Safety limit for 100-item GitHub REST result pages per collection. |
+
+When GitHub intake is enabled, the server imports open pull requests as ready reviewer chores and open issues as ready PM chores. Every imported task carries stable GitHub identity metadata, so repeated syncs are idempotent; dependency PRs receive the `dependencies` label, and externally closed or merged items are completed with REST evidence. Inspect configuration and the last result with `GET /api/github-intake`, or trigger the same pass with `POST /api/github-intake/sync`.
 
 ### Storage
 
