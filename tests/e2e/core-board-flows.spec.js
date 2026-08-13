@@ -830,9 +830,14 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
   await expect(page.locator(".topStats")).toContainText("Configured slots");
   await expect(page.locator(".topStats")).toContainText("1 historical listed");
-  await expect(page.getByRole("heading", { name: "Implementer Agent" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Reviewer Agent" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Test Agent" })).toBeVisible();
+  // Bootstrap onboarding cards render for each spawnable role.
+  await expect(page.getByTestId("bootstrap-card-pm")).toBeVisible();
+  await expect(page.getByTestId("bootstrap-card-implementer")).toBeVisible();
+  const bootstrapPrompt = page.locator(".bootstrapCardGrid").getByText(/api\/agent-docs\/implementer\?format=md/);
+  await expect(bootstrapPrompt).toBeVisible();
+  await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Implementer Agent" })).toBeVisible();
+  await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Reviewer Agent" })).toBeVisible();
+  await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Test Agent" })).toBeVisible();
   await expect(page.getByText("Historical assignees")).toBeVisible();
   await expect(page.getByText("Task-only identities, not configured capacity")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Implementer Frontend" })).toBeVisible();

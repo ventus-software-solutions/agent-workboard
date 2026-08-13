@@ -2720,3 +2720,163 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* Agent onboarding (spawn prompts) */
+.agentOnboarding {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.howItWorksStrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #3f4b55;
+  border-radius: 8px;
+  background: #17202a;
+}
+
+.howItWorksBody {
+  display: grid;
+  gap: 6px;
+}
+
+.howItWorksBody strong {
+  color: #dce4ec;
+}
+
+.howItWorksSteps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #9aa6b4;
+  font-size: 13px;
+}
+
+.howItWorksStep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.howItWorksArrow {
+  color: #57636f;
+}
+
+.idleSpawnBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #c6a15b;
+  border-radius: 8px;
+  background: #2b2417;
+}
+
+.idleSpawnText {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.idleSpawnText strong {
+  color: #f0d9a8;
+}
+
+.idleSpawnPrompt,
+.bootstrapPrompt {
+  display: block;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid #303842;
+  border-radius: 6px;
+  background: #10141a;
+  color: #b9d6d0;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bootstrapSection {
+  display: grid;
+  gap: 12px;
+}
+
+.bootstrapSectionHeader h3 {
+  margin: 3px 0 2px;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.bootstrapSectionHeader p {
+  margin: 0;
+  color: #9aa6b4;
+  font-size: 13px;
+}
+
+.bootstrapCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: 12px;
+}
+
+.bootstrapRoleCard {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #323a43;
+  border-radius: 8px;
+  background: #171b20;
+}
+
+.bootstrapRoleHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bootstrapRoleHeader h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.bootstrapRoleHeader p {
+  margin: 2px 0 0;
+  color: #9aa6b4;
+  font-size: 12px;
+}
+
+.bootstrapCopyButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #3e8c80;
+  border-radius: 8px;
+  color: #eef2f7;
+  background: #2e6f66;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bootstrapCopyButton:hover {
+  border-color: #4aa396;
+  background: #358278;
+}
+
+.bootstrapCopyButton:active {
+  transform: translateY(1px);
+}
