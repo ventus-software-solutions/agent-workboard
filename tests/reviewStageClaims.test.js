@@ -57,6 +57,40 @@ describe("review and testing stage claims", () => {
     expect(filtered.task).toBeNull();
   });
 
+  it("never routes or permits a stage claim to the implementation assignee", async () => {
+    const project = await store.createProject({ name: "Independent Review Project" });
+    const selfReview = await store.createTask({
+      projectId: project.id,
+      title: "Do not self-review this implementation",
+      status: "review",
+      assignee: "reviewer-agent"
+    });
+    const selfTesting = await store.createTask({
+      projectId: project.id,
+      title: "Do not self-test this implementation",
+      status: "testing",
+      assignee: "test-agent"
+    });
+
+    expect(store.getNextTaskForAgent("reviewer-agent", { projectId: project.id }).task).toBeNull();
+    expect(store.getNextTaskForAgent("test-agent", { projectId: project.id }).task).toBeNull();
+
+    await expect(
+      store.claimTaskStage(selfReview.id, {
+        agentId: "reviewer-agent",
+        expectedStatus: "review",
+        role: "reviewer"
+      })
+    ).rejects.toMatchObject({ status: 409, details: { reason: "stage_self_claim" } });
+    await expect(
+      store.claimTaskStage(selfTesting.id, {
+        agentId: "test-agent",
+        expectedStatus: "testing",
+        role: "tester"
+      })
+    ).rejects.toMatchObject({ status: 409, details: { reason: "stage_self_claim" } });
+  });
+
   it("records a typed changes-requested verdict and clears it only on new commit evidence", async () => {
     const project = await store.createProject({ name: "Review Verdict Project" });
     const task = await store.createTask({
@@ -85,6 +119,14 @@ describe("review and testing stage claims", () => {
         commitSha: "abc1234"
       }
     });
+    expect(resolved.activity.some((event) => event.message === "Updated status:review->ready.")).toBe(true);
+
+    await store.updateTask(task.id, { status: "review" }, "implementer-agent");
+    expect(store.getTask(task.id).reviewVerdict).toMatchObject({
+      decision: "request_changes",
+      commitSha: "abc1234"
+    });
+    await store.updateTask(task.id, { status: "ready" }, "implementer-agent");
 
     await store.addComment(task.id, { author: "implementer-agent", body: "Plan only; no new commit." });
     expect(store.getTask(task.id).reviewVerdict).not.toBeNull();
@@ -95,6 +137,38 @@ describe("review and testing stage claims", () => {
     });
     expect(store.getTask(task.id).reviewVerdict).toBeNull();
     expect(store.getTask(task.id).activity.some((event) => event.type === "review.evidence_added")).toBe(true);
+  });
+
+  it("requires stage resolution before every exit from a claimed review or testing stage", async () => {
+    const project = await store.createProject({ name: "Stage Exit Guard Project" });
+    const reviewTask = await store.createTask({
+      projectId: project.id,
+      title: "Cannot bypass review verdict through blocked",
+      status: "review",
+      assignee: "implementer-agent"
+    });
+    await store.claimTaskStage(reviewTask.id, { agentId: "reviewer-agent", expectedStatus: "review" });
+
+    await expect(
+      store.updateTask(
+        reviewTask.id,
+        { status: "blocked", blocker: { type: "external_issue", summary: "Reviewer cannot continue" } },
+        "reviewer-agent"
+      )
+    ).rejects.toMatchObject({ status: 409, details: { reason: "review_verdict_required", requestedStatus: "blocked" } });
+    expect(store.getTask(reviewTask.id)).toMatchObject({ status: "review", reviewedBy: "reviewer-agent", reviewVerdict: null });
+
+    const testingTask = await store.createTask({
+      projectId: project.id,
+      title: "Cannot bypass testing resolution",
+      status: "testing",
+      assignee: "implementer-agent"
+    });
+    await store.claimTaskStage(testingTask.id, { agentId: "test-agent", expectedStatus: "testing" });
+    await expect(
+      store.updateTask(testingTask.id, { status: "done", completion: { completionType: "merged", commitSha: "abc123" } }, "test-agent")
+    ).rejects.toMatchObject({ status: 409, details: { reason: "testing_resolution_required", requestedStatus: "done" } });
+    expect(store.getTask(testingTask.id)).toMatchObject({ status: "testing", testedBy: "test-agent" });
   });
 
   it("claims testing independently and prevents reviewers from impersonating the implementer transition", async () => {

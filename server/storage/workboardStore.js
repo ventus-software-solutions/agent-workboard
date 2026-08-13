@@ -2386,20 +2386,30 @@ export class WorkboardStore {
       throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
     }
 
+    if (task.status !== requestedStatus && task.status === "review" && task.reviewedBy) {
+      throw httpError("Resolve the active review claim with a structured verdict before changing task status.", 409, {
+        reason: "review_verdict_required",
+        taskId: task.id,
+        requestedStatus,
+        reviewedBy: task.reviewedBy
+      });
+    }
+
+    if (task.status !== requestedStatus && task.status === "testing" && task.testedBy) {
+      throw httpError("Resolve the active testing claim before changing task status.", 409, {
+        reason: "testing_resolution_required",
+        taskId: task.id,
+        requestedStatus,
+        testedBy: task.testedBy
+      });
+    }
+
     if (task.status === "review" && requestedStatus === "in_progress" && task.assignee !== actorId) {
       throw httpError("Only the implementation assignee may move a reviewed task back into progress.", 409, {
         reason: "review_return_requires_assignee",
         taskId: task.id,
         assignee: task.assignee,
         actor: actorId
-      });
-    }
-
-    if (task.status === "review" && requestedStatus === "ready" && task.reviewedBy) {
-      throw httpError("Resolve the active review claim with a structured verdict before returning the task to ready.", 409, {
-        reason: "review_verdict_required",
-        taskId: task.id,
-        reviewedBy: task.reviewedBy
       });
     }
 
@@ -2439,6 +2449,9 @@ export class WorkboardStore {
       if (task.status !== next) {
         changes.push(`status:${task.status}->${next}`);
         task.status = next;
+        // Keep the previous review verdict across status changes so a task that
+        // re-enters review without new commit evidence remains visibly distinct.
+        // addComment clears a request_changes verdict only when commit evidence lands.
         if (next !== "review" && task.reviewedBy) {
           task.reviewedBy = "";
           changes.push("reviewedBy:released");
@@ -2723,6 +2736,15 @@ export class WorkboardStore {
           actualStatus: task.status
         });
       }
+      if (task.assignee === agentId) {
+        throw httpError(`The implementation assignee cannot claim the ${expectedStatus} stage of their own task.`, 409, {
+          reason: "stage_self_claim",
+          taskId,
+          expectedStatus,
+          assignee: task.assignee,
+          agentId
+        });
+      }
       const profile = this.resolveWorkAgentProfile(agentId, input);
       if (profile.role !== requiredRole) {
         throw httpError(`${expectedStatus} work requires a ${requiredRole} agent slot.`, 409, {
@@ -2784,6 +2806,7 @@ export class WorkboardStore {
       }
 
       const resolvedAt = now();
+      const previousStatus = task.status;
       let message = `${agentId} released ${expectedStatus}.`;
       if (expectedStatus === "review") {
         const decision = normalizeText(input.decision);
@@ -2807,6 +2830,12 @@ export class WorkboardStore {
       task.revision = nextTaskRevision(task);
       task.updatedAt = resolvedAt;
       task.activity.unshift({ id: id("event"), actor, type: `${expectedStatus}.resolved`, message, createdAt: resolvedAt });
+      if (task.status !== previousStatus) {
+        task.activity.unshift({
+          id: id("event"), actor, type: "updated",
+          message: `Updated status:${previousStatus}->${task.status}.`, createdAt: resolvedAt
+        });
+      }
       this.pushStageTalk(task, agentId, expectedStatus === "review" ? "decision" : "update", message, resolvedAt);
       await this.writeData(this.data);
       return task;
@@ -4157,7 +4186,7 @@ function reviewerCandidateBuckets(tasks, agentId, profile) {
   return [
     {
       reason: "review_queue",
-      tasks: sortNextTasks(tasks.filter((task) => task.status === "review" && !task.reviewedBy))
+      tasks: sortNextTasks(tasks.filter((task) => task.status === "review" && !task.reviewedBy && task.assignee !== agentId))
     },
     {
       reason: "assigned_to_agent",
@@ -4187,7 +4216,9 @@ function workerCandidateBuckets(tasks, agentId, profile) {
     return [
       {
         reason: "testing_queue",
-        tasks: sortNextTasks(eligibleTasks.filter((task) => task.status === "testing" && !task.testedBy))
+        tasks: sortNextTasks(
+          eligibleTasks.filter((task) => task.status === "testing" && !task.testedBy && task.assignee !== agentId)
+        )
       },
       {
         reason: "assigned_to_agent",

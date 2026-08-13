@@ -507,7 +507,8 @@ function reviewerMergeRules() {
     "Run the relevant verification yourself when practical, at minimum `npm test` and `npm run build` for code changes before merge.",
     "Resolve the claim with a typed approve/request_changes verdict, findings count, reviewer, and reviewed commit. If approved, merge and mark done with completionType=merged, commitSha, branch, mergedTo, tests, and notes.",
     "For no-code planning, audit-only, or superseded closures, mark done with completionType=no-code, audit-only, or superseded and include clear notes or supersededByTaskId.",
-    "If changes are needed, comment specific findings and move the original task back to `ready` or `blocked` with the reason.",
+    "If changes are needed, comment specific findings and resolve the active review claim with `decision=request_changes`; stage resolution records the verdict and returns the task to `ready`.",
+    "Do not move a claimed review task to `blocked` to request changes. If the review itself cannot continue, hand off the claim or ask an operator to recover the stale claim so the verdict record is not bypassed.",
     "If you cannot merge because of permissions, conflicts, or unclear ownership, explicitly assign merge to another reviewer/operator and leave the task in `review` with the blocker."
   ];
 }
