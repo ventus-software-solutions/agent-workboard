@@ -99,6 +99,14 @@ describe("Agent Workboard API", () => {
         approvalQueueRule: expect.stringContaining("operator approval queue"),
         migrationGuidance: expect.stringContaining("already waiting only for ordinary go-ahead")
       });
+      expect(agentDoc.body.agent.persistence).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining("upstreamSignal.total"),
+          expect.stringContaining("state=waiting"),
+          expect.stringContaining("recheckAfterSeconds"),
+          expect.stringContaining("operator stops you")
+        ])
+      );
 
       const agentMarkdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
       expect(agentMarkdown.text).toContain("## Autonomous Go-Ahead");
@@ -106,6 +114,11 @@ describe("Agent Workboard API", () => {
       expect(agentMarkdown.text).toContain("destructive changes");
       expect(agentMarkdown.text).toContain("operator approval queue");
       expect(agentMarkdown.text).toContain("already waiting only for ordinary go-ahead");
+      expect(agentMarkdown.text).toContain("## Standing Agent Persistence");
+      expect(agentMarkdown.text).toContain("do not end the agent");
+      expect(agentMarkdown.text).toContain("state=waiting");
+      expect(agentMarkdown.text).toContain("recheckAfterSeconds");
+      expect(agentMarkdown.text).toContain("/api/events");
     }
 
     const mcpDoc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
@@ -153,6 +166,19 @@ describe("Agent Workboard API", () => {
       } else {
         process.env.WORKBOARD_WORKTREE_PREFIX = previousPrefix;
       }
+    }
+  });
+
+  it("renders role-specific feeder stages in standing-agent docs", async () => {
+    const expectations = {
+      implementer: "ready + backlog",
+      reviewer: "in_progress + ready",
+      tester: "review + in_progress"
+    };
+
+    for (const [agentId, feederStages] of Object.entries(expectations)) {
+      const markdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
+      expect(markdown.text).toContain(`feeder stages: ${feederStages}`);
     }
   });
 
@@ -1874,6 +1900,15 @@ describe("Agent Workboard API", () => {
         expectedAssignee: "mcp-agent"
       }
     });
+    expect(next.body).toMatchObject({
+      upstreamSignal: {
+        role: "implementer",
+        counts: { ready: 1, backlog: 0 },
+        total: 1,
+        recheckAfterSeconds: 120
+      },
+      recheckAfterSeconds: 120
+    });
 
     const presence = await request(app)
       .post("/api/agents/mcp-agent/presence")
@@ -1902,15 +1937,36 @@ describe("Agent Workboard API", () => {
       })
       .expect(200);
 
-    expect(idle.body.report).toMatchObject({ reason: "no_ready_work" });
-    expect(idle.body.presence).toMatchObject({ state: "idle", status: "idle" });
+    expect(idle.body).toMatchObject({
+      report: {
+        reason: "no_ready_work",
+        upstreamSignal: {
+          role: "implementer",
+          counts: { ready: 1, backlog: 0 },
+          total: 1,
+          recheckAfterSeconds: 120
+        },
+        recheckAfterSeconds: 120
+      },
+      upstreamSignal: { total: 1 },
+      recheckAfterSeconds: 120,
+      presence: {
+        state: "waiting",
+        status: "waiting",
+        upstreamSignal: { total: 1 }
+      }
+    });
 
-    const allPresence = await request(app).get("/api/agents/presence").expect(200);
+    const allPresence = await request(app)
+      .get("/api/agents/presence")
+      .query({ now: "2026-06-12T15:02:00.000Z" })
+      .expect(200);
     expect(allPresence.body.agents).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           agentId: "mcp-agent",
-          state: "idle"
+          state: "waiting",
+          status: "waiting"
         })
       ])
     );

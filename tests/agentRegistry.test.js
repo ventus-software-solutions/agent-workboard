@@ -318,6 +318,58 @@ describe("agent registry derivation", () => {
     });
   });
 
+  it("keeps fresh waiting agents visible without treating them as idle or stale", () => {
+    const registry = buildAgentRegistry({
+      roles,
+      agentSlots: {
+        types: agentSlots.types,
+        slots: [
+          {
+            id: "test-agent",
+            typeId: "tester",
+            role: "tester",
+            specialties: ["tests"],
+            workMode: "single-task",
+            active: true,
+            stale: false,
+            available: false,
+            presence: {
+              state: "waiting",
+              status: "waiting",
+              stale: false,
+              upstreamSignal: {
+                role: "tester",
+                statuses: ["review", "in_progress"],
+                counts: { review: 1, in_progress: 1 },
+                total: 2,
+                active: true,
+                recheckAfterSeconds: 90
+              }
+            }
+          }
+        ]
+      },
+      tasks: []
+    });
+
+    expect(registry).toMatchObject({
+      waitingAgents: 1,
+      idleAgents: 0
+    });
+    expect(registry.groups.find((group) => group.role === "tester")).toMatchObject({
+      waiting: 1,
+      idle: 0
+    });
+    expect(registry.agents.find((agent) => agent.id === "test-agent")).toMatchObject({
+      status: "waiting",
+      statusLabel: "Waiting",
+      waiting: true,
+      stale: false,
+      active: true,
+      upstreamSignal: { total: 2 }
+    });
+  });
+
   it("summarizes agent type capacity and slot identity state", () => {
     const registry = buildAgentRegistry({
       roles,

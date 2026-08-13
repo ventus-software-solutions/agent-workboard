@@ -38,6 +38,14 @@ const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
 const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story"]);
 const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
+const UPSTREAM_STATUSES_BY_ROLE = {
+  implementer: ["ready", "backlog"],
+  reviewer: ["in_progress", "ready"],
+  tester: ["review", "in_progress"],
+  pm: ["backlog", "ready"],
+  researcher: ["ready", "backlog"],
+  operator: ["blocked"]
+};
 
 export const ROLES = [
   {
@@ -1067,10 +1075,27 @@ export class WorkboardStore {
       }
 
       const reportedAt = currentTime.toISOString();
+      const signalInput = {
+        ...normalizeObject(input.filters),
+        ...input,
+        projectId: normalizeText(input.projectId) || normalizeText(input.filters?.projectId)
+      };
+      const profile = this.resolveWorkAgentProfile(agentId, signalInput);
+      const allProjects = isAllProjectsScope(signalInput) && !normalizeText(signalInput.projectId);
+      const projectContext = this.resolveAgentProjectContext(agentId, signalInput, {
+        allowDefault: true,
+        useProjectId: !allProjects
+      });
+      const upstreamSignal = buildUpstreamSignal(
+        profile.role,
+        tasksForUpstreamSignal(this.data.tasks, projectContext.activeProjectId, allProjects)
+      );
       const noEligibleWork = {
         reason,
         reportedAt,
-        filters
+        filters,
+        upstreamSignal,
+        recheckAfterSeconds: upstreamSignal.recheckAfterSeconds
       };
       const message = normalizeText(input.message);
       if (message) noEligibleWork.message = message;
@@ -1079,7 +1104,8 @@ export class WorkboardStore {
         agentId,
         {
           ...input,
-          state: "idle",
+          state: upstreamSignal.total > 0 ? "waiting" : "idle",
+          upstreamSignal,
           noEligibleWork
         },
         currentTime
@@ -1096,7 +1122,9 @@ export class WorkboardStore {
       await this.writeData(this.data);
       return {
         presence,
-        report: { ...noEligibleWork }
+        report: { ...noEligibleWork },
+        upstreamSignal,
+        recheckAfterSeconds: upstreamSignal.recheckAfterSeconds
       };
     });
   }
@@ -1126,9 +1154,18 @@ export class WorkboardStore {
       activeProject: projectContext.activeProject,
       ...(profile.slot ? { slotId: profile.slot.id, typeId: profile.slot.typeId } : {})
     };
+    const upstreamSignal = buildUpstreamSignal(
+      profile.role,
+      tasksForUpstreamSignal(this.data.tasks, projectContext.activeProjectId, allProjects)
+    );
+    const standingSignal = {
+      upstreamSignal,
+      recheckAfterSeconds: upstreamSignal.recheckAfterSeconds
+    };
 
     if (slotRequirement) {
       return {
+        ...standingSignal,
         agent: {
           ...agent,
           role: slotRequirement.role,
@@ -1147,6 +1184,7 @@ export class WorkboardStore {
 
     if (profile.paused) {
       return {
+        ...standingSignal,
         agent,
         task: null,
         selection: {
@@ -1161,6 +1199,7 @@ export class WorkboardStore {
       const activeTask = findActiveTaskForAgent(this.data.tasks, agentId);
       if (activeTask) {
         return {
+          ...standingSignal,
           agent,
           task: null,
           selection: buildActiveTaskSelection(activeTask, profile.workMode),
@@ -1185,6 +1224,7 @@ export class WorkboardStore {
       if (!task) continue;
 
       return {
+        ...standingSignal,
         agent,
         task,
         selection: withProjectScope(buildSelection(bucket.reason, task, agentId), projectContext, allProjects),
@@ -1194,6 +1234,7 @@ export class WorkboardStore {
     }
 
     return {
+      ...standingSignal,
       agent,
       task: null,
       selection: {
@@ -2563,6 +2604,12 @@ export class WorkboardStore {
     } else if (state === "active") {
       delete nextPresence.noEligibleWork;
     }
+    const upstreamSignal = normalizeUpstreamSignal(input.upstreamSignal);
+    if (upstreamSignal) {
+      nextPresence.upstreamSignal = upstreamSignal;
+    } else if (state !== "waiting") {
+      delete nextPresence.upstreamSignal;
+    }
 
     this.data.agentPresence[agentId] = nextPresence;
     return this.describeAgentPresence(nextPresence, currentTime);
@@ -2574,7 +2621,15 @@ export class WorkboardStore {
     const stale = Number.isFinite(heartbeatTime) ? currentTime.getTime() - heartbeatTime > SLOT_LEASE_MS : true;
     const paused = presence.state === "paused" || Boolean(slot?.paused);
     const offline = stale && presence.state !== "idle" && !paused;
-    const status = paused ? "paused" : offline ? "offline" : presence.state === "idle" ? "idle" : "online";
+    const status = paused
+      ? "paused"
+      : offline
+        ? "offline"
+        : presence.state === "idle"
+          ? "idle"
+          : presence.state === "waiting"
+            ? "waiting"
+            : "online";
     const activeProject = this.findActiveProject(normalizeText(presence.activeProjectId) || normalizeText(slot?.activeProjectId));
     const projectContext = activeProject ? this.decorateProjectContext(activeProject) : { activeProjectId: "", activeProject: null };
 
@@ -2777,7 +2832,16 @@ export class WorkboardStore {
       ...(taskStats || {})
     };
     const leaseFresh = this.isLeaseFresh(slot.lease, currentTime);
-    const active = !slot.paused && (leaseFresh || stats.inProgressTaskCount > 0);
+    const presence = this.data.agentPresence?.[slot.id]
+      ? this.describeAgentPresence(this.data.agentPresence[slot.id], currentTime)
+      : null;
+    const presenceFresh = Boolean(
+      presence &&
+        !presence.stale &&
+        !presence.paused &&
+        ["active", "waiting"].includes(presence.state)
+    );
+    const active = !slot.paused && (leaseFresh || presenceFresh || stats.inProgressTaskCount > 0);
     const withinCapacity = !type || slot.slotNumber <= type.capacity;
     const activeProject = this.findActiveProject(slot.activeProjectId);
     const projectContext = activeProject ? this.decorateProjectContext(activeProject) : { activeProjectId: "", activeProject: null };
@@ -2786,10 +2850,12 @@ export class WorkboardStore {
       ...projectContext,
       specialties: [...(slot.specialties || [])],
       lease: slot.lease ? { ...slot.lease } : null,
+      presence,
       leaseFresh,
+      presenceFresh,
       active,
       withinCapacity,
-      stale: Boolean(slot.lease && !leaseFresh && stats.inProgressTaskCount === 0),
+      stale: Boolean(slot.lease && !leaseFresh && !presenceFresh && stats.inProgressTaskCount === 0),
       assignedTaskCount: stats.assignedTaskCount,
       readyTaskCount: stats.readyTaskCount,
       backlogTaskCount: stats.backlogTaskCount,
@@ -3564,7 +3630,47 @@ function operatorApprovalDecisionComment(record) {
 
 function normalizePresenceState(value) {
   const normalized = normalizeText(value).toLowerCase();
-  return ["active", "idle", "paused"].includes(normalized) ? normalized : "";
+  return ["active", "waiting", "idle", "paused"].includes(normalized) ? normalized : "";
+}
+
+function tasksForUpstreamSignal(tasks, activeProjectId, allProjects) {
+  if (allProjects || !activeProjectId) return tasks;
+  return tasks.filter((task) => task.projectId === activeProjectId);
+}
+
+function buildUpstreamSignal(roleInput, tasks = []) {
+  const role = normalizeText(roleInput) || "implementer";
+  const statuses = UPSTREAM_STATUSES_BY_ROLE[role] || UPSTREAM_STATUSES_BY_ROLE.implementer;
+  const counts = Object.fromEntries(statuses.map((status) => [status, tasks.filter((task) => task.status === status).length]));
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  const recheckAfterSeconds = total >= 5 ? 60 : total >= 2 ? 90 : total === 1 ? 120 : 180;
+
+  return {
+    role,
+    statuses: [...statuses],
+    counts,
+    total,
+    active: total > 0,
+    recheckAfterSeconds
+  };
+}
+
+function normalizeUpstreamSignal(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const role = normalizeText(value.role);
+  const statuses = normalizeLabels(value.statuses);
+  const counts = normalizeObject(value.counts);
+  const total = Number.parseInt(value.total, 10);
+  const recheckAfterSeconds = Number.parseInt(value.recheckAfterSeconds, 10);
+  if (!role || statuses.length === 0 || !Number.isFinite(total) || !Number.isFinite(recheckAfterSeconds)) return null;
+  return {
+    role,
+    statuses,
+    counts: Object.fromEntries(statuses.map((status) => [status, Math.max(0, Number.parseInt(counts[status], 10) || 0)])),
+    total: Math.max(0, total),
+    active: total > 0,
+    recheckAfterSeconds: Math.max(1, recheckAfterSeconds)
+  };
 }
 
 function isAllProjectsScope(input = {}) {

@@ -1447,6 +1447,7 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
               {group.historical > 0 && <span>{group.historical} historical</span>}
               <span>{group.busy} busy</span>
               <span>{group.blocked} blocked</span>
+              <span>{group.waiting} waiting</span>
               <span>{group.idle} idle</span>
             </div>
           </div>

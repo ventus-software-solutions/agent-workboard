@@ -112,4 +112,6 @@ Before stopping a worker:
 4. Report no eligible work when the slot has nothing appropriate to claim.
 5. Leave dirty or unmerged worktrees in place with a task comment; only remove clean merged worktrees after reviewer/operator confirmation.
 
+Do not stop a standing worker merely because nothing is eligible at that instant. If the no-eligible-work response has a positive `upstreamSignal.total`, leave it heartbeating as `waiting` and re-poll after `recheckAfterSeconds`; stop only once the signal is zero or the operator explicitly stops it.
+
 The shared `main` checkout should stay reserved for the running board and observation. Task branches and task worktrees are where implementation belongs.
