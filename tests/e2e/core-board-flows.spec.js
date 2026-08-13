@@ -1039,7 +1039,7 @@ test("refreshes an open board after external task changes without discarding dra
 
   await page.goto(baseURL);
   await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
-  await expect(page.locator(".refreshStatus")).toContainText(/Live|Updated/, { timeout: 10_000 });
+  await expect(page.locator(".refreshStatus")).toContainText(/Live|Updated|Recent restart/, { timeout: 10_000 });
 
   const createResponse = await page.request.post(`${baseURL}/api/tasks`, {
     data: {

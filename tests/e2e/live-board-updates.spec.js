@@ -187,11 +187,12 @@ test("shows a reconnecting polling status and recovers after board-state failure
     const refreshStatus = page.locator(".refreshStatus");
     await expect(refreshStatus).toContainText("Reconnecting…", { timeout: pollTimeout });
     await expect(refreshStatus).toContainText("Retry at");
-    await expect(refreshStatus).toHaveAttribute("title", "Synthetic board-state outage");
+    await expect(refreshStatus).toHaveAttribute("title", /Started .*Retry at .*Synthetic board-state outage/s);
 
     failBoardState = false;
     await expectLiveRefresh(page);
-    await expect(refreshStatus).toHaveAttribute("title", "Board refresh status");
+    await expect(refreshStatus).toHaveAttribute("title", /Started .*Checked /s);
+    await expect(refreshStatus).not.toHaveAttribute("title", /Synthetic board-state outage/);
   } finally {
     await context.close();
   }
@@ -220,7 +221,7 @@ async function expectDemoBoard(page) {
 }
 
 async function expectLiveRefresh(page) {
-  await expect(page.locator(".refreshStatus")).toContainText(/Live|Updated/, { timeout: 10_000 });
+  await expect(page.locator(".refreshStatus")).toContainText(/Live|Updated|Recent restart/, { timeout: 10_000 });
 }
 
 function statusTask(page, statusLabel, title) {
