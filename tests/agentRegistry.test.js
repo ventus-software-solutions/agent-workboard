@@ -68,7 +68,12 @@ const agentSlots = {
       stale: false,
       available: false,
       updatedAt: "2026-06-12T14:00:00.000Z",
-      lease: { heartbeatAt: "2026-06-12T14:05:00.000Z" }
+      lease: {
+        runtimeId: "registry-runtime",
+        acquiredAt: "2026-06-12T14:00:00.000Z",
+        heartbeatAt: "2026-06-12T14:05:00.000Z",
+        expiresAt: "2026-06-12T14:20:00.000Z"
+      }
     },
     {
       id: "reviewer-agent",
@@ -354,6 +359,11 @@ describe("agent registry derivation", () => {
       openTaskCount: 2,
       blockedTaskCount: 0,
       specialties: ["backend", "api"],
+      lease: {
+        runtimeId: "registry-runtime",
+        acquiredAt: "2026-06-12T14:00:00.000Z",
+        heartbeatAt: "2026-06-12T14:05:00.000Z"
+      },
       lastActivityAt: "2026-06-12T15:10:00.000Z"
     });
 

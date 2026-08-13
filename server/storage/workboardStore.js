@@ -1233,6 +1233,27 @@ export class WorkboardStore {
         throw httpError("Agent slot not found.", 404, { agentId });
       }
 
+      const expectedRuntimeId = normalizeText(input.expectedRuntimeId);
+      const expectedAcquiredAt = normalizeText(input.expectedAcquiredAt);
+      const expectedHeartbeatAt = normalizeText(input.expectedHeartbeatAt);
+      const runtimePreconditionProvided = Object.prototype.hasOwnProperty.call(input, "expectedRuntimeId");
+      const acquiredPreconditionProvided = Object.prototype.hasOwnProperty.call(input, "expectedAcquiredAt");
+      const heartbeatPreconditionProvided = Object.prototype.hasOwnProperty.call(input, "expectedHeartbeatAt");
+      if (
+        (runtimePreconditionProvided && normalizeText(slot.lease?.runtimeId) !== expectedRuntimeId) ||
+        (acquiredPreconditionProvided && normalizeText(slot.lease?.acquiredAt) !== expectedAcquiredAt) ||
+        (heartbeatPreconditionProvided && normalizeText(slot.lease?.heartbeatAt) !== expectedHeartbeatAt)
+      ) {
+        return {
+          released: false,
+          applied: false,
+          reason: "lease_changed",
+          notice: "This agent lease already changed, so nothing was released. Refresh before trying again.",
+          agentId,
+          returnedTasks: []
+        };
+      }
+
       const releasedLease = slot.lease ? { ...slot.lease } : null;
       const wasActive = Boolean(releasedLease && this.isLeaseFresh(releasedLease, currentTime));
       const returnedTasks = [];
@@ -1273,6 +1294,7 @@ export class WorkboardStore {
 
       return {
         released: true,
+        applied: true,
         agentId,
         wasActive,
         releasedLease,
@@ -1301,6 +1323,86 @@ export class WorkboardStore {
       leaseMs: SLOT_LEASE_MS,
       tasks
     };
+  }
+
+  async recoverStaleInProgressTask(taskIdInput, input = {}) {
+    const taskId = normalizeText(taskIdInput || input.taskId);
+    const action = normalizeText(input.action);
+    if (!taskId) throw httpError("Task id is required.", 400);
+    if (!new Set(["comment", "requeue", "block", "acknowledge"]).has(action)) {
+      throw httpError("Stale recovery action is invalid.", 400, { action });
+    }
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      this.ensureAgentPresenceSchema();
+      const task = this.data.tasks.find((candidate) => candidate.id === taskId);
+      if (!task) throw httpError("Task not found.", 404, { taskId });
+
+      const currentClaim = taskClaimSnapshot(task);
+      const expectedRevision = Number(input.expectedRevision);
+      const expectedAssignee = normalizeText(input.expectedAssignee);
+      const expectedClaimedAt = normalizeText(input.expectedClaimedAt);
+      const claimChanged =
+        task.status !== "in_progress" ||
+        !Number.isInteger(expectedRevision) ||
+        task.revision !== expectedRevision ||
+        currentClaim.assignee !== expectedAssignee ||
+        currentClaim.claimedAt !== expectedClaimedAt;
+      if (claimChanged) {
+        return {
+          applied: false,
+          reason: "claim_changed",
+          notice: "This already resolved itself or was reclaimed — nothing was changed.",
+          task: this.describeTaskSummary(task),
+          currentClaim
+        };
+      }
+
+      const actor = normalizeText(input.actor) || "operator";
+      const note = normalizeText(input.note);
+      if (action === "comment" && !note) throw httpError("A recovery comment is required.", 400);
+      const recoveredAt = parseTimestamp(input.now).toISOString();
+      if (note) {
+        task.comments.unshift({ id: id("comment"), author: actor, body: note, createdAt: recoveredAt });
+      }
+
+      if (action === "requeue") {
+        task.status = "ready";
+        task.assignee = "";
+      } else if (action === "block") {
+        task.status = "blocked";
+      } else if (action === "acknowledge") {
+        this.writeAgentPresence(
+          currentClaim.assignee,
+          {
+            state: "active",
+            currentTaskId: task.id,
+            message: note || "Ownership acknowledged from operator UI."
+          },
+          new Date(recoveredAt)
+        );
+      }
+
+      task.updatedAt = recoveredAt;
+      task.revision = nextTaskRevision(task);
+      task.activity.unshift({
+        id: id("event"),
+        actor,
+        type: `stale_recovery.${action}`,
+        message: note || `Applied stale-work recovery action: ${action}.`,
+        createdAt: recoveredAt
+      });
+      await this.writeData(this.data);
+      return {
+        applied: true,
+        reason: "",
+        notice: action === "comment" ? "Recovery note added." : `Recovery action ${action} applied.`,
+        task: this.describeTaskSummary(task),
+        previousClaim: currentClaim
+      };
+    });
   }
 
   async updateAgentPresence(agentIdInput, input = {}) {
@@ -3025,6 +3127,7 @@ export class WorkboardStore {
 
     return {
       task: this.describeTaskSummary(task),
+      claim: taskClaimSnapshot(task),
       projectId: task.projectId,
       assignee,
       reason,
@@ -3058,7 +3161,8 @@ export class WorkboardStore {
       assignee: task.assignee,
       labels: [...task.labels],
       updatedAt: task.updatedAt,
-      createdAt: task.createdAt
+      createdAt: task.createdAt,
+      revision: task.revision
     };
   }
 
@@ -4157,6 +4261,16 @@ function findActiveTaskForAgent(tasks, agentId, excludedTaskId = "") {
   return tasks
     .filter((task) => task.status === "in_progress" && task.assignee === agentId && task.id !== excludedTaskId)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title))[0];
+}
+
+function taskClaimSnapshot(task) {
+  const assignee = normalizeText(task.assignee);
+  const claimedEvent = (task.activity || []).find((event) => event.type === "claimed");
+  return {
+    assignee,
+    revision: task.revision,
+    claimedAt: claimedEvent?.createdAt || ""
+  };
 }
 
 function buildActiveTaskSelection(activeTask, workMode) {

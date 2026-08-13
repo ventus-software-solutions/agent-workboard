@@ -87,9 +87,10 @@ export function buildOperatorAttention({
         task,
         kind: "stalled",
         title: task.title,
-        detail: item.reason || "The task owner has stopped reporting fresh progress.",
+        detail: item.freshness?.summary || item.reasonLabel || "The task owner has stopped reporting fresh progress.",
         remedy: "open_coordination",
-        tasks
+        tasks,
+        reason: item.reason
       })
     );
   }
@@ -166,10 +167,13 @@ export function buildOperatorAttention({
     });
   }
 
-  actions.sort(compareActions);
+  const describedActions = actions.map((action) =>
+    describeOperatorAction(action, { activeRoles, promptTemplate, origin })
+  );
+  describedActions.sort(compareActions);
 
   return {
-    actions,
+    actions: describedActions,
     activeAgentCount: activeAgents.length,
     nextExpectedEvent: describeNextExpectedEvent({ tasks, activeAgents }),
     groomingStaleDays: GROOMING_STALE_DAYS
@@ -184,7 +188,7 @@ export function buildBootstrapPrompt({ template, agentType, origin }) {
     .replace(/https?:\/\/localhost(?::\d+)?/g, origin);
 }
 
-function taskAction({ task, kind, title, detail, remedy, tasks = [] }) {
+function taskAction({ task, kind, title, detail, remedy, tasks = [], reason = "" }) {
   return {
     id: `${kind}:${task.id}`,
     kind,
@@ -193,8 +197,103 @@ function taskAction({ task, kind, title, detail, remedy, tasks = [] }) {
     remedy,
     taskId: task.id,
     task,
+    role: task.role || "",
+    reason,
     downstreamCount: downstreamImpact(task, tasks)
   };
+}
+
+export function describeOperatorAction(action, { activeRoles = new Map(), promptTemplate = "", origin = "http://localhost:8088" } = {}) {
+  const role = action.role || action.task?.role || (action.kind === "grooming" ? "pm" : "");
+  const spawnPrompt = role && (activeRoles.get(role) || 0) === 0
+    ? buildBootstrapPrompt({ template: promptTemplate, agentType: role, origin })
+    : "";
+  const copy = attentionCopy(action);
+  const doThis = spawnPrompt && !usesDedicatedSpawnRemedy(action.kind)
+    ? `${copy.doThis.replace(/[.!?]\s*$/, "")}, then spawn ${indefiniteArticle(role)} ${role}.`
+    : copy.doThis;
+  return {
+    ...action,
+    what: copy.what,
+    why: copy.why,
+    doThis,
+    spawnPrompt,
+    spawnRole: spawnPrompt ? role : ""
+  };
+}
+
+export function usesDedicatedSpawnRemedy(kind) {
+  return ["role_gap", "grooming"].includes(kind);
+}
+
+function indefiniteArticle(value) {
+  return /^[aeiou]/i.test(String(value || "")) ? "an" : "a";
+}
+
+function attentionCopy(action) {
+  switch (action.kind) {
+    case "approval":
+      return {
+        what: `An agent needs your decision on “${action.title}”.`,
+        why: action.detail || "Work cannot continue until the requested choice is made.",
+        doThis: "Choose Approve or Deny and leave a note when denying."
+      };
+    case "merge":
+      return {
+        what: `Review approved “${action.title}”.`,
+        why: "The implementation is waiting for its reviewer-owned merge and final verification.",
+        doThis: "Click Open delivery to review the evidence and merge or route it."
+      };
+    case "blocker":
+      return {
+        what: `“${action.title}” is blocked: ${action.detail || "the exact blocker was not recorded"}.`,
+        why: "This work and anything depending on it cannot advance.",
+        doThis: "Click Fix blocker to provide the missing decision, dependency, or next step."
+      };
+    case "stalled":
+      return {
+        what: stalledWhat(action),
+        why: "This task is stuck until someone confirms ownership or returns it to the queue.",
+        doThis: "Click Recover to inspect the claim and choose a safe recovery action."
+      };
+    case "role_gap":
+      return {
+        what: `${action.title}, but no active ${action.role} agent is available.`,
+        why: action.detail || "The queued work has nobody available to advance it.",
+        doThis: `Click Copy spawn prompt and start ${indefiniteArticle(action.role)} ${action.role} agent.`
+      };
+    case "grooming":
+      return {
+        what: action.title.endsWith("grooming") ? `${action.title}.` : `${action.title} need clearer scope.`,
+        why: action.detail || "Agents cannot safely claim ambiguous backlog work.",
+        doThis: "Click Groom now to open the first item, or Spawn PM to delegate grooming."
+      };
+    case "cleanup":
+      return {
+        what: `${action.title}.`,
+        why: action.detail || "Merged delivery artifacts are still consuming local workspace state.",
+        doThis: action.remedy === "cleanup"
+          ? "Click Clean to remove the verified worktree and merged branch."
+          : "Click Copy host commands and run them in the trusted host checkout."
+      };
+    default:
+      return {
+        what: `The board found an operator item it cannot classify: ${action.title || "unnamed item"}.`,
+        why: "The system cannot determine whether work can continue safely.",
+        doThis: action.taskId ? "Open the task, inspect its latest evidence, and choose the next safe step." : "Inspect the item before changing anything."
+      };
+  }
+}
+
+function stalledWhat(action) {
+  const owner = action.task?.assignee || "The owner";
+  if (action.reason === "missing_assignee") return `“${action.title}” is marked in progress but has no owner.`;
+  if (action.reason === "missing_slot") return `${owner} is not a configured live agent, so “${action.title}” has no recoverable owner.`;
+  if (action.reason === "paused_slot") return `${owner} was paused while working on “${action.title}”.`;
+  if (["missing_heartbeat", "expired_heartbeat"].includes(action.reason)) {
+    return `The agent working on “${action.title}” stopped reporting a heartbeat.`;
+  }
+  return `The owner of “${action.title}” stopped reporting fresh progress.`;
 }
 
 function isPendingOperatorApproval(task) {

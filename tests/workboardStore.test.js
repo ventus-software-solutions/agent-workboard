@@ -2006,6 +2006,87 @@ describe("WorkboardStore", () => {
     expect(store.data.agentSlots.find((s) => s.id === "implementer-backend-1").lease).toBeNull();
   });
 
+  it("no-ops a stale rendered recovery after the task is reclaimed", async () => {
+    const project = await store.createProject({ name: "Recovery Race Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      activeProjectId: project.id,
+      runtimeId: "recovery-race-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const ready = await store.createTask({
+      projectId: project.id,
+      title: "Do not steal the fresh claim",
+      status: "ready",
+      role: "implementer",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const firstClaim = await store.claimTask(ready.id, {
+      assignee: "implementer-backend-1",
+      actor: "implementer-backend-1",
+      expectedStatus: "ready",
+      expectedAssignee: "",
+      now: "2026-06-12T15:00:01.000Z"
+    });
+    const rendered = store.listStaleInProgressTasks({ projectId: project.id, now: "2026-06-12T15:20:00.000Z" }).tasks[0];
+    expect(rendered.claim).toMatchObject({ assignee: "implementer-backend-1", revision: firstClaim.revision });
+
+    const returned = await store.updateTask(
+      ready.id,
+      {
+        status: "ready",
+        assignee: "",
+        expectedRevision: firstClaim.revision,
+        actor: "system-recovery"
+      },
+      "system-recovery"
+    );
+    const freshClaim = await store.claimTask(ready.id, {
+      assignee: "implementer-backend-1",
+      actor: "implementer-backend-1",
+      expectedStatus: "ready",
+      expectedAssignee: "",
+      now: "2026-06-12T15:20:02.000Z"
+    });
+    expect(freshClaim.revision).toBeGreaterThan(returned.revision);
+
+    const result = await store.recoverStaleInProgressTask(ready.id, {
+      action: "requeue",
+      actor: "operator",
+      expectedRevision: rendered.claim.revision,
+      expectedAssignee: rendered.claim.assignee,
+      expectedClaimedAt: rendered.claim.claimedAt,
+      now: "2026-06-12T15:20:03.000Z"
+    });
+
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "claim_changed",
+      notice: expect.stringContaining("nothing was changed")
+    });
+    expect(store.getTask(ready.id)).toMatchObject({
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      revision: freshClaim.revision
+    });
+  });
+
+  it("no-ops force release when the rendered lease instance changed", async () => {
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      runtimeId: "fresh-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const result = await store.forceReleaseAgentSlot("implementer-backend-1", {
+      actor: "operator",
+      expectedRuntimeId: "stale-runtime",
+      expectedAcquiredAt: "2026-06-12T14:59:00.000Z",
+      now: "2026-06-12T15:01:00.000Z"
+    });
+    expect(result).toMatchObject({ released: false, applied: false, reason: "lease_changed" });
+    expect(store.data.agentSlots.find((slot) => slot.id === "implementer-backend-1").lease.runtimeId).toBe("fresh-runtime");
+  });
+
   it("defaults bootstrapped agents to their active project and only searches all projects when requested", async () => {
     store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", defaultProjectKey: "TEAM" });
     await store.init();

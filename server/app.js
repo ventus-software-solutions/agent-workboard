@@ -312,6 +312,14 @@ export function createApp({
     }
   });
 
+  app.post("/api/tasks/:taskId/stale-recovery", async (req, res, next) => {
+    try {
+      res.json(await store.recoverStaleInProgressTask(req.params.taskId, req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.get("/api/worktree-cleanup", async (req, res, next) => {
     try {
       const mainRef = typeof req.query.mainRef === "string" && req.query.mainRef.trim() ? req.query.mainRef.trim() : "main";

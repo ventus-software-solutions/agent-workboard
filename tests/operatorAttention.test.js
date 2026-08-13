@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildBootstrapPrompt, buildOperatorAttention } from "../src/lib/operatorAttention.js";
+import {
+  buildBootstrapPrompt,
+  buildOperatorAttention,
+  describeOperatorAction,
+  usesDedicatedSpawnRemedy
+} from "../src/lib/operatorAttention.js";
 
 const PROMPT_TEMPLATE =
   "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you.";
@@ -100,6 +105,8 @@ describe("operator attention selector", () => {
       detail: expect.stringContaining("Run on host")
     });
     expect(result.actions.filter((action) => action.id === "role-gap:tester")).toHaveLength(0);
+    expect(result.actions.every((action) => action.what && action.why && action.doThis)).toBe(true);
+    expect(result.actions.map((action) => action.what).join(" ")).not.toMatch(/expired_heartbeat|missing_slot|role_gap/);
   });
 
   it("orders by unique transitive downstream reach and handles relationship cycles", () => {
@@ -204,6 +211,53 @@ describe("operator attention selector", () => {
     expect(result.actions).toEqual([
       expect.objectContaining({ id: "role-gap:reviewer", kind: "role_gap", remedy: "copy_prompt" })
     ]);
+  });
+
+  it("appends a role spawn remedy only when the affected role has no living agent", () => {
+    const stalledTask = task("stalled", { status: "in_progress", assignee: "missing-agent", role: "implementer" });
+    const withoutLivingAgent = buildOperatorAttention({
+      tasks: [stalledTask],
+      agentRegistry: registry(),
+      promptTemplate: PROMPT_TEMPLATE,
+      origin: "https://board.example"
+    }).actions.find((action) => action.kind === "stalled");
+    expect(withoutLivingAgent).toMatchObject({ spawnRole: "implementer" });
+    expect(withoutLivingAgent.doThis).toContain("then spawn an implementer");
+    expect(withoutLivingAgent.spawnPrompt).toContain("https://board.example/api/agent-docs/implementer");
+
+    const withLivingAgent = buildOperatorAttention({
+      tasks: [stalledTask],
+      agentRegistry: registry(activeAgent("implementer-live", "implementer")),
+      promptTemplate: PROMPT_TEMPLATE
+    }).actions.find((action) => action.kind === "stalled");
+    expect(withLivingAgent.spawnPrompt).toBe("");
+    expect(withLivingAgent.doThis).not.toContain("then spawn");
+  });
+
+  it("keeps grooming's dedicated PM spawn remedy singular when no PM is active", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("groom", { status: "backlog", priority: "", role: "" })],
+      agentRegistry: registry(),
+      promptTemplate: PROMPT_TEMPLATE,
+      origin: "https://board.example"
+    });
+    const grooming = result.actions.find((action) => action.kind === "grooming");
+
+    expect(grooming).toMatchObject({
+      doThis: "Click Groom now to open the first item, or Spawn PM to delegate grooming.",
+      spawnRole: "pm",
+      spawnPrompt: expect.stringContaining("https://board.example/api/agent-docs/pm")
+    });
+    expect(grooming.doThis).not.toContain("then spawn");
+    expect(usesDedicatedSpawnRemedy(grooming.kind)).toBe(true);
+  });
+
+  it("gives unknown inbox kinds an honest imperative fallback", () => {
+    expect(describeOperatorAction({ kind: "new_exception", title: "Unexpected item", taskId: "task_x" })).toMatchObject({
+      what: expect.stringContaining("cannot classify"),
+      why: expect.stringContaining("cannot determine"),
+      doThis: expect.stringMatching(/^Open the task/)
+    });
   });
 });
 
