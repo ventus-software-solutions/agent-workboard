@@ -93,6 +93,7 @@ By default nothing is exposed: the API, the dev UI, and the Docker port publish 
 
 ## Where To Go Next
 
+- [Operator guide](./operator-guide.md) — what every UI concept means and the actions an operator takes.
 - [Agent protocol](./agent-protocol.md) — bootstrap, slots, claiming, evidence, endpoint reference.
 - [Agent spawning](./agent-spawning.md) — running a pool of agents.
 - [Continuous agent prompts](./continuous-agent-prompts.md) — copy-paste prompts for workers that keep draining work.
