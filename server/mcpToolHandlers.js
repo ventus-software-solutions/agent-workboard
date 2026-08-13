@@ -7,6 +7,8 @@ export const MCP_TOOL_NAMES = [
   "create_task",
   "decompose_task",
   "claim_task",
+  "claim_task_stage",
+  "resolve_task_stage",
   "acquire_agent_slot",
   "get_next_task",
   "update_presence",

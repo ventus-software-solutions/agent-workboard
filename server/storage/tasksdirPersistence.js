@@ -248,6 +248,9 @@ export function boardTaskFromView(id, view, projectId) {
     completion: view.completion ? { ...view.completion } : null,
     blocker: view.blocker ? { ...view.blocker } : null,
     approvalHistory: [],
+    reviewedBy: "",
+    testedBy: "",
+    reviewVerdict: null,
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
     revision: view.revision,
@@ -398,6 +401,9 @@ export class TasksdirWorkboardPersistence {
       task.attachments = cloneArray(sidecar.attachments);
       task.activity = cloneArray(sidecar.activity);
       task.approvalHistory = cloneArray(sidecar.approvalHistory);
+      task.reviewedBy = asText(sidecar.reviewedBy);
+      task.testedBy = asText(sidecar.testedBy);
+      task.reviewVerdict = sidecar.reviewVerdict && typeof sidecar.reviewVerdict === "object" ? clone(sidecar.reviewVerdict) : null;
       tasks.push(task);
       this.sidecarCache.set(entry.id, clone(sidecarOfTask(task)));
     }
@@ -506,6 +512,9 @@ export class TasksdirWorkboardPersistence {
     task.attachments = cloneArray(cached?.attachments);
     task.activity = cloneArray(cached?.activity);
     task.approvalHistory = cloneArray(cached?.approvalHistory);
+    task.reviewedBy = asText(cached?.reviewedBy);
+    task.testedBy = asText(cached?.testedBy);
+    task.reviewVerdict = cached?.reviewVerdict && typeof cached.reviewVerdict === "object" ? clone(cached.reviewVerdict) : null;
   }
 
   async createTaskFile(plan) {
@@ -613,7 +622,10 @@ function sidecarOfTask(task) {
     comments: task.comments || [],
     attachments: task.attachments || [],
     activity: task.activity || [],
-    approvalHistory: task.approvalHistory || []
+    approvalHistory: task.approvalHistory || [],
+    reviewedBy: asText(task.reviewedBy),
+    testedBy: asText(task.testedBy),
+    reviewVerdict: task.reviewVerdict && typeof task.reviewVerdict === "object" ? clone(task.reviewVerdict) : null
   };
 }
 

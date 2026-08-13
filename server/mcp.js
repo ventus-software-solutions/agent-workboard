@@ -178,6 +178,40 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
   );
 
   server.registerTool(
+    "claim_task_stage",
+    {
+      title: "Claim review or testing stage",
+      description: "CAS-claim review/testing work without replacing the implementation assignee.",
+      inputSchema: {
+        taskId: z.string(),
+        agentId: z.string(),
+        expectedStatus: z.enum(["review", "testing"]),
+        expectedClaimant: z.string().optional(),
+        actor: z.string().optional()
+      }
+    },
+    async (input) => asText({ task: await store.claimTaskStage(input.taskId, input) })
+  );
+
+  server.registerTool(
+    "resolve_task_stage",
+    {
+      title: "Resolve review or testing stage",
+      description: "Release a stage claim and record a structured review verdict when resolving review.",
+      inputSchema: {
+        taskId: z.string(),
+        agentId: z.string(),
+        expectedStatus: z.enum(["review", "testing"]),
+        decision: z.enum(["approve", "request_changes"]).optional(),
+        findingsCount: z.number().int().nonnegative().optional(),
+        commitSha: z.string().optional(),
+        actor: z.string().optional()
+      }
+    },
+    async (input) => asText({ task: await store.resolveTaskStage(input.taskId, input) })
+  );
+
+  server.registerTool(
     "acquire_agent_slot",
     {
       title: "Acquire agent slot",

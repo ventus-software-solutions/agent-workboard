@@ -65,6 +65,61 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await expect(workflowCard).toContainText("Unassigned");
 });
 
+test("shows stage ownership and structured changes-requested verdicts on tasks", async ({ page }) => {
+  const projectName = uniqueName("E2E Review Claim Project");
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, { data: { name: projectName } });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: project.id,
+      title: "Review claim visibility",
+      status: "review",
+      assignee: "implementer-agent"
+    }
+  });
+  const { task } = await taskResponse.json();
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/stage-claim`, {
+        data: { agentId: "reviewer-agent", expectedStatus: "review", expectedClaimant: "" }
+      })
+    ).ok()
+  ).toBe(true);
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  const card = taskCard(page, "Review claim visibility");
+  await expect(card).toContainText("Review: reviewer-agent");
+  await card.click();
+  await expect(page.locator(".drawer")).toContainText("Review claimed by reviewer-agent");
+  await closeDrawerIfOpen(page);
+
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/stage-resolution`, {
+        data: {
+          agentId: "reviewer-agent",
+          expectedStatus: "review",
+          decision: "request_changes",
+          findingsCount: 2,
+          commitSha: "abc1234"
+        }
+      })
+    ).ok()
+  ).toBe(true);
+  await expect(card).toContainText("Changes requested (2)", { timeout: 10_000 });
+
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/tasks/${task.id}/comments`, {
+        data: { author: "implementer-agent", body: "New fix commit.", evidence: { commitSha: "def5678" } }
+      })
+    ).ok()
+  ).toBe(true);
+  await expect(card.getByText("Changes requested (2)")).toHaveCount(0, { timeout: 10_000 });
+});
+
 test("edits deployment process rules from Settings and updates generated agent docs", async ({ page }) => {
   const rules = "- Deliver through a branch and PR.\n- Coordinator merges foundation-class changes.";
 

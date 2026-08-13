@@ -2023,6 +2023,9 @@ button {
 .relationshipPill,
 .attachmentPill,
 .completionPill,
+.stageOwnerPill,
+.changesRequestedPill,
+.reviewApprovedPill,
 .approvalPill {
   display: inline-flex;
   align-items: center;
@@ -2062,6 +2065,45 @@ button {
 .completionPill {
   background: #203b31;
   color: #bdf2d1;
+}
+
+.stageOwnerPill {
+  color: #9dd9ff;
+  border-color: rgba(88, 176, 230, 0.45);
+  background: rgba(29, 91, 128, 0.2);
+}
+
+.changesRequestedPill {
+  color: #ffd07a;
+  border-color: rgba(226, 164, 50, 0.55);
+  background: rgba(116, 72, 15, 0.3);
+}
+
+.reviewApprovedPill {
+  color: #8ee6c5;
+  border-color: rgba(62, 183, 139, 0.45);
+  background: rgba(27, 105, 77, 0.24);
+}
+
+.stageRecord p {
+  margin: 6px 0;
+}
+
+.reviewVerdictRecord {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.reviewVerdictRecord.request_changes {
+  border-color: rgba(226, 164, 50, 0.55);
+}
+
+.reviewVerdictRecord.approve {
+  border-color: rgba(62, 183, 139, 0.45);
 }
 
 .completionPill.needsAudit {

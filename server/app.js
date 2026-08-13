@@ -375,6 +375,24 @@ export function createApp({
     }
   });
 
+  app.post("/api/tasks/:taskId/stage-claim", async (req, res, next) => {
+    try {
+      const task = await store.claimTaskStage(req.params.taskId, req.body);
+      res.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/tasks/:taskId/stage-resolution", async (req, res, next) => {
+    try {
+      const task = await store.resolveTaskStage(req.params.taskId, req.body);
+      res.json({ task });
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post("/api/tasks/:taskId/operator-approval", async (req, res, next) => {
     try {
       const task = await store.requestOperatorApproval(req.params.taskId, req.body);

@@ -383,4 +383,30 @@ describe("WorkboardStore tasksdir mode", () => {
       expect((await stat(taskFilePath(folder))).mtimeMs, folder).toBe(stats.get(folder));
     }
   });
+
+  it("persists stage ownership and review verdicts in tasksdir sidecars", async () => {
+    const store = await openStore();
+    await store.updateTask(FBR_BUG, { status: "review" }, "implementer-agent");
+    await store.claimTaskStage(FBR_BUG, { agentId: "reviewer-agent", expectedStatus: "review" });
+
+    let reloaded = await openStore();
+    expect(reloaded.getTask(FBR_BUG)).toMatchObject({
+      status: "review",
+      reviewedBy: "reviewer-agent"
+    });
+
+    await reloaded.resolveTaskStage(FBR_BUG, {
+      agentId: "reviewer-agent",
+      expectedStatus: "review",
+      decision: "request_changes",
+      findingsCount: 1,
+      commitSha: "abc1234"
+    });
+    reloaded = await openStore();
+    expect(reloaded.getTask(FBR_BUG)).toMatchObject({
+      status: "ready",
+      reviewedBy: "",
+      reviewVerdict: { decision: "request_changes", findingsCount: 1, commitSha: "abc1234" }
+    });
+  });
 });
