@@ -1394,10 +1394,23 @@ export class WorkboardStore {
         };
       }
 
+      const currentTime = parseTimestamp(input.now);
+      const slotsById = new Map(this.data.agentSlots.map((slot) => [slot.id, slot]));
+      const currentWarning = this.describeStaleInProgressTask(task, slotsById, currentTime);
+      if (!currentWarning) {
+        return {
+          applied: false,
+          reason: "warning_resolved",
+          notice: "This warning already resolved — the healthy claim was not changed.",
+          task: this.describeTaskSummary(task),
+          currentClaim
+        };
+      }
+
       const actor = normalizeText(input.actor) || "operator";
       const note = normalizeText(input.note);
       if (action === "comment" && !note) throw httpError("A recovery comment is required.", 400);
-      const recoveredAt = parseTimestamp(input.now).toISOString();
+      const recoveredAt = currentTime.toISOString();
       if (note) {
         task.comments.unshift({ id: id("comment"), author: actor, body: note, createdAt: recoveredAt });
       }

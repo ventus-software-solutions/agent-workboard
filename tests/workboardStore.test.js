@@ -2071,6 +2071,110 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("no-ops a rendered off-script recovery after the agent corrects its task binding", async () => {
+    const project = await store.createProject({ name: "Off-script Recovery Race Project" });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      activeProjectId: project.id,
+      runtimeId: "off-script-recovery-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const claimed = await store.createTask({
+      projectId: project.id,
+      title: "Keep the corrected claim",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1",
+      now: "2026-06-12T15:00:01.000Z"
+    });
+    const other = await store.createTask({
+      projectId: project.id,
+      title: "Previously reported task",
+      status: "ready",
+      role: "implementer",
+      now: "2026-06-12T15:00:01.000Z"
+    });
+    await store.updateAgentPresence("implementer-backend-1", {
+      state: "active",
+      currentTaskId: other.id,
+      now: "2026-06-12T15:00:02.000Z"
+    });
+    const rendered = store.listStaleInProgressTasks({ projectId: project.id, now: "2026-06-12T15:00:03.000Z" }).tasks[0];
+    expect(rendered).toMatchObject({ kind: "off_script", reason: "presence_task_mismatch" });
+
+    await store.updateAgentPresence("implementer-backend-1", {
+      state: "active",
+      currentTaskId: claimed.id,
+      now: "2026-06-12T15:00:04.000Z"
+    });
+    const before = store.getTask(claimed.id);
+    const result = await store.recoverStaleInProgressTask(claimed.id, {
+      action: "requeue",
+      actor: "operator",
+      expectedRevision: rendered.claim.revision,
+      expectedAssignee: rendered.claim.assignee,
+      expectedClaimedAt: rendered.claim.claimedAt,
+      now: "2026-06-12T15:00:05.000Z"
+    });
+
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "warning_resolved",
+      notice: expect.stringContaining("healthy claim was not changed")
+    });
+    expect(store.getTask(claimed.id)).toMatchObject({
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      revision: before.revision
+    });
+    expect(store.listStaleInProgressTasks({ projectId: project.id, now: "2026-06-12T15:00:06.000Z" }).tasks).toEqual([]);
+  });
+
+  it("no-ops a rendered expired-heartbeat recovery after the slot lease is renewed", async () => {
+    const project = await store.createProject({ name: "Heartbeat Recovery Race Project" });
+    const acquired = await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      activeProjectId: project.id,
+      runtimeId: "heartbeat-recovery-runtime",
+      now: "2026-06-12T15:00:00.000Z"
+    });
+    const claimed = await store.createTask({
+      projectId: project.id,
+      title: "Keep the renewed claim",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1",
+      now: "2026-06-12T15:00:01.000Z"
+    });
+    const rendered = store.listStaleInProgressTasks({ projectId: project.id, now: "2026-06-12T15:20:00.000Z" }).tasks[0];
+    expect(rendered).toMatchObject({ kind: "stalled", reason: "expired_heartbeat" });
+
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-1",
+      activeProjectId: project.id,
+      runtimeId: "heartbeat-recovery-runtime",
+      identityToken: acquired.identityToken,
+      now: "2026-06-12T15:20:01.000Z"
+    });
+    const before = store.getTask(claimed.id);
+    const result = await store.recoverStaleInProgressTask(claimed.id, {
+      action: "requeue",
+      actor: "operator",
+      expectedRevision: rendered.claim.revision,
+      expectedAssignee: rendered.claim.assignee,
+      expectedClaimedAt: rendered.claim.claimedAt,
+      now: "2026-06-12T15:20:02.000Z"
+    });
+
+    expect(result).toMatchObject({ applied: false, reason: "warning_resolved" });
+    expect(store.getTask(claimed.id)).toMatchObject({
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      revision: before.revision
+    });
+    expect(store.listStaleInProgressTasks({ projectId: project.id, now: "2026-06-12T15:20:03.000Z" }).tasks).toEqual([]);
+  });
+
   it("no-ops force release when the rendered lease instance changed", async () => {
     await store.acquireAgentSlot({
       agentId: "implementer-backend-1",

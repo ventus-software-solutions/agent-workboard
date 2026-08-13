@@ -2462,6 +2462,72 @@ describe("Agent Workboard API", () => {
     expect(response.body.tasks.map((item) => item.task.id)).not.toContain(freshTask.id);
   });
 
+  it("does not apply a stale-recovery API action after an off-script binding is corrected", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Recovery Revalidation API Project" }).expect(201)).body.project;
+    await request(app)
+      .post("/api/agent-slots/acquire")
+      .send({
+        agentId: "implementer-backend-1",
+        activeProjectId: project.id,
+        runtimeId: "revalidation-api-runtime",
+        now: "2026-06-12T15:00:00.000Z"
+      })
+      .expect(200);
+    const claimed = (
+      await request(app)
+        .post("/api/tasks")
+        .send({
+          projectId: project.id,
+          title: "Keep corrected API claim",
+          status: "in_progress",
+          role: "implementer",
+          assignee: "implementer-backend-1",
+          now: "2026-06-12T15:00:01.000Z"
+        })
+        .expect(201)
+    ).body.task;
+    const other = (
+      await request(app)
+        .post("/api/tasks")
+        .send({ projectId: project.id, title: "Other reported API task", status: "ready", role: "implementer" })
+        .expect(201)
+    ).body.task;
+    await request(app)
+      .post("/api/agents/implementer-backend-1/presence")
+      .send({ state: "active", currentTaskId: other.id, now: "2026-06-12T15:00:02.000Z" })
+      .expect(200);
+    const rendered = (
+      await request(app)
+        .get("/api/tasks/stale-in-progress")
+        .query({ projectId: project.id, now: "2026-06-12T15:00:03.000Z" })
+        .expect(200)
+    ).body.tasks[0];
+    expect(rendered).toMatchObject({ kind: "off_script", reason: "presence_task_mismatch" });
+
+    await request(app)
+      .post("/api/agents/implementer-backend-1/presence")
+      .send({ state: "active", currentTaskId: claimed.id, now: "2026-06-12T15:00:04.000Z" })
+      .expect(200);
+    const recovery = await request(app)
+      .post(`/api/tasks/${claimed.id}/stale-recovery`)
+      .send({
+        action: "requeue",
+        actor: "operator-ui",
+        expectedRevision: rendered.claim.revision,
+        expectedAssignee: rendered.claim.assignee,
+        expectedClaimedAt: rendered.claim.claimedAt,
+        now: "2026-06-12T15:00:05.000Z"
+      })
+      .expect(200);
+
+    expect(recovery.body).toMatchObject({ applied: false, reason: "warning_resolved" });
+    expect((await request(app).get(`/api/tasks/${claimed.id}`).expect(200)).body.task).toMatchObject({
+      status: "in_progress",
+      assignee: "implementer-backend-1",
+      revision: claimed.revision
+    });
+  });
+
   it("returns reviewer review-queue metadata without claim preconditions", async () => {
     const project = (await request(app).post("/api/projects").send({ name: "Reviewer Pass API Project" })).body.project;
     const reviewTask = (
