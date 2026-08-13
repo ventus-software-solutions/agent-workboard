@@ -94,6 +94,14 @@ export function createApp({
     }
   });
 
+  app.post("/api/agent-slots/:agentId/release", async (req, res, next) => {
+    try {
+      res.json(await store.forceReleaseAgentSlot(req.params.agentId, req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.patch("/api/agent-types/:typeId", async (req, res, next) => {
     try {
       res.json({ type: await store.updateAgentType(req.params.typeId, req.body) });

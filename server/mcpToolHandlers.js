@@ -10,6 +10,7 @@ export const MCP_TOOL_NAMES = [
   "acquire_agent_slot",
   "get_next_task",
   "update_presence",
+  "release_agent_slot",
   "report_no_eligible_work",
   "update_task_status",
   "request_operator_approval",
