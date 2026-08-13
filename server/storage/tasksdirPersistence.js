@@ -527,6 +527,7 @@ export class TasksdirWorkboardPersistence {
       task.reviewVerdict = sidecar.reviewVerdict && typeof sidecar.reviewVerdict === "object" ? clone(sidecar.reviewVerdict) : null;
       task.pullRequestUrl = asText(sidecar.pullRequestUrl);
       task.branch = asText(sidecar.branch);
+      task.externalSource = sidecar.externalSource && typeof sidecar.externalSource === "object" ? clone(sidecar.externalSource) : null;
       tasks.push(task);
       this.sidecarCache.set(entry.id, clone(sidecarOfTask(task)));
     }
@@ -666,6 +667,7 @@ export class TasksdirWorkboardPersistence {
     task.reviewVerdict = cached?.reviewVerdict && typeof cached.reviewVerdict === "object" ? clone(cached.reviewVerdict) : null;
     task.pullRequestUrl = asText(cached?.pullRequestUrl);
     task.branch = asText(cached?.branch);
+    task.externalSource = cached?.externalSource && typeof cached.externalSource === "object" ? clone(cached.externalSource) : null;
   }
 
   async createTaskFile(plan) {
@@ -810,7 +812,8 @@ function sidecarOfTask(task) {
     testedBy: asText(task.testedBy),
     reviewVerdict: task.reviewVerdict && typeof task.reviewVerdict === "object" ? clone(task.reviewVerdict) : null,
     pullRequestUrl: asText(task.pullRequestUrl),
-    branch: asText(task.branch)
+    branch: asText(task.branch),
+    externalSource: task.externalSource && typeof task.externalSource === "object" ? clone(task.externalSource) : null
   };
 }
 

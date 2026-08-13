@@ -1,5 +1,6 @@
 import { normalizeVerificationTarget } from "./verificationTarget.js";
 import { normalizeTaskTouches as normalizeTouches } from "../../shared/taskTouches.js";
+import { normalizeExternalSource } from "../../shared/externalSource.js";
 
 export const PROJECT_BACKUP_PACKAGE_TYPE = "agent-workboard.project-backup";
 export const PROJECT_BACKUP_PACKAGE_VERSION = 1;
@@ -146,6 +147,7 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     reviewVerdict: normalizeReviewVerdict(source.reviewVerdict),
     labels: normalizeTaskLabels(source.labels),
     touches: normalizeTaskTouches(source.touches),
+    externalSource: normalizeBackupExternalSource(source.externalSource, { index, taskId }),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,
     verificationTarget:
       status === "testing"
@@ -172,6 +174,17 @@ function normalizeReviewVerdict(value) {
     commitSha: normalizeText(value.commitSha),
     createdAt: normalizeText(value.createdAt)
   };
+}
+
+function normalizeBackupExternalSource(value, context) {
+  try {
+    return normalizeExternalSource(value);
+  } catch (error) {
+    throw httpError(error.message || "Task externalSource is invalid.", 400, {
+      field: "tasks.externalSource",
+      ...context
+    });
+  }
 }
 
 function normalizeTaskIdList(value) {

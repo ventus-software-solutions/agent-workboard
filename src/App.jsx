@@ -2467,7 +2467,15 @@ function OperatorAttentionPanel({
                   {action.remedy === "open_task" && (
                     <button className="attentionPrimaryAction" onClick={() => onSelectTask(action.taskId)}>
                       <ChevronRight size={14} />
-                      <span>{action.kind === "merge" ? "Open delivery" : action.kind === "collision" ? "Inspect overlap" : "Fix blocker"}</span>
+                      <span>
+                        {action.kind === "merge"
+                          ? "Open delivery"
+                          : action.kind === "collision"
+                            ? "Inspect overlap"
+                            : action.kind === "external"
+                              ? "Open item"
+                              : "Fix blocker"}
+                      </span>
                     </button>
                   )}
                   {action.remedy === "open_coordination" && (
@@ -2541,6 +2549,7 @@ function attentionIcon(kind) {
   if (kind === "grooming") return ClipboardList;
   if (kind === "cleanup") return Archive;
   if (["data_source", "data_source_mapping"].includes(kind)) return Database;
+  if (kind === "external") return Link2;
   return Bot;
 }
 

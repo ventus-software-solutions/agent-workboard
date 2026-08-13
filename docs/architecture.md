@@ -114,6 +114,8 @@ For UI changes, keep data loading in `App.jsx` near the existing API calls unles
 
 `server/mcp.js` exposes the board to agent clients over stdio using the Model Context Protocol SDK. It creates its own `WorkboardStore` with the same `WORKBOARD_DATA_DIR` convention, registers tools, and shares workflow behavior with the HTTP API by calling the store.
 
+`server/githubIntake.js` is an optional, environment-configured GitHub REST poller. `WORKBOARD_GITHUB_REPOSITORY=owner/repo` enables an immediate pass plus the configured interval; the HTTP API also exposes an on-demand pass at `POST /api/github-intake/sync`. It uses `fetch` directly (not `gh` or an agent runtime), stores a normalized `externalSource` identity on each imported task, and uses that identity to make repeat passes idempotent and to follow external closure or merge into a completion record. In `tasksdir` mode this operational identity stays in the per-task sidecar while the human-authored task file remains the work-item projection.
+
 `server/mcpToolHandlers.js` holds shared MCP helper constants and small patch builders. Tool names include agent instructions, project and task listing, capability lookup, task creation and claiming, agent slot acquisition, next-task selection, presence updates, no-work reports, status updates, task comments, and Agent Talks.
 
 Change this layer when you need to:

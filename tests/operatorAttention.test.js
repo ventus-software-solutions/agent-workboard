@@ -228,6 +228,52 @@ describe("operator attention selector", () => {
     ]);
   });
 
+  it("surfaces GitHub items that remain open past their configured attention date", () => {
+    const external = task("external-pr", {
+      title: "GitHub PR #12: Update dependencies",
+      role: "reviewer",
+      workItemType: "chore",
+      labels: ["external", "dependencies"],
+      externalSource: {
+        provider: "github",
+        repository: "acme/work",
+        kind: "pull_request",
+        number: 12,
+        url: "https://github.test/acme/work/pull/12",
+        state: "open",
+        openedAt: "2026-08-09T08:00:00.000Z",
+        attentionAfterAt: "2026-08-12T08:00:00.000Z"
+      }
+    });
+
+    const result = buildOperatorAttention({
+      tasks: [external],
+      agentRegistry: registry(activeAgent("reviewer-agent", "reviewer")),
+      now: new Date("2026-08-13T12:00:00.000Z")
+    });
+
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        id: "external:external-pr",
+        kind: "external",
+        remedy: "open_task",
+        detail: expect.stringContaining("open for 4 days"),
+        what: expect.stringContaining("open for 4 days"),
+        why: expect.stringContaining("outside the board"),
+        doThis: "Click Open item to inspect the GitHub work, its board owner, and the next safe step.",
+        spawnPrompt: ""
+      })
+    ]);
+
+    const withoutReviewer = describeOperatorAction(
+      { ...result.actions[0], spawnPrompt: "", spawnRole: "" },
+      { activeRoles: new Map(), promptTemplate: PROMPT_TEMPLATE, origin: "https://board.example" }
+    );
+    expect(withoutReviewer.spawnPrompt).toBe("");
+    expect(withoutReviewer.spawnRole).toBe("");
+    expect(withoutReviewer.doThis).not.toContain("then spawn");
+  });
+
   it("recognizes explicit legacy approval comments until structured review verdicts land", () => {
     const result = buildOperatorAttention({
       tasks: [task("legacy-review", { status: "review", comments: [{ body: "VERDICT: APPROVE - focused tests pass." }] })],

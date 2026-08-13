@@ -53,6 +53,32 @@ afterEach(async () => {
 });
 
 describe("WorkboardStore tasksdir mode", () => {
+  it("keeps external GitHub identity in the ops sidecar across restarts", async () => {
+    const store = await openStore();
+    const externalSource = {
+      provider: "github",
+      repository: "acme/work",
+      kind: "issue",
+      number: 23,
+      url: "https://github.test/acme/work/issues/23",
+      state: "open",
+      openedAt: "2026-08-10T08:00:00.000Z",
+      attentionAfterAt: "2026-08-13T08:00:00.000Z"
+    };
+    const created = await store.createTask({
+      projectId: "project_demo",
+      title: "GitHub issue #23",
+      role: "pm",
+      status: "ready",
+      workItemType: "chore",
+      labels: ["external"],
+      externalSource
+    });
+
+    const restarted = await openStore();
+    expect(restarted.getTask(created.id).externalSource).toEqual(externalSource);
+  });
+
   it("boots against a tasks dir, maps files to board tasks, and seeds no demo work items", async () => {
     const store = await openStore();
     const tasks = store.listTasks({});
