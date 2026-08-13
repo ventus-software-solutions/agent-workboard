@@ -1,0 +1,3 @@
+# Byte-for-byte fixtures: the tasksdir round-trip tests assert exact bytes,
+# including one deliberately CRLF file. Never normalize line endings here.
+* -text

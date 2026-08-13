@@ -95,7 +95,9 @@ All settings are environment variables. All are optional.
 | `PORT` | `8080` | Port the API listens on. |
 | `WORKBOARD_HOST` | `127.0.0.1` | Listen address. Set to `0.0.0.0` only for a deliberate exposed deployment. |
 | `WORKBOARD_DATA_DIR` | `./.workboard-data` | Where board data, uploads, and the database live. |
-| `WORKBOARD_STORAGE` | `sqlite` | `sqlite` or `json`. See [Storage](#storage). |
+| `WORKBOARD_STORAGE` | `sqlite` | `sqlite`, `json`, or `tasksdir`. See [Storage](#storage). |
+| `WORKBOARD_TASKS_DIR` | unset | Required for `tasksdir` mode: absolute path to the git-tracked `tasks/` directory that holds the work items. |
+| `WORKBOARD_OPS_STORAGE` | `json` | Ops-store backend (`json` or `sqlite`) used for non-work-item state in `tasksdir` mode. |
 | `WORKBOARD_DEFAULT_PROJECT_KEY` | unset | Project key agents land in when they have not chosen one. Falls back to `DEMO`. |
 | `WORKBOARD_WORKTREE_ROOT` | `..` | Where the worktree commands in agent instructions point. Defaults to a sibling of the repo. |
 | `WORKBOARD_REPO_DIR` | repo root | Repository the board inspects for branch and worktree status. |
@@ -105,6 +107,8 @@ All settings are environment variables. All are optional.
 SQLite is the default and needs the `sqlite3` command on `PATH`; the Docker image installs it. On first SQLite start, an existing `.workboard-data/workboard.json` is imported and kept as a rollback snapshot.
 
 Set `WORKBOARD_STORAGE=json` to use the plain JSON file store instead.
+
+Set `WORKBOARD_STORAGE=tasksdir` (plus `WORKBOARD_TASKS_DIR=/abs/path/to/tasks`) to persist work items as markdown task folders (`<task-id>/task.md` with YAML frontmatter and a markdown body) in a git-tracked directory. Mutations rewrite only the affected task file, atomically; unknown frontmatter keys and the markdown body round-trip byte-for-byte. Everything that is not a work item (agent slots, presence, talks, capabilities, projects, and per-task comments/activity) stays in the ops store under `WORKBOARD_DATA_DIR`. The board never runs git commands; committing the tasks directory stays the operator's job.
 
 ## Development
 

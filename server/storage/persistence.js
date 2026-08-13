@@ -3,7 +3,10 @@ import { execFile, spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const WORKBOARD_STORAGE_MODES = new Set(["json", "sqlite"]);
+import { TasksdirWorkboardPersistence } from "./tasksdirPersistence.js";
+
+const WORKBOARD_STORAGE_MODES = new Set(["json", "sqlite", "tasksdir"]);
+const OPS_STORAGE_MODES = new Set(["json", "sqlite"]);
 const SQLITE_MAX_BUFFER = 100 * 1024 * 1024;
 const SQLITE_SCHEMA_VERSION = 1;
 
@@ -26,7 +29,7 @@ INSERT OR IGNORE INTO schema_migrations (version) VALUES (${SQLITE_SCHEMA_VERSIO
 export function normalizeStorageMode(value = "json") {
   const mode = String(value || "json").trim().toLowerCase();
   if (!WORKBOARD_STORAGE_MODES.has(mode)) {
-    throw Object.assign(new Error(`Unsupported WORKBOARD_STORAGE "${value}". Use "sqlite" or "json".`), {
+    throw Object.assign(new Error(`Unsupported WORKBOARD_STORAGE "${value}". Use "sqlite", "json", or "tasksdir".`), {
       status: 500
     });
   }
@@ -36,11 +39,23 @@ export function normalizeStorageMode(value = "json") {
 export function createWorkboardPersistence({
   dataDir,
   storageMode = "json",
-  sqliteCommand = process.env.SQLITE3_BIN || "sqlite3"
+  sqliteCommand = process.env.SQLITE3_BIN || "sqlite3",
+  tasksDir = process.env.WORKBOARD_TASKS_DIR,
+  opsStorageMode = process.env.WORKBOARD_OPS_STORAGE || "json"
 }) {
   const mode = normalizeStorageMode(storageMode);
   if (mode === "sqlite") {
     return new SqliteWorkboardPersistence({ dataDir, sqliteCommand });
+  }
+  if (mode === "tasksdir") {
+    const opsMode = String(opsStorageMode || "json").trim().toLowerCase();
+    if (!OPS_STORAGE_MODES.has(opsMode)) {
+      throw Object.assign(new Error(`Unsupported WORKBOARD_OPS_STORAGE "${opsStorageMode}". Use "sqlite" or "json".`), {
+        status: 500
+      });
+    }
+    const ops = createWorkboardPersistence({ dataDir, storageMode: opsMode, sqliteCommand });
+    return new TasksdirWorkboardPersistence({ tasksDir, ops });
   }
   return new JsonWorkboardPersistence({ dataDir });
 }
