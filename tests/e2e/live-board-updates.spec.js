@@ -1,10 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { createServer as createViteServer } from "vite";
 import { createApp } from "../../server/app.js";
-import { WorkboardStore } from "../../server/storage/workboardStore.js";
+import { createE2eStore } from "./workboard-test-store.js";
 
 const projectRoot = path.resolve(".");
 const pollTimeout = 15_000;
@@ -15,9 +14,9 @@ let dataDir;
 let viteServer;
 
 test.beforeAll(async () => {
-  dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-live-e2e-"));
-  const store = new WorkboardStore({ dataDir });
-  await store.init();
+  const fixture = await createE2eStore("agent-workboard-live-e2e-");
+  dataDir = fixture.dataDir;
+  const { store } = fixture;
 
   const apiApp = createApp({ store });
   apiServer = await listen(apiApp);
