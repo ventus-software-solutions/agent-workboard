@@ -16,6 +16,8 @@ describe("GitHub Actions CI workflow", () => {
     expect(workflow).toContain("actions/checkout@");
     expect(workflow).toContain("actions/setup-node@");
     expect(workflow).toContain("node-version: 20");
+    expect(workflow).toMatch(/storage:\s*\r?\n\s+- json\s*\r?\n\s+- sqlite\s*\r?\n\s+- tasksdir/);
+    expect(workflow).toContain("WORKBOARD_STORAGE: ${{ matrix.storage }}");
     expect(workflow).toContain("npm install");
     expect(workflow).toContain("npm test");
     expect(workflow).toContain("npm run build");

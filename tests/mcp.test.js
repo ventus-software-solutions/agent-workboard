@@ -414,7 +414,7 @@ describe("Agent Workboard MCP tools", () => {
 
   it("surfaces the store one-active-task guard through claim_task", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-mcp-"));
-    const store = new WorkboardStore({ dataDir: tempDir });
+    const store = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await store.init();
     try {
       const project = await store.createProject({ name: "MCP Single Active Claim Project" });

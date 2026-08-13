@@ -9,7 +9,7 @@ let store;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-"));
-  store = new WorkboardStore({ dataDir: tempDir });
+  store = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
   await store.init();
 });
 
@@ -232,7 +232,7 @@ describe("WorkboardStore", () => {
     delete raw.tasks.find((item) => item.id === epic.id).workItemType;
     await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
 
-    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await reloaded.init();
     expect(reloaded.getTask(epic.id)).toMatchObject({ workItemType: "task" });
   });
@@ -414,7 +414,7 @@ describe("WorkboardStore", () => {
     delete raw.tasks.find((item) => item.id === parent.id).parentTaskId;
     await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
 
-    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await reloaded.init();
     expect(reloaded.getTask(parent.id)).toMatchObject({
       dependsOn: [],
@@ -1234,7 +1234,7 @@ describe("WorkboardStore", () => {
     delete raw.tasks[0].completion;
     await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
 
-    const reloaded = new WorkboardStore({ dataDir: tempDir });
+    const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await reloaded.init();
 
     const task = reloaded.getTask(raw.tasks[0].id);
@@ -1467,8 +1467,8 @@ describe("WorkboardStore", () => {
       assignee: ""
     });
 
-    const firstStore = new WorkboardStore({ dataDir: tempDir });
-    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    const firstStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
+    const secondStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await firstStore.init();
     await secondStore.init();
 
@@ -1541,8 +1541,8 @@ describe("WorkboardStore", () => {
   });
 
   it("lets two store instances acquire distinct slots from a shared data directory", async () => {
-    const firstStore = new WorkboardStore({ dataDir: tempDir });
-    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    const firstStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
+    const secondStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await firstStore.init();
     await secondStore.init();
 
@@ -1612,7 +1612,7 @@ describe("WorkboardStore", () => {
   it("does not duplicate slot assignment under parallel acquisition pressure", async () => {
     const stores = await Promise.all(
       Array.from({ length: 6 }, async () => {
-        const nextStore = new WorkboardStore({ dataDir: tempDir });
+        const nextStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
         await nextStore.init();
         return nextStore;
       })
@@ -1739,7 +1739,7 @@ describe("WorkboardStore", () => {
   });
 
   it("defaults bootstrapped agents to their active project and only searches all projects when requested", async () => {
-    store = new WorkboardStore({ dataDir: tempDir, defaultProjectKey: "TEAM" });
+    store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", defaultProjectKey: "TEAM" });
     await store.init();
     const team = await store.createProject({ name: "Team Board", key: "TEAM" });
     const teamTask = await store.createTask({
@@ -2249,8 +2249,8 @@ describe("WorkboardStore", () => {
       role: "implementer"
     });
 
-    const firstStore = new WorkboardStore({ dataDir: tempDir });
-    const secondStore = new WorkboardStore({ dataDir: tempDir });
+    const firstStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
+    const secondStore = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
     await firstStore.init();
     await secondStore.init();
 
@@ -3018,7 +3018,7 @@ describe("WorkboardStore", () => {
     );
 
     const importDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-import-store-"));
-    const targetStore = new WorkboardStore({ dataDir: importDir });
+    const targetStore = new WorkboardStore({ dataDir: importDir, storageMode: "json" });
     await targetStore.init();
     try {
       const imported = await targetStore.importProjectBackup(backup, { actor: "restore-agent" });

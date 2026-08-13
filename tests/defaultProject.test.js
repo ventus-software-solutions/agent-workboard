@@ -7,7 +7,7 @@ import { WorkboardStore } from "../server/storage/workboardStore.js";
 let tempDir;
 
 async function openStore(options = {}) {
-  const store = new WorkboardStore({ dataDir: tempDir, ...options });
+  const store = new WorkboardStore({ dataDir: tempDir, storageMode: "json", ...options });
   await store.init();
   return store;
 }
