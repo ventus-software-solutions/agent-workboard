@@ -159,7 +159,7 @@ test("preserves an unsaved drawer edit when another browser context updates the 
   }
 });
 
-test("shows a disconnected polling status when board-state refresh fails", async ({ browser }) => {
+test("shows a reconnecting polling status and recovers after board-state failures", async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   let failBoardState = false;
@@ -185,8 +185,13 @@ test("shows a disconnected polling status when board-state refresh fails", async
     failBoardState = true;
 
     const refreshStatus = page.locator(".refreshStatus");
-    await expect(refreshStatus).toContainText("Disconnected", { timeout: pollTimeout });
+    await expect(refreshStatus).toContainText("Reconnecting…", { timeout: pollTimeout });
+    await expect(refreshStatus).toContainText("Retry at");
     await expect(refreshStatus).toHaveAttribute("title", "Synthetic board-state outage");
+
+    failBoardState = false;
+    await expectLiveRefresh(page);
+    await expect(refreshStatus).toHaveAttribute("title", "Board refresh status");
   } finally {
     await context.close();
   }
