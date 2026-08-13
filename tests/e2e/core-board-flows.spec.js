@@ -582,7 +582,7 @@ test("keeps wrapped task-card content inside the card at responsive widths", asy
   const projectKey = uniqueKey("LAY");
   const longTitle =
     "Backend/frontend implementer: add task dependency and blocker links with a very long wrapped title for clipping coverage";
-  const longAssignee = "implementer-backend-very-long-assignee-name-that-wraps-cleanly";
+  const longAssignee = "implementer-backend-1";
 
   await page.goto(baseURL);
   await page.getByRole("button", { name: "Project", exact: true }).click();
@@ -756,6 +756,80 @@ test("saves comma-separated drawer labels as task label arrays", async ({ page }
       return updated.task.labels;
     })
     .toEqual(["alpha", "beta", "gamma"]);
+});
+
+test("renders safe task markdown and makes filters, task pickers, and assignee validation explicit", async ({ page }) => {
+  const projectName = uniqueName("E2E UI Polish Project");
+  const projectKey = uniqueKey("POL");
+  const parentTitle = uniqueName("Searchable parent task");
+  const childTitle = uniqueName("Markdown child task");
+  const projectResult = await postJson(page, "/api/projects", { name: projectName, key: projectKey });
+  const parentResult = await postJson(page, "/api/tasks", {
+    projectId: projectResult.project.id,
+    title: parentTitle,
+    status: "ready",
+    role: "implementer",
+    priority: "normal"
+  });
+  const childResult = await postJson(page, "/api/tasks", {
+    projectId: projectResult.project.id,
+    title: childTitle,
+    description: "## Gap\nUse **safe emphasis** and [docs](https://example.com/spec). <img src=x onerror=alert(1)>",
+    status: "ready",
+    role: "implementer",
+    priority: "normal"
+  });
+  const slotsResponse = await page.request.get(`${apiBaseURL}/api/agent-slots`);
+  expect(slotsResponse.ok()).toBe(true);
+  const slotPayload = await slotsResponse.json();
+  const configuredAssignee = slotPayload.slots.find((slot) => slot.id)?.id;
+  expect(configuredAssignee).toBeTruthy();
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  const card = taskCard(page, childTitle);
+  await expect(card.locator(".roleNamePill")).toContainText("Implementer");
+  await expect(card.locator(".safeMarkdown h4")).toHaveText("Gap");
+  await expect(card.locator(".safeMarkdown strong")).toHaveText("safe emphasis");
+  await expect(card.locator(".safeMarkdown")).not.toContainText("## Gap");
+  await expect(card.locator(".safeMarkdown img")).toHaveCount(0);
+  await page.context().route("https://example.com/spec", (route) => route.fulfill({ body: "docs" }));
+  const docsPopupPromise = page.waitForEvent("popup");
+  await card.getByRole("link", { name: "docs" }).click();
+  const docsPopup = await docsPopupPromise;
+  await docsPopup.close();
+  await expect(page.locator(".drawer")).toHaveCount(0);
+
+  await page.getByPlaceholder("Search tasks").fill(childTitle);
+  const filterBanner = page.getByRole("region", { name: "Active task filters" });
+  await expect(filterBanner).toContainText("Filtered view");
+  await expect(filterBanner).toContainText(childTitle);
+  await filterBanner.getByRole("button", { name: "Clear all" }).click();
+  await expect(filterBanner).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Implementer Agent/ }).click();
+  await expect(page.getByRole("region", { name: "Active task filters" })).toContainText("Role: Implementer Agent");
+  await page.getByRole("region", { name: "Active task filters" }).getByRole("button", { name: "Clear all" }).click();
+
+  await card.click();
+  const drawer = page.locator(".drawer");
+  await expect(drawer.locator(".descriptionPreview h4")).toHaveText("Gap");
+  await drawer.getByLabel("Parent task search").fill("Searchable parent");
+  await expect(drawer.getByLabel("Parent task", { exact: true }).locator("option")).toHaveCount(2);
+  await drawer.getByLabel("Parent task", { exact: true }).selectOption(parentResult.task.id);
+
+  await drawer.getByLabel("Assignee").fill("not-a-configured-slot");
+  await expect(drawer.getByText("Choose a configured agent slot or leave unassigned.")).toBeVisible();
+  await expect(drawer.getByRole("button", { name: "Save" })).toBeDisabled();
+  await drawer.getByLabel("Assignee").fill(configuredAssignee);
+  await expect(drawer.getByRole("button", { name: "Save" })).toBeEnabled();
+  await drawer.getByRole("button", { name: "Save" }).click();
+
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("tab", { name: /Coordination/ }).click();
+  await page.getByLabel("Talk task filter search").fill("Markdown child");
+  await expect(page.getByLabel("Talk task filter", { exact: true }).locator("option")).toHaveCount(2);
+  await page.getByLabel("Talk task filter", { exact: true }).selectOption(childResult.task.id);
 });
 
 test("shows, filters, creates, and edits work item types in the task UI", async ({ page }) => {

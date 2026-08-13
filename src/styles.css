@@ -658,6 +658,32 @@ button {
   flex-wrap: wrap;
 }
 
+.activeFilterBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #4d6975;
+  border-radius: 8px;
+  background: #182832;
+  color: #ccecf5;
+}
+
+.activeFilterBanner > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.activeFilterBanner span {
+  color: #a9c8d2;
+  overflow-wrap: anywhere;
+}
+
 .workspaceTabsRow {
   display: flex;
   align-items: center;
@@ -921,7 +947,7 @@ button {
 
 .talksPanel {
   display: grid;
-  grid-template-rows: auto auto minmax(340px, 1fr);
+  grid-template-rows: auto auto minmax(380px, 1fr);
   gap: 10px;
   min-height: min(650px, calc(100vh - 350px));
   padding: 12px;
@@ -1155,6 +1181,18 @@ button {
 
 .talkFilters {
   grid-template-columns: 1fr;
+}
+
+.searchableTaskPicker {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.searchableTaskPicker > span,
+.searchableTaskPicker > small {
+  color: #9eabb8;
+  font-size: 11px;
 }
 
 .talkFilters input,
@@ -2252,15 +2290,79 @@ button {
   overflow-wrap: anywhere;
 }
 
-.taskCard p {
+.safeMarkdown {
+  color: #c7d2dc;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.safeMarkdown > :first-child {
+  margin-top: 0;
+}
+
+.safeMarkdown > :last-child {
+  margin-bottom: 0;
+}
+
+.safeMarkdown h3,
+.safeMarkdown h4,
+.safeMarkdown h5 {
+  margin: 10px 0 5px;
+  color: #edf5fb;
+  font-size: 14px;
+}
+
+.safeMarkdown p,
+.safeMarkdown ul,
+.safeMarkdown ol {
+  margin: 6px 0;
+}
+
+.safeMarkdown ul,
+.safeMarkdown ol {
+  padding-left: 20px;
+}
+
+.safeMarkdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #10161b;
+  color: #bce9f5;
+}
+
+.safeMarkdown a {
+  color: #8edcf3;
+}
+
+.safeMarkdown.compact {
   display: -webkit-box;
-  margin: 0;
   color: #aeb9c6;
   font-size: 13px;
   line-height: 1.35;
   overflow: hidden;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+.safeMarkdown.compact h3,
+.safeMarkdown.compact h4,
+.safeMarkdown.compact h5,
+.safeMarkdown.compact p,
+.safeMarkdown.compact ul,
+.safeMarkdown.compact ol {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+}
+
+.safeMarkdown.compact li {
+  display: inline;
+}
+
+.safeMarkdown.compact li + li::before,
+.safeMarkdown.compact > * + *::before {
+  content: " · ";
 }
 
 .taskDeliveryLinks {
@@ -2529,6 +2631,7 @@ button {
 .statusPill,
 .workflowPill,
 .workItemTypePill,
+.roleNamePill,
 .relationshipPill,
 .attachmentPill,
 .completionPill,
@@ -2649,6 +2752,12 @@ button {
 .workItemTypePill.container {
   background: #3f3520;
   color: #ffd991;
+}
+
+.roleNamePill {
+  border: 1px solid #455866;
+  background: #25313a;
+  color: #d3e4ec;
 }
 
 .relationshipPill {
@@ -3278,6 +3387,32 @@ button {
 
 .formGrid select[multiple] {
   min-height: 104px;
+}
+
+.descriptionPreview {
+  max-height: 220px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #303b45;
+  border-radius: 8px;
+  background: #121920;
+}
+
+.fieldPreviewLabel {
+  color: #8f9daa;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fieldError {
+  color: #ffb2be;
+  font-weight: 650;
+}
+
+.formGrid input[aria-invalid="true"] {
+  border-color: #a95866;
+  box-shadow: 0 0 0 2px rgb(169 88 102 / 18%);
 }
 
 .projectPreflight {

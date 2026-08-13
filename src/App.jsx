@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Archive,
@@ -45,6 +45,7 @@ import { describeSystemStatus } from "./lib/systemStatus.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
 import { HelpPopover } from "./components/HelpPopover.jsx";
 import { LinkifiedText } from "./components/LinkifiedText.jsx";
+import { SafeMarkdown } from "./components/SafeMarkdown.jsx";
 import { TaskDeliveryLinks } from "./components/TaskDeliveryLinks.jsx";
 
 const DRAG_START_THRESHOLD = 8;
@@ -1127,6 +1128,7 @@ export function App() {
           workItemTypes={meta.workItemTypes}
           completionTypes={meta.completionTypes}
           capabilities={capabilities}
+          agentSlots={agentSlots.slots}
           onClose={() => setSelectedTaskId("")}
           onMutate={runMutation}
           onReload={() => refreshTasks()}
@@ -1138,6 +1140,7 @@ export function App() {
           projectId={selectedProjectId}
           roles={meta.roles}
           workItemTypes={meta.workItemTypes}
+          agentSlots={agentSlots.slots}
           onClose={() => setIsCreatingTask(false)}
           onCreate={(payload) =>
             mutate(async () => {
@@ -1281,6 +1284,66 @@ function selectedOptionValues(event) {
   return Array.from(event.target.selectedOptions).map((option) => option.value).filter(Boolean);
 }
 
+function SearchableTaskSelect({ label, value, options, onChange, emptyLabel, className = "" }) {
+  const [query, setQuery] = useState("");
+  const normalizedQuery = query.trim().toLowerCase();
+  const selected = options.find((option) => option.id === value);
+  const filtered = normalizedQuery
+    ? options.filter((option) => `${option.title} ${option.id}`.toLowerCase().includes(normalizedQuery))
+    : options;
+  const visibleOptions = selected && !filtered.some((option) => option.id === selected.id)
+    ? [selected, ...filtered]
+    : filtered;
+
+  return (
+    <label className={["searchableTaskPicker", className].filter(Boolean).join(" ")}>
+      <span>{label}</span>
+      <input
+        type="search"
+        aria-label={`${label} search`}
+        value={query}
+        placeholder="Search by title or id"
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
+        <option value="">{emptyLabel}</option>
+        {visibleOptions.map((option) => (
+          <option key={option.id} value={option.id}>{option.title}</option>
+        ))}
+      </select>
+      {normalizedQuery && <small>{filtered.length} matching task{filtered.length === 1 ? "" : "s"}</small>}
+    </label>
+  );
+}
+
+function AssigneeCombobox({ value, onChange, agentSlots, className = "" }) {
+  const listId = useId();
+  const options = [...new Set((agentSlots || []).map((slot) => slot.id).filter(Boolean))].sort();
+  const valid = !value || options.includes(value);
+  return (
+    <label className={className}>
+      Assignee
+      <input
+        aria-label="Assignee"
+        aria-invalid={!valid}
+        aria-describedby={valid ? undefined : `${listId}-error`}
+        list={listId}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Choose a configured slot"
+      />
+      <datalist id={listId}>
+        {options.map((agentId) => <option key={agentId} value={agentId} />)}
+      </datalist>
+      {!valid && <small className="fieldError" id={`${listId}-error`}>Choose a configured agent slot or leave unassigned.</small>}
+    </label>
+  );
+}
+
+function validConfiguredAssignee(value, agentSlots) {
+  return !value || (agentSlots || []).some((slot) => slot.id === value);
+}
+
 function IntegrationStatusPill({ status }) {
   if (!status) return null;
   const needsReconcile = status.sourceOfTruth === "reconcile-first";
@@ -1356,6 +1419,14 @@ function TasksWorkspace({
   onMoveTask,
   onRecoverClaim
 }) {
+  const role = roles.find((candidate) => candidate.id === filters.role);
+  const activeFilters = [
+    filters.q ? `Search: “${filters.q}”` : "",
+    filters.role ? `Role: ${role?.label || filters.role}` : "",
+    filters.assignee ? `Assignee: ${filters.assignee}` : "",
+    filters.workItemType ? `Type: ${workItemTypeLabel(workItemTypes, filters.workItemType)}` : ""
+  ].filter(Boolean);
+
   return (
     <div className="tasksWorkspace">
       <div className="filterBar">
@@ -1403,6 +1474,24 @@ function TasksWorkspace({
           </button>
         )}
       </div>
+
+      {activeFilters.length > 0 && (
+        <section className="activeFilterBanner" aria-label="Active task filters">
+          <div>
+            <Filter size={16} />
+            <strong>Filtered view</strong>
+            <span>{activeFilters.join(" · ")}</span>
+          </div>
+          <button
+            type="button"
+            className="ghostButton"
+            onClick={() => onFilterChange({ q: "", role: "", assignee: "", workItemType: "" })}
+          >
+            <X size={15} />
+            <span>Clear all</span>
+          </button>
+        </section>
+      )}
 
       <KanbanBoard
         statuses={statuses}
@@ -2209,18 +2298,13 @@ function AgentTalksPanel({ projectId, talks, tasks, filters, onFilterChange, onS
               placeholder="Agent"
               onChange={(event) => onFilterChange({ agentId: event.target.value })}
             />
-            <select
-              aria-label="Talk task filter"
+            <SearchableTaskSelect
+              label="Talk task filter"
               value={filters.taskId}
-              onChange={(event) => onFilterChange({ taskId: event.target.value })}
-            >
-              <option value="">All tasks</option>
-              {tasks.map((task) => (
-                <option key={task.id} value={task.id}>
-                  {task.title}
-                </option>
-              ))}
-            </select>
+              options={tasks}
+              emptyLabel="All tasks"
+              onChange={(taskId) => onFilterChange({ taskId })}
+            />
           </div>
         </div>
 
@@ -2953,6 +3037,10 @@ function TaskCard({
             {workItemType.label}
           </span>
         )}
+        <span className="roleNamePill" title={role?.summary || task.role}>
+          <Icon size={13} />
+          {role?.label || task.role}
+        </span>
         {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
         {task.reviewedBy && <span className="stageOwnerPill">Review: {task.reviewedBy}</span>}
         {task.testedBy && <span className="stageOwnerPill">Testing: {task.testedBy}</span>}
@@ -3012,13 +3100,9 @@ function TaskCard({
         )}
       </div>
       <h4>{task.title}</h4>
-      <p><LinkifiedText>{task.description || "No description yet."}</LinkifiedText></p>
+      <SafeMarkdown compact>{task.description || "No description yet."}</SafeMarkdown>
       <TaskDeliveryLinks task={task} compact />
       <div className="taskMeta">
-        <span title={role?.summary}>
-          <Icon size={14} />
-          {role?.label || task.role}
-        </span>
         <span title={task.assignee || "Unassigned"}>{task.assignee || "Unassigned"}</span>
       </div>
       <div className="taskActions">
@@ -3039,7 +3123,7 @@ function TaskCard({
   );
 }
 
-function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTypes, capabilities, onClose, onMutate, onReload }) {
+function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTypes, capabilities, agentSlots, onClose, onMutate, onReload }) {
   const [comment, setComment] = useState("");
   const [drawerError, setDrawerError] = useState(null);
   const [retryAction, setRetryAction] = useState(null);
@@ -3052,6 +3136,7 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
   const [verificationDraft, setVerificationDraft] = useState(() => defaultVerificationDraft(task));
   const taskVersionRef = useRef({ id: task.id, revision: task.revision, updatedAt: task.updatedAt });
   const relationshipOptions = tasks.filter((candidate) => candidate.projectId === task.projectId && candidate.id !== task.id);
+  const assigneeValid = validConfiguredAssignee(draft.assignee, agentSlots);
 
   useEffect(() => {
     const previous = taskVersionRef.current;
@@ -3245,14 +3330,7 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
           Title
           <input value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} />
         </label>
-        <label>
-          Assignee
-          <input
-            value={draft.assignee}
-            onChange={(event) => updateDraft({ assignee: event.target.value })}
-            placeholder="agent name"
-          />
-        </label>
+        <AssigneeCombobox value={draft.assignee} onChange={(assignee) => updateDraft({ assignee })} agentSlots={agentSlots} />
         <label>
           Role
           <select value={draft.role} onChange={(event) => updateDraft({ role: event.target.value })}>
@@ -3306,6 +3384,8 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
             value={draft.description}
             onChange={(event) => updateDraft({ description: event.target.value })}
           />
+          <span className="fieldPreviewLabel">Preview</span>
+          <SafeMarkdown className="descriptionPreview">{draft.description || "No description yet."}</SafeMarkdown>
         </label>
         <label className="wide">
           Pull request URL
@@ -3324,21 +3404,14 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
             placeholder="implementer/task-slug"
           />
         </label>
-        <label className="wide">
-          Parent task
-          <select
-            aria-label="Parent task"
-            value={draft.parentTaskId}
-            onChange={(event) => updateDraft({ parentTaskId: event.target.value })}
-          >
-            <option value="">No parent</option>
-            {relationshipOptions.map((candidate) => (
-              <option key={candidate.id} value={candidate.id}>
-                {candidate.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SearchableTaskSelect
+          className="wide"
+          label="Parent task"
+          value={draft.parentTaskId}
+          options={relationshipOptions}
+          emptyLabel="No parent"
+          onChange={(parentTaskId) => updateDraft({ parentTaskId })}
+        />
         <label>
           Depends on
           <select
@@ -3386,6 +3459,7 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
         </label>
         <button
           className="primaryButton wide"
+          disabled={!assigneeValid}
           onClick={() =>
             runDrawerMutation(async () => {
               await api.updateTask(task.id, {
@@ -3930,7 +4004,7 @@ function CompletionPanel({ task, completionTypes, capabilities, draft, setDraft,
   );
 }
 
-function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }) {
+function CreateTaskDialog({ projectId, roles, workItemTypes, agentSlots, onClose, onCreate }) {
   const [draft, setDraft] = useState({
     projectId,
     title: "",
@@ -3944,6 +4018,7 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
     labels: "",
     touches: ""
   });
+  const assigneeValid = validConfiguredAssignee(draft.assignee, agentSlots);
 
   return (
     <Dialog title="New task" onClose={onClose}>
@@ -3986,10 +4061,12 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
             ))}
           </select>
         </label>
-        <label className="wide">
-          Assignee
-          <input value={draft.assignee} onChange={(event) => setDraft({ ...draft, assignee: event.target.value })} />
-        </label>
+        <AssigneeCombobox
+          className="wide"
+          value={draft.assignee}
+          onChange={(assignee) => setDraft({ ...draft, assignee })}
+          agentSlots={agentSlots}
+        />
         <label className="wide">
           Labels
           <input value={draft.labels} onChange={(event) => setDraft({ ...draft, labels: event.target.value })} />
@@ -4027,7 +4104,7 @@ function CreateTaskDialog({ projectId, roles, workItemTypes, onClose, onCreate }
             placeholder="implementer/task-slug"
           />
         </label>
-        <button className="primaryButton wide" onClick={() => onCreate(draft)} disabled={!draft.title.trim()}>
+        <button className="primaryButton wide" onClick={() => onCreate(draft)} disabled={!draft.title.trim() || !assigneeValid}>
           <Plus size={17} />
           <span>Create task</span>
         </button>
