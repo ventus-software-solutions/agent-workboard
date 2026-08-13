@@ -139,6 +139,23 @@ describe("Agent Workboard API", () => {
     expect(genericReviewerMarkdown.text).not.toContain("concrete assignee id such as reviewer");
   }, 15000);
 
+  it("uses WORKBOARD_WORKTREE_PREFIX in generated agent instructions", async () => {
+    const previousPrefix = process.env.WORKBOARD_WORKTREE_PREFIX;
+    process.env.WORKBOARD_WORKTREE_PREFIX = "vergleichshai-worktree";
+
+    try {
+      const markdown = await request(app).get("/api/agent-docs/implementer-backend-1?format=md").expect(200);
+      expect(markdown.text).toContain("vergleichshai-worktree-implementer-backend-1-<slug>");
+      expect(markdown.text).not.toContain("wt-agent-workboard-implementer-backend-1-<slug>");
+    } finally {
+      if (previousPrefix === undefined) {
+        delete process.env.WORKBOARD_WORKTREE_PREFIX;
+      } else {
+        process.env.WORKBOARD_WORKTREE_PREFIX = previousPrefix;
+      }
+    }
+  });
+
   it("creates a project and a task, then moves the task", async () => {
     const projectResponse = await request(app)
       .post("/api/projects")

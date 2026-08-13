@@ -98,6 +98,7 @@ All settings are environment variables. All are optional.
 | `WORKBOARD_STORAGE` | `sqlite` | `sqlite` or `json`. See [Storage](#storage). |
 | `WORKBOARD_DEFAULT_PROJECT_KEY` | unset | Project key agents land in when they have not chosen one. Falls back to `DEMO`. |
 | `WORKBOARD_WORKTREE_ROOT` | `..` | Where the worktree commands in agent instructions point. Defaults to a sibling of the repo. |
+| `WORKBOARD_WORKTREE_PREFIX` | `wt-agent-workboard` | Directory-name prefix used by generated worktree commands and cleanup matching. |
 | `WORKBOARD_REPO_DIR` | repo root | Repository the board inspects for branch and worktree status. |
 
 ### Storage
