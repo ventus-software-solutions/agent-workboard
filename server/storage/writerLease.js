@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { link, mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 
 const WRITER_LEASE_FILE = ".workboard-writer.lock";
@@ -15,25 +15,24 @@ export async function acquireWriterLease(
     owner = "workboard",
     pid = process.pid,
     now = () => new Date(),
-    isPidAlive = defaultIsPidAlive
+    isPidAlive = defaultIsPidAlive,
+    beforePublish = null
   } = {}
 ) {
   const resolvedDataDir = path.resolve(dataDir);
   const leasePath = writerLeasePath(resolvedDataDir);
   const token = randomUUID();
+  const pendingPath = `${leasePath}.pending-${pid}-${token}`;
+  const leaseContents = `${JSON.stringify(
+    { schemaVersion: 1, token, pid, owner, acquiredAt: now().toISOString() },
+    null,
+    2
+  )}\n`;
   await mkdir(resolvedDataDir, { recursive: true });
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const handle = await open(leasePath, "wx");
-      try {
-        await handle.writeFile(
-          `${JSON.stringify({ schemaVersion: 1, token, pid, owner, acquiredAt: now().toISOString() }, null, 2)}\n`,
-          "utf8"
-        );
-      } finally {
-        await handle.close();
-      }
+      await publishCompleteLease({ pendingPath, leasePath, leaseContents, beforePublish });
 
       let released = false;
       return {
@@ -75,6 +74,28 @@ export async function acquireWriterLease(
   }
 
   throw writerActiveError(leasePath, await readLease(leasePath));
+}
+
+async function publishCompleteLease({ pendingPath, leasePath, leaseContents, beforePublish }) {
+  let handle;
+  try {
+    handle = await open(pendingPath, "wx");
+    await handle.writeFile(leaseContents, "utf8");
+    await handle.sync();
+    await beforePublish?.({ handle, pendingPath, leasePath });
+    await handle.close();
+    handle = null;
+
+    // A hard-link create is atomic and refuses to replace an existing path on
+    // both POSIX and Windows. The public lease therefore appears only after
+    // its complete metadata is durable in a same-directory file.
+    await link(pendingPath, leasePath);
+  } finally {
+    await handle?.close().catch(() => {});
+    await unlink(pendingPath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
 }
 
 async function readLease(leasePath) {

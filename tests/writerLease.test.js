@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -47,5 +47,47 @@ describe("workboard writer lease", () => {
     await expect(
       acquireWriterLease(dataDir, { owner: "third", pid: 606, isPidAlive: () => true })
     ).rejects.toMatchObject({ owner: "replacement", ownerPid: 505 });
+  });
+
+  it("never exposes an incomplete lease that a delayed live initializer can lose", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "workboard-writer-delayed-"));
+    tempDirs.push(dataDir);
+    let signalPrepared;
+    let resumeFirst;
+    const prepared = new Promise((resolve) => {
+      signalPrepared = resolve;
+    });
+    const resume = new Promise((resolve) => {
+      resumeFirst = resolve;
+    });
+
+    const firstAttempt = acquireWriterLease(dataDir, {
+      owner: "delayed-http-daemon",
+      pid: 707,
+      isPidAlive: () => true,
+      beforePublish: async () => {
+        signalPrepared();
+        await resume;
+      }
+    });
+    await prepared;
+
+    await expect(stat(writerLeasePath(dataDir))).rejects.toMatchObject({ code: "ENOENT" });
+    const second = await acquireWriterLease(dataDir, {
+      owner: "mcp-stdio",
+      pid: 808,
+      now: () => new Date(Date.now() + 10_000),
+      isPidAlive: () => true
+    });
+    const published = JSON.parse(await readFile(writerLeasePath(dataDir), "utf8"));
+    expect(published).toMatchObject({ owner: "mcp-stdio", pid: 808 });
+
+    resumeFirst();
+    await expect(firstAttempt).rejects.toMatchObject({
+      code: "WORKBOARD_WRITER_ACTIVE",
+      owner: "mcp-stdio",
+      ownerPid: 808
+    });
+    expect(await second.release()).toBe(true);
   });
 });
