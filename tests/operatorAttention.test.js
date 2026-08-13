@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildBootstrapPrompt, buildOperatorAttention, describeOperatorAction } from "../src/lib/operatorAttention.js";
+import {
+  buildBootstrapPrompt,
+  buildOperatorAttention,
+  describeOperatorAction,
+  usesDedicatedSpawnRemedy
+} from "../src/lib/operatorAttention.js";
 
 const PROMPT_TEMPLATE =
   "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you.";
@@ -227,6 +232,24 @@ describe("operator attention selector", () => {
     }).actions.find((action) => action.kind === "stalled");
     expect(withLivingAgent.spawnPrompt).toBe("");
     expect(withLivingAgent.doThis).not.toContain("then spawn");
+  });
+
+  it("keeps grooming's dedicated PM spawn remedy singular when no PM is active", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("groom", { status: "backlog", priority: "", role: "" })],
+      agentRegistry: registry(),
+      promptTemplate: PROMPT_TEMPLATE,
+      origin: "https://board.example"
+    });
+    const grooming = result.actions.find((action) => action.kind === "grooming");
+
+    expect(grooming).toMatchObject({
+      doThis: "Click Groom now to open the first item, or Spawn PM to delegate grooming.",
+      spawnRole: "pm",
+      spawnPrompt: expect.stringContaining("https://board.example/api/agent-docs/pm")
+    });
+    expect(grooming.doThis).not.toContain("then spawn");
+    expect(usesDedicatedSpawnRemedy(grooming.kind)).toBe(true);
   });
 
   it("gives unknown inbox kinds an honest imperative fallback", () => {

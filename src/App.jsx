@@ -36,7 +36,7 @@ import { api } from "./lib/api.js";
 import { buildAgentBootstrapPrompt, buildAgentRegistry } from "./lib/agentRegistry.js";
 import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
 import { copyTextToClipboard } from "./lib/clipboard.js";
-import { buildOperatorAttention } from "./lib/operatorAttention.js";
+import { buildOperatorAttention, usesDedicatedSpawnRemedy } from "./lib/operatorAttention.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
@@ -2344,7 +2344,7 @@ function OperatorAttentionPanel({
                   )}
                 </div>
                 <div className="operatorAttentionActions">
-                  {action.spawnPrompt && action.kind !== "role_gap" && (
+                  {action.spawnPrompt && !usesDedicatedSpawnRemedy(action.kind) && (
                     <button className="attentionSecondaryAction" onClick={() => copyAction(action, action.spawnPrompt)}>
                       <Copy size={14} />
                       <span>{copiedActionId === action.id ? "Copied" : `Copy ${action.spawnRole} prompt`}</span>

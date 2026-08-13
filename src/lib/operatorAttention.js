@@ -209,7 +209,7 @@ export function describeOperatorAction(action, { activeRoles = new Map(), prompt
     ? buildBootstrapPrompt({ template: promptTemplate, agentType: role, origin })
     : "";
   const copy = attentionCopy(action);
-  const doThis = spawnPrompt && action.kind !== "role_gap"
+  const doThis = spawnPrompt && !usesDedicatedSpawnRemedy(action.kind)
     ? `${copy.doThis.replace(/[.!?]\s*$/, "")}, then spawn ${indefiniteArticle(role)} ${role}.`
     : copy.doThis;
   return {
@@ -220,6 +220,10 @@ export function describeOperatorAction(action, { activeRoles = new Map(), prompt
     spawnPrompt,
     spawnRole: spawnPrompt ? role : ""
   };
+}
+
+export function usesDedicatedSpawnRemedy(kind) {
+  return ["role_gap", "grooming"].includes(kind);
 }
 
 function indefiniteArticle(value) {
