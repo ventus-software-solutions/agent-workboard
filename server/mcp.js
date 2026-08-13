@@ -59,10 +59,42 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
     "list_projects",
     {
       title: "List projects",
-      description: "List active workboard projects.",
-      inputSchema: {}
+      description: "List workboard projects, with archived projects excluded unless requested.",
+      inputSchema: {
+        includeArchived: z.boolean().optional()
+      }
     },
-    async () => asText({ projects: store.listProjects() })
+    async (input) => asText({ projects: store.listProjects({ includeArchived: input.includeArchived }) })
+  );
+
+  server.registerTool(
+    "update_project",
+    {
+      title: "Update project",
+      description: "Update a project's name, description, or archived state. Archiving is refused while active work remains.",
+      inputSchema: {
+        projectId: z.string(),
+        name: z.string().optional(),
+        description: z.string().optional(),
+        archived: z.boolean().optional(),
+        actor: z.string().optional()
+      }
+    },
+    async (input) => asText({ project: await store.updateProject(input.projectId, input, input.actor) })
+  );
+
+  server.registerTool(
+    "delete_project",
+    {
+      title: "Delete project",
+      description: "Permanently delete a project and its owned records after exact-name confirmation. Refused while active work remains.",
+      inputSchema: {
+        projectId: z.string(),
+        confirmationName: z.string(),
+        actor: z.string().optional()
+      }
+    },
+    async (input) => asText({ deletion: await store.deleteProject(input.projectId, input) })
   );
 
   server.registerTool(

@@ -288,6 +288,10 @@ button {
   background: #20333b;
 }
 
+.projectButton.archived {
+  opacity: 0.72;
+}
+
 .projectKey {
   display: inline-flex;
   justify-content: center;
@@ -301,10 +305,30 @@ button {
 }
 
 .projectName {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.projectName small {
+  color: #8b98a7;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.archivedProjectsToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 0;
+  color: #9eabb9;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .rolePanel {
@@ -365,6 +389,9 @@ button {
 }
 
 .settingsWorkspace {
+  display: grid;
+  align-content: start;
+  gap: 18px;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -377,6 +404,160 @@ button {
   border: 1px solid #303740;
   border-radius: 10px;
   background: #171c22;
+}
+
+.projectOverviewGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.projectOverviewGrid > div {
+  padding: 12px;
+  border: 1px solid #303740;
+  border-radius: 8px;
+  background: #11161b;
+}
+
+.projectOverviewGrid dt {
+  color: #8b98a7;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.projectOverviewGrid dd {
+  margin: 5px 0 0;
+  color: #eef2f7;
+  font-size: 19px;
+  font-weight: 750;
+}
+
+.scopeChip.archived {
+  border-color: #6b5f47;
+  color: #e7cf9f;
+  background: #342d20;
+}
+
+.dangerZone {
+  border-color: #663c3c;
+}
+
+.dangerZoneAction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 0;
+  border-top: 1px solid #303740;
+}
+
+.dangerZoneAction:first-of-type {
+  margin-top: 18px;
+}
+
+.dangerZoneAction p {
+  max-width: 650px;
+  margin: 6px 0 0;
+  color: #9eabb9;
+  line-height: 1.45;
+}
+
+.dangerZoneAction button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+.permanentAction {
+  border-top-color: #533333;
+}
+
+.lifecycleError {
+  margin-top: 12px;
+}
+
+.lifecycleGuardNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid #695530;
+  border-radius: 7px;
+  color: #f0d59a;
+  background: #2b251a;
+  font-size: 13px;
+}
+
+.projectDeleteBackdrop {
+  position: fixed;
+  z-index: 89;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(4 7 10 / 0.76);
+}
+
+.projectDeleteDialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  margin: 0;
+  padding: 24px;
+  overflow: auto;
+  border: 1px solid #784343;
+  border-radius: 12px;
+  color: #eef2f7;
+  background: #171c22;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 0.6);
+}
+
+.projectDeleteDialog input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid #4d5661;
+  border-radius: 7px;
+  color: #eef2f7;
+  background: #0f1419;
+}
+
+.deleteCounts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 20px;
+  margin: 0 0 22px;
+  padding-left: 20px;
+  color: #c7d0da;
+}
+
+.dialogActions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.dialogActions button {
+  min-height: 38px;
+  padding: 0 12px;
+}
+
+@media (max-width: 700px) {
+  .projectOverviewGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dangerZoneAction {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .deleteCounts {
+    grid-template-columns: 1fr;
+  }
 }
 
 .settingsPanelHeader,

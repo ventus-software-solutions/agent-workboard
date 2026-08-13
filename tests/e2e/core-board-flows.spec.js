@@ -234,6 +234,63 @@ test("edits deployment process rules from Settings and updates generated agent d
   expect(await clearedDoc.text()).not.toContain("Deployment process rules (OVERRIDE defaults)");
 });
 
+test("archives, restores, and permanently deletes a project from Settings", async ({ page }) => {
+  const projectName = uniqueName("E2E Lifecycle Project");
+  const projectResponse = await page.request.post(`${apiBaseURL}/api/projects`, {
+    data: { name: projectName, key: "E2ELIFE", description: "Disposable lifecycle test project." }
+  });
+  expect(projectResponse.ok()).toBe(true);
+  const { project } = await projectResponse.json();
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/tasks`, {
+        data: { projectId: project.id, title: "Parked lifecycle work", status: "ready" }
+      })
+    ).ok()
+  ).toBe(true);
+  expect(
+    (
+      await page.request.post(`${apiBaseURL}/api/projects/${project.id}/talks`, {
+        data: { author: "operator", body: "Lifecycle coordination evidence." }
+      })
+    ).ok()
+  ).toBe(true);
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  const overview = page.locator(".projectOverviewPanel");
+  await expect(overview.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(overview).toContainText("Disposable lifecycle test project.");
+  await expect(overview).toContainText("Tasks1");
+  await expect(overview).toContainText("Talks1");
+
+  await page.getByRole("button", { name: "Archive project" }).click();
+  await expect(page.getByText(`${projectName} was archived.`)).toBeVisible();
+  await page.getByLabel("Show archived").check();
+  const archivedProject = page.getByRole("button", { name: new RegExp(projectName) });
+  await expect(archivedProject).toContainText("Archived");
+  await archivedProject.click();
+  await expect(page.getByRole("button", { name: "Unarchive project" })).toBeVisible();
+  await page.getByRole("button", { name: "Unarchive project" }).click();
+  await expect(page.getByText(`${projectName} was unarchived.`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Delete project" }).click();
+  const dialog = page.getByRole("dialog", { name: `Delete ${projectName}?` });
+  await expect(dialog).toContainText("1 tasks");
+  await expect(dialog).toContainText("1 talk messages");
+  const confirmButton = dialog.getByRole("button", { name: `Delete ${projectName}` });
+  await expect(confirmButton).toBeDisabled();
+  await dialog.getByLabel(new RegExp(`Type ${projectName} to confirm`)).fill(projectName);
+  await expect(confirmButton).toBeEnabled();
+  await confirmButton.click();
+  await expect(page.getByText(`${projectName} and its project-owned records were permanently deleted.`)).toBeVisible();
+  await expect(page.getByRole("button", { name: new RegExp(projectName) })).toHaveCount(0);
+  expect((await page.request.get(`${apiBaseURL}/api/projects?includeArchived=true`)).ok()).toBe(true);
+  const listed = await (await page.request.get(`${apiBaseURL}/api/projects?includeArchived=true`)).json();
+  expect(listed.projects).not.toContainEqual(expect.objectContaining({ id: project.id }));
+});
+
 test("provides keyboard-accessible operator help for every main surface", async ({ page }) => {
   await page.goto(baseURL);
 

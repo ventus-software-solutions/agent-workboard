@@ -43,6 +43,8 @@ describe("Agent Workboard MCP tools", () => {
         ]
       })),
       listProjects: vi.fn(() => []),
+      updateProject: vi.fn((projectId, input) => ({ id: projectId, archived: input.archived })),
+      deleteProject: vi.fn((projectId) => ({ project: { id: projectId }, counts: { tasks: 2 } })),
       listTasks: vi.fn(() => []),
       createTask: vi.fn(),
       decomposeTask: vi.fn((taskId, input) => ({
@@ -138,6 +140,25 @@ describe("Agent Workboard MCP tools", () => {
     registerWorkboardMcpTools(fakeServer, fakeStore);
 
     expect(registrations.map((registration) => registration.name)).toEqual(MCP_TOOL_NAMES);
+
+    const listProjects = registrations.find((registration) => registration.name === "list_projects");
+    await listProjects.handler({ includeArchived: true });
+    expect(fakeStore.listProjects).toHaveBeenCalledWith({ includeArchived: true });
+
+    const updateProject = registrations.find((registration) => registration.name === "update_project");
+    expect(parseTextResult(await updateProject.handler({ projectId: "project_123", archived: true, actor: "operator" }))).toEqual({
+      project: { id: "project_123", archived: true }
+    });
+    expect(fakeStore.updateProject).toHaveBeenCalledWith(
+      "project_123",
+      { projectId: "project_123", archived: true, actor: "operator" },
+      "operator"
+    );
+
+    const deleteProject = registrations.find((registration) => registration.name === "delete_project");
+    expect(parseTextResult(await deleteProject.handler({ projectId: "project_123", confirmationName: "Project 123" }))).toMatchObject({
+      deletion: { project: { id: "project_123" }, counts: { tasks: 2 } }
+    });
 
     const createTask = registrations.find((registration) => registration.name === "create_task");
     expect(createTask.config.inputSchema).toMatchObject({

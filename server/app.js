@@ -240,7 +240,12 @@ export function createApp({
 
   app.get("/api/projects", (req, res, next) => {
     try {
-      res.json({ projects: store.listProjects({ includeArchived: req.query.includeArchived === "true" }) });
+      res.json({
+        projects: store.listProjects({
+          includeArchived: req.query.includeArchived === "true",
+          includeCounts: req.query.includeCounts === "true"
+        })
+      });
     } catch (error) {
       next(error);
     }
@@ -317,6 +322,24 @@ export function createApp({
       }
       const project = await store.createProject(req.body);
       res.status(201).json({ project });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.patch("/api/projects/:projectId", async (req, res, next) => {
+    try {
+      const project = await store.updateProject(req.params.projectId, req.body, req.body.actor);
+      res.json({ project });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.delete("/api/projects/:projectId", async (req, res, next) => {
+    try {
+      const deletion = await store.deleteProject(req.params.projectId, req.body);
+      res.json({ deletion });
     } catch (error) {
       next(error);
     }

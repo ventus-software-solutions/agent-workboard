@@ -57,9 +57,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify(presence)
     }),
-  projects: () => request("/api/projects"),
+  projects: (includeArchived = false, includeCounts = false) => {
+    const params = new URLSearchParams();
+    if (includeArchived) params.set("includeArchived", "true");
+    if (includeCounts) params.set("includeCounts", "true");
+    return request(`/api/projects${params.size ? `?${params}` : ""}`);
+  },
   preflightProject: (input) => request("/api/projects/preflight", { method: "POST", body: JSON.stringify(input) }),
   createProject: (project) => request("/api/projects", { method: "POST", body: JSON.stringify(project) }),
+  updateProject: (projectId, patch) =>
+    request(`/api/projects/${encodeURIComponent(projectId)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteProject: (projectId, input) =>
+    request(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE", body: JSON.stringify(input) }),
   refreshProjectDataSource: (projectId) =>
     request(`/api/projects/${encodeURIComponent(projectId)}/data-source/refresh`, { method: "POST" }),
   capabilities: (filters = {}) => {
