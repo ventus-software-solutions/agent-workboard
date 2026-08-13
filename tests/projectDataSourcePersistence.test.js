@@ -103,13 +103,16 @@ describe("per-project tasks-directory persistence", () => {
     await store.init();
     const folderProject = await store.createProject({ name: "Malformed Folder Project", dataSource: { tasksDir } });
     const healthy = await store.createProject({ name: "Healthy Sibling" });
-    await writeFile(path.join(tasksDir, "task_docs_cleanup", "task.md"), "---\nid: task_docs_cleanup\nstatus: ready\n");
+    await writeFile(
+      path.join(tasksDir, "task_docs_cleanup", "task.md"),
+      "---\nid: task_docs_cleanup\ntitle: Malformed nested metadata\nstatus: ready\nboard:\n  role implementer\n---\nBody\n"
+    );
 
     const degraded = await store.refreshProjectDataSource(folderProject.id);
     expect(degraded.dataSource.health).toMatchObject({
       status: "error",
       code: "INVALID_TASK_FILE",
-      message: expect.stringContaining("missing closing frontmatter delimiter")
+      message: expect.stringContaining("child key followed by a colon")
     });
     expect(store.listTasks({ projectId: folderProject.id })).toHaveLength(0);
     const healthyTask = await store.createTask({ projectId: healthy.id, title: "Sibling remains writable" });

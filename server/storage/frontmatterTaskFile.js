@@ -26,20 +26,28 @@ export function validateTaskFileStructure(raw) {
   for (let index = 1; index < closeIndex; index += 1) {
     const line = lines[index];
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
+    if (!trimmed) {
       hasParent = false;
+      continue;
+    }
+    if (trimmed.startsWith("#")) {
+      if (!/^\s/.test(line)) hasParent = false;
       continue;
     }
     if (!/^\s/.test(line) && PAIR_RE.test(line)) {
       hasParent = true;
       continue;
     }
-    if (/^\s/.test(line) && hasParent) continue;
+    if (/^\s/.test(line) && hasParent && (CHILD_PAIR_RE.test(line) || LIST_ITEM_RE.test(line))) {
+      continue;
+    }
     failures.push({
       line: index + 1,
-      reason: /^\s/.test(line)
-        ? "orphaned indented frontmatter content"
-        : "expected a frontmatter key followed by a colon"
+      reason: !/^\s/.test(line)
+        ? "expected a frontmatter key followed by a colon"
+        : hasParent
+          ? "expected an indented child key followed by a colon, list item (- value), or comment"
+          : "orphaned indented frontmatter content"
     });
     hasParent = false;
   }

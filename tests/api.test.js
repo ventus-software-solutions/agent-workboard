@@ -82,6 +82,28 @@ describe("Agent Workboard API", () => {
     expect(response.body.report.blockers).not.toHaveLength(0);
   });
 
+  it("returns no confirmation token when nested frontmatter syntax is malformed", async () => {
+    const tasksDir = path.join(tempDir, "malformed-nested-tasks");
+    const taskDir = path.join(tasksDir, "malformed-nested");
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      path.join(taskDir, "task.md"),
+      "---\nid: malformed-nested\ntitle: Malformed nested metadata\nstatus: ready\ntype: task\npriority: normal\nboard:\n  role implementer\n---\nBody\n"
+    );
+
+    const response = await request(app).post("/api/projects/preflight").send({ tasksDir }).expect(200);
+
+    expect(response.body.confirmationToken).toBe("");
+    expect(response.body.report).toMatchObject({ go: false, summary: { taskFiles: 1, parsed: 0, failed: 1 } });
+    expect(response.body.report.parse.failed).toEqual([
+      expect.objectContaining({
+        file: "malformed-nested/task.md",
+        line: 8,
+        reason: expect.stringContaining("child key followed by a colon")
+      })
+    ]);
+  });
+
   it("rejects a tasks tree that drifts after a successful preflight", async () => {
     const tasksDir = path.join(tempDir, "drifting-tasks");
     await cp(path.resolve("tests/fixtures/tasksdir"), tasksDir, { recursive: true });
