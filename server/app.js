@@ -1,7 +1,7 @@
 import express from "express";
 import multer from "multer";
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
 import { getIntegrationStatus } from "./integrationStatus.js";
@@ -17,6 +17,8 @@ const upload = multer({
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const packageMetadata = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+const PROCESS_STARTED_AT = new Date().toISOString();
 
 export function createApp({
   store,
@@ -24,7 +26,9 @@ export function createApp({
   worktreeCleanupProvider = createWorktreeCleanupReport,
   worktreeCleanupAction = cleanupWorktree,
   logger = console,
-  staticDir = path.resolve(__dirname, "../dist")
+  staticDir = path.resolve(__dirname, "../dist"),
+  startedAt = PROCESS_STARTED_AT,
+  version = packageMetadata.version
 } = {}) {
   const app = express();
 
@@ -46,6 +50,11 @@ export function createApp({
       completionTypes: store.completionTypes(),
       workItemTypes: store.workItemTypes(),
       capabilityStatuses: store.capabilityStatuses(),
+      server: {
+        startedAt,
+        version,
+        storageMode: store.persistence?.mode || "unknown"
+      },
       integrationStatus: integrationStatus(),
       blockerTypes: store.blockerTypes(),
       operatorApprovalDecisions: store.operatorApprovalDecisions()

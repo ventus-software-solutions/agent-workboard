@@ -41,6 +41,7 @@ import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { createPollingScheduler } from "./lib/polling.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
+import { describeSystemStatus } from "./lib/systemStatus.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
 
 const DRAG_START_THRESHOLD = 8;
@@ -114,13 +115,6 @@ function formatDate(value) {
   }).format(date);
 }
 
-function formatClock(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
 function formatHeartbeatAge(value, currentTime = Date.now()) {
   if (!value) return "No heartbeat";
   const timestamp = Date.parse(value);
@@ -155,6 +149,7 @@ export function App() {
     completionTypes: [],
     workItemTypes: [],
     capabilityStatuses: [],
+    server: null,
     integrationStatus: null,
     blockerTypes: [],
     operatorApprovalDecisions: []
@@ -904,7 +899,7 @@ export function App() {
             )}
           </div>
           <IntegrationStatusPill status={meta.integrationStatus} />
-          <BoardRefreshStatus state={refreshState} />
+          <SystemStatusPill server={meta.server} refreshState={refreshState} />
           <button
             className="primaryButton"
             onClick={() => {
@@ -2543,36 +2538,26 @@ function CapabilityFilters({ filters, statuses, onChange }) {
   );
 }
 
-function BoardRefreshStatus({ state }) {
-  const reconnecting = state.status === "reconnecting" || state.status === "disconnected";
-  const Icon = reconnecting ? WifiOff : RefreshCw;
-  const label =
-    state.status === "updated"
-      ? "Updated"
-      : state.status === "updating"
-        ? "Updating"
-        : reconnecting
-          ? "Reconnecting…"
-          : state.status === "connecting"
-            ? "Connecting"
-            : "Live";
-  const checkedAt = formatClock(state.lastCheckedAt);
-  const updatedAt = formatClock(state.lastUpdatedAt);
-  const nextRetryAt = formatClock(state.nextRetryAt);
+function SystemStatusPill({ server, refreshState }) {
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+  const status = describeSystemStatus({ server, refreshState, now: currentTime });
+  const Icon = status.tone === "disconnected" || status.tone === "reconnecting" ? WifiOff : RefreshCw;
 
   return (
-    <div className={`refreshStatus ${state.status}`} aria-live="polite" title={state.error || "Board refresh status"}>
+    <div
+      className={`refreshStatus ${status.tone}`}
+      aria-live="polite"
+      title={status.title}
+      data-testid="system-status-pill"
+    >
       <Icon size={15} />
-      <span>{label}</span>
-      <time>
-        {reconnecting && nextRetryAt
-          ? `Retry at ${nextRetryAt}`
-          : checkedAt
-            ? `Checked ${checkedAt}`
-            : updatedAt
-              ? `Updated ${updatedAt}`
-              : "Checking"}
-      </time>
+      <span>{status.label}</span>
+      <small>{status.uptimeLabel} · {status.storageMode} · v{status.version}</small>
+      <time>{status.refreshDetail}</time>
     </div>
   );
 }

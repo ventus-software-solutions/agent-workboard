@@ -56,6 +56,16 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await page.goto(baseURL);
   await expect(page.getByRole("heading", { name: "Demo Agent Project" })).toBeVisible();
 
+  const metaResponse = await page.request.get(`${apiBaseURL}/api/meta`);
+  expect(metaResponse.ok()).toBe(true);
+  const { server } = await metaResponse.json();
+  const systemStatus = page.getByTestId("system-status-pill");
+  await expect(systemStatus).toBeVisible();
+  await expect(systemStatus).toContainText("Recent restart");
+  await expect(systemStatus).toContainText(server.storageMode);
+  await expect(systemStatus).toContainText(`v${server.version}`);
+  await expect(systemStatus).toHaveAttribute("title", new RegExp(`Started ${server.startedAt}`));
+
   const readyColumn = page.locator('.kanbanColumn[data-status-id="ready"]');
   await expect(readyColumn.locator(".taskCard", { hasText: "Shape the first release plan" })).toBeVisible();
 
@@ -63,6 +73,23 @@ test("shows the seeded DEMO lifecycle tasks in the ready lane", async ({ page })
   await expect(workflowCard).toBeVisible();
   await expect(workflowCard).toContainText("high");
   await expect(workflowCard).toContainText("Unassigned");
+});
+
+test("shows polling retry context instead of masking it as a recent restart", async ({ page }) => {
+  await page.route("**/api/board-state**", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ error: { message: "Synthetic poll failure" } })
+    });
+  });
+
+  await page.goto(baseURL);
+  const systemStatus = page.getByTestId("system-status-pill");
+  await expect(systemStatus).toContainText("Reconnecting…");
+  await expect(systemStatus.locator("time")).toContainText("Retry at");
+  await expect(systemStatus).not.toContainText("Recent restart");
+  await expect(systemStatus).toHaveAttribute("title", /Synthetic poll failure/);
 });
 
 test("shows stage ownership and structured changes-requested verdicts on tasks", async ({ page }) => {

@@ -478,7 +478,7 @@ button {
   align-items: center;
   gap: 4px 7px;
   min-height: 38px;
-  min-width: 152px;
+  min-width: 210px;
   padding: 5px 10px;
   border: 1px solid #33424b;
   border-radius: 8px;
@@ -486,10 +486,12 @@ button {
   color: #bce7f2;
 }
 
+.refreshStatus small,
 .refreshStatus time {
   grid-column: 2;
   color: #8494a3;
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .refreshStatus.updated,
@@ -497,6 +499,17 @@ button {
   border-color: #3e8c80;
   background: #162823;
   color: #bdf2d1;
+}
+
+.refreshStatus.recentRestart {
+  border-color: #8a7440;
+  background: #2a2418;
+  color: #f6dda0;
+}
+
+.refreshStatus.recentRestart small,
+.refreshStatus.recentRestart time {
+  color: #cdbd91;
 }
 
 .refreshStatus.disconnected,
