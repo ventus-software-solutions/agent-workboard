@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentRegistry } from "../src/lib/agentRegistry.js";
+import { buildAgentBootstrapPrompt, buildAgentRegistry } from "../src/lib/agentRegistry.js";
 
 const roles = [
   { id: "pm", label: "PM Agent" },
   { id: "implementer", label: "Implementer Agent" },
   { id: "reviewer", label: "Reviewer Agent" },
   { id: "tester", label: "Test Agent" }
+];
+
+const workItemTypes = [
+  { id: "epic", claimable: false },
+  { id: "story", claimable: false },
+  { id: "task", claimable: true },
+  { id: "bug", claimable: true }
 ];
 
 const agentSlots = {
@@ -152,6 +159,160 @@ const tasks = [
 ];
 
 describe("agent registry derivation", () => {
+  it("summarizes role seats by heartbeat liveness, silent leases, and availability", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "implementer", label: "Implementer Agent" }],
+      agentSlots: {
+        types: [
+          {
+            id: "implementer-general",
+            role: "implementer",
+            capacity: 3,
+            slotIds: ["implementer-agent", "implementer-agent-2", "implementer-agent-3"]
+          }
+        ],
+        slots: [
+          {
+            id: "implementer-agent",
+            typeId: "implementer-general",
+            role: "implementer",
+            slotNumber: 1,
+            withinCapacity: true,
+            active: true,
+            presenceFresh: true,
+            leaseFresh: true,
+            available: false,
+            presence: {
+              status: "online",
+              state: "active",
+              message: "Implementing the selected task.",
+              lastHeartbeat: "2026-08-13T07:30:00.000Z"
+            }
+          },
+          {
+            id: "implementer-agent-2",
+            typeId: "implementer-general",
+            role: "implementer",
+            slotNumber: 2,
+            withinCapacity: true,
+            active: true,
+            presenceFresh: false,
+            leaseFresh: true,
+            available: false,
+            lease: { heartbeatAt: "2026-08-13T07:25:00.000Z" }
+          },
+          {
+            id: "implementer-agent-3",
+            typeId: "implementer-general",
+            role: "implementer",
+            slotNumber: 3,
+            withinCapacity: true,
+            active: false,
+            presenceFresh: false,
+            leaseFresh: false,
+            available: true
+          }
+        ]
+      },
+      tasks: []
+    });
+
+    const implementers = registry.groups[0];
+    expect(implementers).toMatchObject({
+      configured: 3,
+      active: 1,
+      unresponsive: 1,
+      available: 1,
+      canFill: true,
+      needsAttention: false
+    });
+    expect(implementers.visibleAgents.map((agent) => agent.id)).toEqual(["implementer-agent", "implementer-agent-2"]);
+    expect(implementers.hiddenAgents.map((agent) => agent.id)).toEqual(["implementer-agent-3"]);
+    expect(registry).toMatchObject({ activeAgents: 1, unresponsiveAgents: 1, availableAgents: 1, problemAgents: 1 });
+    expect(implementers.activeAgents[0]).toMatchObject({
+      presenceMessage: "Implementing the selected task.",
+      heartbeatAt: "2026-08-13T07:30:00.000Z"
+    });
+  });
+
+  it("flags queued roles with zero heartbeat-active agents", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "tester", label: "Test Agent" }],
+      agentSlots: {
+        types: [{ id: "tester", role: "tester", capacity: 1, slotIds: ["test-agent"] }],
+        slots: [
+          {
+            id: "test-agent",
+            typeId: "tester",
+            role: "tester",
+            withinCapacity: true,
+            available: true,
+            presenceFresh: false,
+            leaseFresh: false
+          }
+        ]
+      },
+      tasks: [{ id: "task-ready", title: "Verify release", role: "tester", status: "ready", workItemType: "task", assignee: "" }],
+      workItemTypes
+    });
+
+    expect(registry.groups[0]).toMatchObject({ active: 0, queuedWork: 1, needsAttention: true });
+  });
+
+  it("does not warn for backlog or non-claimable ready containers", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "tester", label: "Test Agent" }],
+      agentSlots: {
+        types: [{ id: "tester", role: "tester", capacity: 1, slotIds: ["test-agent"] }],
+        slots: [
+          {
+            id: "test-agent",
+            typeId: "tester",
+            role: "tester",
+            withinCapacity: true,
+            available: true,
+            presenceFresh: false,
+            leaseFresh: false
+          }
+        ]
+      },
+      tasks: [
+        { id: "task-backlog", title: "Future test idea", role: "tester", status: "backlog", workItemType: "task" },
+        { id: "epic-ready", title: "Test program", role: "tester", status: "ready", workItemType: "epic" }
+      ],
+      workItemTypes
+    });
+
+    expect(registry.groups[0]).toMatchObject({ active: 0, queuedWork: 0, needsAttention: false });
+  });
+
+  it("keeps a task-only current worker visible as a stalled problem agent", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "implementer", label: "Implementer Agent" }],
+      agentSlots: { types: [], slots: [] },
+      tasks: [
+        {
+          id: "task-ghost-busy",
+          title: "Continue work without a registered slot",
+          role: "implementer",
+          status: "in_progress",
+          assignee: "ghost-busy-agent"
+        }
+      ]
+    });
+
+    const ghost = registry.agents.find((agent) => agent.id === "ghost-busy-agent");
+    expect(ghost).toMatchObject({ status: "busy", stalled: true, problem: true });
+    expect(registry.groups[0].visibleAgents.map((agent) => agent.id)).toContain("ghost-busy-agent");
+    expect(registry.groups[0].hiddenAgents.map((agent) => agent.id)).not.toContain("ghost-busy-agent");
+  });
+
+  it("builds the copyable one-line role bootstrap prompt", () => {
+    expect(buildAgentBootstrapPrompt("implementer", "http://localhost:8088/")).toBe(
+      "You are implementer. Read http://localhost:8088/api/agent-docs/implementer?format=md and do what it tells you."
+    );
+  });
+
   it("groups configured and task-only agents by role with status and task summaries", () => {
     const registry = buildAgentRegistry({ agentSlots, tasks, roles });
 

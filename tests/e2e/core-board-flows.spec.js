@@ -1004,25 +1004,33 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
 
   await page.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Agents" })).toBeVisible();
-  await expect(page.locator(".topStats")).toContainText("Configured slots");
-  await expect(page.locator(".topStats")).toContainText("1 historical listed");
-  // Bootstrap onboarding cards render for each spawnable role.
-  await expect(page.getByTestId("bootstrap-card-pm")).toBeVisible();
-  await expect(page.getByTestId("bootstrap-card-implementer")).toBeVisible();
-  const bootstrapPrompt = page.locator(".bootstrapCardGrid").getByText(/api\/agent-docs\/implementer\?format=md/);
-  await expect(bootstrapPrompt).toBeVisible();
+  await expect(page.locator(".topStats")).toContainText("Active");
+  await expect(page.locator(".topStats")).toContainText("Available");
+  await expect(page.locator(".topStats")).not.toContainText("Configured slots");
   await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Implementer Agent" })).toBeVisible();
   await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Reviewer Agent" })).toBeVisible();
   await expect(page.locator(".agentsRegistry").getByRole("heading", { name: "Test Agent" })).toBeVisible();
-  await expect(page.getByText("Historical assignees")).toBeVisible();
-  await expect(page.getByText("Task-only identities, not configured capacity")).toBeVisible();
+  const implementerRole = page.locator(".roleSummary", { hasText: "Implementer Agent" });
+  await expect(implementerRole).toContainText(/\d+ active \/ \d+ seats \(\d+ available\)/);
+  await implementerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await expect(implementerRole.locator(".fillPrompt")).toContainText(
+    "You are implementer. Read"
+  );
+  await expect(implementerRole.getByRole("button", { name: "Copy prompt" })).toBeVisible();
+
+  await expect(page.getByRole("heading", { name: "Implementer Frontend" })).toHaveCount(0);
+  await page.getByText("Advanced: agent types and capacity", { exact: true }).click();
   await expect(page.getByRole("heading", { name: "Implementer Frontend" })).toBeVisible();
+
+  await expect(page.getByTestId("bootstrap-card-implementer")).not.toBeVisible();
+  await page.getByText("Advanced: onboarding guide", { exact: true }).click();
+  await expect(page.getByTestId("bootstrap-card-implementer")).toBeVisible();
 
   const frontendType = page.locator(".agentTypeCard", { hasText: "Implementer Frontend" });
   await expect(frontendType).toContainText("desired");
   await expect(frontendType).toContainText("occupied");
-  await expect(frontendType).toContainText("free");
-  await expect(frontendType).toContainText("stale");
+  await expect(frontendType).toContainText("available");
+  await expect(frontendType).toContainText("needs cleanup");
   await expect(frontendType).toContainText("implementer-frontend-1");
   await frontendType.getByRole("button", { name: "Increase implementer-frontend capacity" }).click();
   await expect(frontendType.getByLabel("implementer-frontend desired slots")).toHaveValue("4");
@@ -1037,8 +1045,12 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
 
   const backendCard = page.getByTestId("agent-card").filter({ hasText: "implementer-backend-1" });
   await expect(backendCard).toBeVisible();
-  await expect(backendCard).toContainText("Busy");
+  await expect(backendCard).toContainText("Stalled");
   await expect(backendCard).toContainText(currentTaskTitle);
+  await expect(backendCard).toContainText("No presence message");
+  await expect(backendCard).toContainText("No heartbeat");
+  await expect(backendCard.getByLabel("implementer-backend-1 work mode")).toBeHidden();
+  await backendCard.getByText("Details and controls", { exact: true }).click();
   await expect(backendCard).toContainText("backend");
   const backendMode = backendCard.getByLabel("implementer-backend-1 work mode");
   await expect(backendMode).toHaveValue("single-task");
@@ -1064,7 +1076,7 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   });
 
   await backendCard.getByRole("button", { name: "Resume implementer-backend-1" }).click();
-  await expect(backendCard).toContainText("Busy");
+  await expect(backendCard).toContainText("Stalled");
   await backendMode.selectOption("single-task");
   await expect(backendMode).toHaveValue("single-task");
 
@@ -1080,6 +1092,7 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await closeDrawerIfOpen(page);
 
   await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await backendCard.getByText("Details and controls", { exact: true }).click();
   await backendCard.getByRole("button", { name: "Assigned tasks" }).click();
   await expect(taskCard(page, currentTaskTitle)).toBeVisible();
   await expect(taskCard(page, blockedTaskTitle)).toHaveCount(0);
@@ -1091,6 +1104,97 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   await expect(backendCard).toBeVisible();
   const hasHorizontalOverflow = await page.locator(".agentsRegistry").evaluate((registry) => registry.scrollWidth > registry.clientWidth + 1);
   expect(hasHorizontalOverflow).toBe(false);
+});
+
+test("reports Fill a seat clipboard fallbacks truthfully", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__clipboardMode = "reject";
+    window.__copyFallbackResult = true;
+    window.__fallbackCopies = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      get() {
+        if (window.__clipboardMode === "missing") return undefined;
+        return {
+          writeText: async () => {
+            throw new Error("Clipboard permission denied");
+          }
+        };
+      }
+    });
+    Document.prototype.execCommand = function execCommand(command) {
+      if (command !== "copy" || !window.__copyFallbackResult) return false;
+      const textareas = document.querySelectorAll("textarea");
+      window.__fallbackCopies.push(textareas[textareas.length - 1]?.value || "");
+      return true;
+    };
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+
+  const implementerRole = page.locator(".roleSummary", { hasText: "Implementer Agent" });
+  await implementerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await implementerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(implementerRole.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__fallbackCopies.at(-1)))
+    .toContain("You are implementer. Read");
+
+  await page.evaluate(() => {
+    window.__clipboardMode = "missing";
+  });
+  const reviewerRole = page.locator(".roleSummary", { hasText: "Reviewer Agent" });
+  await reviewerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await reviewerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(reviewerRole.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__fallbackCopies.at(-1)))
+    .toContain("You are reviewer. Read");
+
+  await page.evaluate(() => {
+    window.__copyFallbackResult = false;
+  });
+  const testerRole = page.locator(".roleSummary", { hasText: "Test Agent" });
+  await testerRole.getByRole("button", { name: "Fill a seat" }).click();
+  await testerRole.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(testerRole.getByRole("button", { name: "Copy failed" })).toBeVisible();
+  await expect(testerRole.getByRole("button", { name: "Copied" })).toHaveCount(0);
+});
+
+test("Busy reveals a task-only current worker outside collapsed history", async ({ page }) => {
+  const projectName = uniqueName("E2E Task-only Busy Agent Project");
+  const projectKey = uniqueKey("TBA");
+  const taskTitle = uniqueName("Keep task-only worker reachable");
+
+  const project = (
+    await postJson(page, "/api/projects", {
+      name: projectName,
+      key: projectKey
+    })
+  ).project;
+  await postJson(page, "/api/tasks", {
+    projectId: project.id,
+    title: taskTitle,
+    role: "implementer",
+    status: "in_progress",
+    assignee: "ghost-busy-agent",
+    priority: "high"
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+
+  const implementerRole = page.locator(".roleSummary", { hasText: "Implementer Agent" });
+  const ghostCard = page.getByTestId("agent-card").filter({ hasText: "ghost-busy-agent" });
+  await expect(implementerRole.locator(".roleSeatsDisclosure")).not.toHaveAttribute("open", "");
+  await expect(ghostCard).toBeVisible();
+  await expect(ghostCard).toContainText("Stalled");
+  await expect(ghostCard).toContainText(taskTitle);
+
+  await page.getByRole("button", { name: /Busy.*show workers/i }).click();
+  await expect(ghostCard).toBeInViewport();
 });
 
 test("lets the operator resolve a pending approval from the board", async ({ page }) => {

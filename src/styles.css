@@ -418,6 +418,17 @@ button {
   color: #f3f6fa;
 }
 
+.statButton {
+  font: inherit;
+  cursor: pointer;
+}
+
+.statButton:hover,
+.statButton:focus-visible {
+  border-color: #6a8996;
+  background: #1c2830;
+}
+
 .statLabel {
   display: grid;
   gap: 1px;
@@ -1406,6 +1417,140 @@ button {
   gap: 12px;
 }
 
+.roleSummary {
+  padding: 16px;
+  border: 1px solid #323a43;
+  border-radius: 10px;
+  background: #151a20;
+}
+
+.roleSummary.needsAttention {
+  border-color: #80652b;
+  box-shadow: inset 3px 0 #d5a53e;
+}
+
+.roleSummaryHeader,
+.roleSummaryIdentity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.roleSummaryHeader {
+  justify-content: space-between;
+}
+
+.roleSummaryIdentity > div {
+  min-width: 0;
+}
+
+.roleSummaryHeader h3,
+.roleSummaryHeader p {
+  margin: 0;
+}
+
+.roleSummaryHeader h3 {
+  margin-top: 2px;
+  font-size: 18px;
+}
+
+.roleSummaryHeader p,
+.roleQuietState,
+.agentsAdvanced > p,
+.agentPresenceMessage p {
+  color: #aeb9c6;
+  font-size: 13px;
+}
+
+.roleSummaryHeader p {
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.fillSeatButton {
+  flex: 0 0 auto;
+}
+
+.noSeatsLabel {
+  color: #7f8b97;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.roleWarning,
+.fillPrompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.roleWarning {
+  border: 1px solid #725a27;
+  background: #302819;
+  color: #ffd991;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.fillPrompt {
+  justify-content: space-between;
+  border: 1px solid #345661;
+  background: #131f25;
+}
+
+.fillPrompt code {
+  min-width: 0;
+  color: #d7edf4;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.roleQuietState,
+.agentPresenceMessage p,
+.agentsAdvanced > p {
+  margin: 0;
+}
+
+.roleSeatsDisclosure,
+.agentsAdvanced,
+.agentDetailsDisclosure {
+  min-width: 0;
+}
+
+.roleSeatsDisclosure > summary,
+.agentsAdvanced > summary,
+.agentDetailsDisclosure > summary {
+  width: fit-content;
+  color: #b9c8d4;
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.roleSeatsDisclosure[open] > summary,
+.agentsAdvanced[open] > summary,
+.agentDetailsDisclosure[open] > summary {
+  margin-bottom: 12px;
+  color: #d9eef5;
+}
+
+.agentsAdvanced {
+  display: block;
+  padding: 14px;
+  border: 1px dashed #3c4650;
+  border-radius: 10px;
+  background: #13171c;
+}
+
+.agentsAdvanced > p {
+  margin-bottom: 12px;
+}
+
 .agentTypeCapacityPanel {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr));
@@ -1632,6 +1777,10 @@ button {
   background: #171b20;
 }
 
+.agentCard.agentProblem {
+  border-color: #725a27;
+}
+
 .agentSource-task-assignee {
   border-style: dashed;
   background: #15191e;
@@ -1727,15 +1876,34 @@ button {
   color: #c5ced7;
 }
 
+.agentProblem .agentStatusBadge {
+  background: #45371e;
+  color: #ffd991;
+}
+
 .agentSpecialties {
   gap: 6px;
 }
 
 .agentCurrentTask,
-.agentTaskLinks {
+.agentTaskLinks,
+.agentPresenceMessage,
+.agentDetailsDisclosure {
   display: grid;
   gap: 7px;
   min-width: 0;
+}
+
+.agentPresenceMessage p {
+  overflow-wrap: anywhere;
+}
+
+.agentDetailsDisclosure > .agentMeta,
+.agentDetailsDisclosure > .agentCounts,
+.agentDetailsDisclosure > .agentSpecialties,
+.agentDetailsDisclosure > .agentTaskLinks,
+.agentDetailsDisclosure > .agentCardActions {
+  margin-top: 10px;
 }
 
 .agentTaskLinks > div {

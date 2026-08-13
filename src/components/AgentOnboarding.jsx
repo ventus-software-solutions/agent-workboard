@@ -6,6 +6,7 @@ import {
   buildBootstrapCards,
   showIdleSpawnNudge
 } from "../lib/agentBootstrap.js";
+import { copyTextToClipboard } from "../lib/clipboard.js";
 
 const FIRST_RUN_DISMISS_KEY = "agentWorkboard.onboardingStripDismissed";
 
@@ -19,24 +20,9 @@ function BootstrapCopyControl({ text }) {
 
   async function handleCopy() {
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyTextToClipboard(text)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    } catch {
-      // Clipboard can be unavailable in some embedded contexts; fall back to a
-      // textarea select so the operator can still copy by hand.
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand("copy");
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1600);
-      } finally {
-        document.body.removeChild(textarea);
-      }
     }
   }
 
