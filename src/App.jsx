@@ -406,8 +406,8 @@ export function App() {
     const checkedAt = new Date().toISOString();
     const result = await api.boardState({ projectId: selectedProjectId });
     if (pollingNeedsMetaRefreshRef.current) {
-      const recoveredMeta = await api.meta(selectedProjectId);
-      setMeta(recoveredMeta);
+      const recoveredMeta = await api.meta();
+      setMeta((current) => ({ ...recoveredMeta, integrationStatus: current.integrationStatus }));
       pollingNeedsMetaRefreshRef.current = false;
     }
     const previousVersion = boardVersionRef.current;
