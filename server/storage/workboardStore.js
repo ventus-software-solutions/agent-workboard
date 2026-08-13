@@ -87,6 +87,8 @@ const CAPABILITY_STATUS_IDS = new Set(CAPABILITY_STATUSES);
 const FULL_TASK_EDIT_FIELDS = [
   "title",
   "description",
+  "pullRequestUrl",
+  "branch",
   "assignee",
   "priority",
   "role",
