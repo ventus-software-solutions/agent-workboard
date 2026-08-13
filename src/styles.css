@@ -2225,6 +2225,241 @@ button {
   color: #ffbfca;
 }
 
+.operatorAttention {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 13px;
+  border: 1px solid #5f5331;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #262317 0%, #1c2022 58%, #172126 100%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.operatorAttentionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.operatorAttentionHeader h3 {
+  margin: 2px 0 0;
+  color: #fff1bd;
+  font-size: 19px;
+}
+
+.operatorAttentionHeader > span {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  height: 25px;
+  border-radius: 999px;
+  background: #4c4123;
+  color: #ffe9a5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.operatorAttentionList {
+  display: grid;
+  gap: 7px;
+  max-height: min(45vh, 430px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.operatorAttentionItem {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #414a4f;
+  border-radius: 8px;
+  background: rgb(28 35 40 / 88%);
+}
+
+.operatorAttentionItem.attentionKind-approval,
+.operatorAttentionItem.attentionKind-merge {
+  border-color: #75602d;
+  background: rgb(48 42 25 / 88%);
+}
+
+.operatorAttentionIcon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #2d3940;
+  color: #bce8f0;
+}
+
+.attentionKind-approval .operatorAttentionIcon,
+.attentionKind-merge .operatorAttentionIcon {
+  background: #57471e;
+  color: #ffe69b;
+}
+
+.attentionKind-blocker .operatorAttentionIcon,
+.attentionKind-stalled .operatorAttentionIcon {
+  background: #4b292e;
+  color: #ffc0c8;
+}
+
+.operatorAttentionBody {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.operatorAttentionTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.operatorAttentionTitle .linkButton,
+.operatorAttentionTitle strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #f4f7fa;
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operatorAttentionTitle > span {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #493a26;
+  color: #f6d491;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.operatorAttentionBody > p {
+  margin: 0;
+  color: #aeb9c1;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.operatorAttentionActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 148px;
+}
+
+.operatorAttentionActions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.attentionPrimaryAction {
+  border: 1px solid #527a80;
+  background: #29474d;
+  color: #d9f7fa;
+}
+
+.attentionSecondaryAction {
+  border: 1px solid #46525a;
+  background: #232c32;
+  color: #d1dbe2;
+}
+
+.operatorApprovalNote {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 320px);
+  align-items: center;
+  gap: 7px;
+  color: #9eaab3;
+  font-size: 11px;
+}
+
+.operatorApprovalNote input {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid #46515a;
+  border-radius: 6px;
+  background: #151b1f;
+  color: #eef4f7;
+}
+
+.operatorPromptPreview,
+.operatorCleanupCommands code {
+  display: block;
+  overflow: hidden;
+  color: #b9c8cf;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operatorCleanupCommands {
+  display: grid;
+  gap: 3px;
+}
+
+.operatorAttentionEmpty {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid #315a4a;
+  border-radius: 8px;
+  background: #192b24;
+  color: #c9f2dc;
+  font-size: 13px;
+}
+
+@media (max-width: 1120px) {
+  .operatorAttentionItem {
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .operatorAttentionActions {
+    grid-column: 2;
+    justify-content: flex-start;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .operatorAttentionItem {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .operatorAttentionIcon {
+    display: none;
+  }
+
+  .operatorAttentionActions {
+    grid-column: 1;
+    flex-wrap: wrap;
+  }
+
+  .operatorApprovalNote {
+    grid-template-columns: 1fr;
+  }
+}
+
 .approvalQueue {
   display: grid;
   gap: 10px;
@@ -2293,6 +2528,15 @@ button {
   line-height: 1.35;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+
+.operatorAttentionTitle .approvalQueueItem {
+  display: inline-block;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .saveErrorPanel {

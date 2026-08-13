@@ -7,10 +7,12 @@ import {
   ChevronRight,
   ClipboardList,
   Clock3,
+  Copy,
   Database,
   FileUp,
   Filter,
   FolderKanban,
+  GitMerge,
   Link2,
   Menu,
   MessageSquarePlus,
@@ -33,6 +35,7 @@ import {
 import { api } from "./lib/api.js";
 import { buildAgentRegistry } from "./lib/agentRegistry.js";
 import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
+import { buildOperatorAttention } from "./lib/operatorAttention.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
@@ -137,6 +140,7 @@ export function App() {
     updatedAt: "",
     updatedBy: ""
   });
+  const [agentDocsOverview, setAgentDocsOverview] = useState({ usage: { promptTemplate: "" } });
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [filters, setFilters] = useState({ q: "", role: "", assignee: "", workItemType: "" });
@@ -175,6 +179,7 @@ export function App() {
   });
   const boardVersionRef = useRef("");
   const boardProjectRef = useRef("");
+  const initialLoadStartedRef = useRef(false);
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -230,15 +235,16 @@ export function App() {
 
   async function loadAll(projectId = selectedProjectId) {
     setError("");
-    const [metaResult, projectsResult, agentSlotsResult, deploymentSettingsResult] = await Promise.all([
+    const [metaResult, projectsResult, agentSlotsResult, deploymentSettingsResult, agentDocsResult] = await Promise.all([
       api.meta(),
       api.projects(),
       api.agentSlots(),
-      api.deploymentSettings()
+      api.deploymentSettings(),
+      api.agentDocs()
     ]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, activityResult] = nextProjectId
+    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult] = nextProjectId
       ? await Promise.all([
           api.tasks({
             projectId: nextProjectId,
@@ -251,9 +257,10 @@ export function App() {
           api.talks(nextProjectId, talkFilters),
           api.staleInProgressTasks({ projectId: nextProjectId }),
           api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
-          api.projectActivity(nextProjectId, activityFilters)
+          api.projectActivity(nextProjectId, activityFilters),
+          fetchWorktreeCleanup()
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, { activity: [] }];
+      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, { activity: [] }, emptyWorktreeCleanup()];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
@@ -263,9 +270,10 @@ export function App() {
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
     setActivityEvents(activityResult.activity);
-    setWorktreeCleanup(emptyWorktreeCleanup());
     setAgentSlots(agentSlotsResult);
     setDeploymentSettings(deploymentSettingsResult.settings);
+    setAgentDocsOverview(agentDocsResult);
+    setWorktreeCleanup(cleanupResult);
     setLoading(false);
   }
 
@@ -443,6 +451,8 @@ export function App() {
   }
 
   useEffect(() => {
+    if (initialLoadStartedRef.current) return;
+    initialLoadStartedRef.current = true;
     loadAll().catch((nextError) => {
       setError(nextError.message);
       setLoading(false);
@@ -483,10 +493,13 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
-    setWorktreeCleanup(emptyWorktreeCleanup());
-    Promise.all([refreshTasks(), refreshTalks(), refreshActivity(), refreshCapabilities(), refreshAgentSlots()]).catch((nextError) =>
-      setError(nextError.message)
-    );
+    Promise.all([
+      refreshTasks(),
+      refreshTalks(),
+      refreshActivity(),
+      refreshCapabilities(),
+      refreshAgentSlots()
+    ]).catch((nextError) => setError(nextError.message));
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -535,8 +548,6 @@ export function App() {
     const approvals = projectTasks.filter(isPendingOperatorApproval).length;
     return { open, blocked, review, approvals };
   }, [projectTasks, tasks]);
-  const pendingApprovals = useMemo(() => projectTasks.filter(isPendingOperatorApproval), [projectTasks]);
-
   const capabilityStats = useMemo(() => {
     const live = capabilities.filter((capability) => capability.status === "live").length;
     const attention = capabilities.filter((capability) => ["broken", "planned", "in_progress", "review"].includes(capability.status)).length;
@@ -546,6 +557,20 @@ export function App() {
   const agentRegistry = useMemo(
     () => buildAgentRegistry({ agentSlots, tasks: projectTasks, roles: meta.roles }),
     [agentSlots, projectTasks, meta.roles]
+  );
+
+  const operatorAttention = useMemo(
+    () =>
+      buildOperatorAttention({
+        tasks: projectTasks,
+        agentRegistry,
+        staleWork,
+        worktreeCleanup,
+        promptTemplate: agentDocsOverview.usage?.promptTemplate || "",
+        origin: typeof window === "undefined" ? "http://localhost:8088" : window.location.origin,
+        projectId: selectedProjectId
+      }),
+    [agentDocsOverview, agentRegistry, projectTasks, selectedProjectId, staleWork, worktreeCleanup]
   );
 
   const coordinationAttention = useMemo(() => {
@@ -885,7 +910,19 @@ export function App() {
           </div>
         )}
 
-        {pendingApprovals.length > 0 && <OperatorApprovalQueue tasks={pendingApprovals} onSelectTask={setSelectedTaskId} />}
+        {view === "board" && !loading && (
+          <OperatorAttentionPanel
+            attention={operatorAttention}
+            onSelectTask={openLinkedTask}
+            onOpenCoordination={() => {
+              setView("board");
+              setWorkspaceTab("coordination");
+            }}
+            onDecideApproval={(task, payload) => mutate(() => api.decideOperatorApproval(task.id, payload))}
+            onCleanup={runWorktreeCleanup}
+            cleanupActionKey={cleanupActionKey}
+          />
+        )}
 
         {loading ? (
           <div className="emptyState">Loading workboard...</div>
@@ -2026,30 +2063,194 @@ function formatDateTime(value) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function OperatorApprovalQueue({ tasks, onSelectTask }) {
+function OperatorAttentionPanel({
+  attention,
+  onSelectTask,
+  onOpenCoordination,
+  onDecideApproval,
+  onCleanup,
+  cleanupActionKey
+}) {
+  const [approvalNotes, setApprovalNotes] = useState({});
+  const [pendingActionId, setPendingActionId] = useState("");
+  const [copiedActionId, setCopiedActionId] = useState("");
+
+  async function copyAction(action, value) {
+    if (!value || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(value);
+    setCopiedActionId(action.id);
+    window.setTimeout(() => setCopiedActionId((current) => (current === action.id ? "" : current)), 1800);
+  }
+
+  async function decide(action, decision) {
+    const note = approvalNotes[action.id]?.trim() || "";
+    if (decision !== "approved" && !note) return;
+    setPendingActionId(action.id);
+    try {
+      await onDecideApproval(action.task, {
+        decision,
+        decidedBy: "operator-ui",
+        note,
+        nextStatus: decision === "approved" ? action.task.blocker?.nextStatus || "in_progress" : undefined
+      });
+    } finally {
+      setPendingActionId("");
+    }
+  }
+
   return (
-    <section className="approvalQueue" aria-label="Operator approvals">
-      <div className="approvalQueueHeader">
-        <div className="sectionTitle">
-          <UserRoundCheck size={17} />
-          <span>Operator Approvals</span>
+    <section className="operatorAttention" aria-label="Needs you" data-testid="operator-attention">
+      <div className="operatorAttentionHeader">
+        <div>
+          <div className="sectionLabel">Operator inbox</div>
+          <h3>Needs you</h3>
         </div>
-        <span>{tasks.length}</span>
+        <span>{attention.actions.length}</span>
       </div>
-      <div className="approvalQueueList">
-        {tasks.map((task) => {
-          const comment = latestTaskComment(task);
-          return (
-            <button key={task.id} className="approvalQueueItem" onClick={() => onSelectTask(task.id)}>
-              <strong>{task.title}</strong>
-              <span>{task.blocker.requestedBy || task.assignee || "agent"} - {task.blocker.requestedAction}</span>
-              {comment && <p>{comment.body}</p>}
-            </button>
-          );
-        })}
-      </div>
+
+      {attention.actions.length === 0 ? (
+        <div className="operatorAttentionEmpty">
+          <CheckCircle2 size={18} />
+          <span>
+            All flowing — {attention.activeAgentCount} {attention.activeAgentCount === 1 ? "agent" : "agents"} active, next expected
+            event: {attention.nextExpectedEvent}.
+          </span>
+        </div>
+      ) : (
+        <div className="operatorAttentionList">
+          {attention.actions.map((action) => {
+            const Icon = attentionIcon(action.kind);
+            const approvalNote = approvalNotes[action.id] || "";
+            const actionBusy = pendingActionId === action.id;
+            const cleanupKey = action.cleanupItem
+              ? `${action.cleanupItem.worktreePath}:${action.cleanupItem.branch}`
+              : "";
+            return (
+              <article className={`operatorAttentionItem attentionKind-${action.kind}`} data-kind={action.kind} key={action.id}>
+                <div className="operatorAttentionIcon" aria-hidden="true">
+                  <Icon size={17} />
+                </div>
+                <div className="operatorAttentionBody">
+                  <div className="operatorAttentionTitle">
+                    {action.taskId && !["role_gap", "grooming"].includes(action.kind) ? (
+                      <button
+                        className={`linkButton ${action.kind === "approval" ? "approvalQueueItem" : ""}`}
+                        onClick={() => onSelectTask(action.taskId)}
+                      >
+                        {action.title}
+                      </button>
+                    ) : (
+                      <strong>{action.title}</strong>
+                    )}
+                    {action.downstreamCount > 1 && <span>{action.downstreamCount - 1} downstream</span>}
+                  </div>
+                  <p>{action.detail}</p>
+                  {action.kind === "approval" && (
+                    <label className="operatorApprovalNote">
+                      Decision note
+                      <input
+                        value={approvalNote}
+                        placeholder="Required to deny"
+                        onChange={(event) =>
+                          setApprovalNotes((current) => ({ ...current, [action.id]: event.target.value }))
+                        }
+                      />
+                    </label>
+                  )}
+                  {action.prompt && action.kind === "role_gap" && <code className="operatorPromptPreview">{action.prompt}</code>}
+                  {action.commands?.length > 0 && action.remedy === "copy_commands" && (
+                    <div className="operatorCleanupCommands">
+                      {action.commands.map((command) => (
+                        <code key={command}>{command}</code>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="operatorAttentionActions">
+                  {action.remedy === "decide" && (
+                    <>
+                      <button className="attentionPrimaryAction" disabled={actionBusy} onClick={() => decide(action, "approved")}>
+                        <CheckCircle2 size={14} />
+                        <span>{actionBusy ? "Saving" : "Approve"}</span>
+                      </button>
+                      <button
+                        className="attentionSecondaryAction dangerButton"
+                        disabled={actionBusy || !approvalNote.trim()}
+                        onClick={() => decide(action, "rejected")}
+                      >
+                        <X size={14} />
+                        <span>Deny</span>
+                      </button>
+                    </>
+                  )}
+                  {action.remedy === "open_task" && (
+                    <button className="attentionPrimaryAction" onClick={() => onSelectTask(action.taskId)}>
+                      <ChevronRight size={14} />
+                      <span>{action.kind === "merge" ? "Open delivery" : "Fix blocker"}</span>
+                    </button>
+                  )}
+                  {action.remedy === "open_coordination" && (
+                    <button className="attentionPrimaryAction" onClick={onOpenCoordination}>
+                      <ChevronRight size={14} />
+                      <span>Recover</span>
+                    </button>
+                  )}
+                  {action.remedy === "copy_prompt" && (
+                    <button className="attentionPrimaryAction" disabled={!action.prompt} onClick={() => copyAction(action, action.prompt)}>
+                      <Copy size={14} />
+                      <span>{copiedActionId === action.id ? "Copied" : "Copy spawn prompt"}</span>
+                    </button>
+                  )}
+                  {action.remedy === "groom" && (
+                    <>
+                      <button className="attentionPrimaryAction" onClick={() => onSelectTask(action.taskId)}>
+                        <ClipboardList size={14} />
+                        <span>Groom now</span>
+                      </button>
+                      <button
+                        className="attentionSecondaryAction"
+                        disabled={!action.prompt}
+                        onClick={() => copyAction(action, action.prompt)}
+                      >
+                        <Copy size={14} />
+                        <span>{copiedActionId === action.id ? "Copied" : "Spawn PM"}</span>
+                      </button>
+                    </>
+                  )}
+                  {action.remedy === "cleanup" && (
+                    <button
+                      className="attentionPrimaryAction"
+                      disabled={cleanupActionKey === cleanupKey}
+                      onClick={() => onCleanup(action.cleanupItem)}
+                    >
+                      <Archive size={14} />
+                      <span>{cleanupActionKey === cleanupKey ? "Cleaning" : "Clean"}</span>
+                    </button>
+                  )}
+                  {action.remedy === "copy_commands" && (
+                    <button className="attentionPrimaryAction" onClick={() => copyAction(action, action.commands.join("\n"))}>
+                      <Copy size={14} />
+                      <span>{copiedActionId === action.id ? "Copied" : "Copy host commands"}</span>
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
+}
+
+function attentionIcon(kind) {
+  if (kind === "approval") return UserRoundCheck;
+  if (kind === "merge") return GitMerge;
+  if (kind === "blocker") return AlertCircle;
+  if (kind === "stalled") return WifiOff;
+  if (kind === "grooming") return ClipboardList;
+  if (kind === "cleanup") return Archive;
+  return Bot;
 }
 
 function StaleWorkPanel({ items, notes, onNoteChange, onRecover, onSelectTask }) {

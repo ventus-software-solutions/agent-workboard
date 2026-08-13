@@ -19,6 +19,8 @@ const PAGE_DESCRIPTIONS = {
     "Copy-paste prompt templates for continuous AI coding agents that keep draining eligible work from the Agent Workboard board instead of stopping after a single task.",
   "architecture.md":
     "How Agent Workboard fits together: the React UI, Express HTTP API, SQLite-backed store, and stdio MCP server all operating on the same local board data.",
+  "operator-guide.md":
+    "Plain-language guide to operating Agent Workboard: projects, tasks, agents, capabilities, coordination, approvals, cleanup, integration status, and common recovery recipes.",
   "roadmap.md":
     "Direction and current non-goals for Agent Workboard: a credible local-first core first, public open-source launch second, hosted and team features only after that.",
   "releasing.md":
@@ -119,6 +121,7 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
+      { text: "Operator Guide", link: "/operator-guide" },
       { text: "Agent Protocol", link: "/agent-protocol" },
       { text: "Architecture", link: "/architecture" },
       { text: "Roadmap", link: "/roadmap" },
@@ -126,6 +129,12 @@ export default defineConfig({
     ],
 
     sidebar: [
+      {
+        text: "Using The Board",
+        items: [
+          { text: "Operator Guide", link: "/operator-guide" }
+        ]
+      },
       {
         text: "Running Agents",
         items: [
