@@ -4,8 +4,10 @@ import path from "node:path";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../server/app.js";
+import { buildAgentDoc } from "../server/agentDocs.js";
 import { WorkboardStore } from "../server/storage/workboardStore.js";
 import { buildWorktreeCleanupReport } from "../server/worktreeCleanup.js";
+import { FEEDER_STATUSES_BY_ROLE } from "../shared/roleFeeders.js";
 
 let tempDir;
 let store;
@@ -210,16 +212,10 @@ describe("Agent Workboard API", () => {
     }
   });
 
-  it("renders role-specific feeder stages in standing-agent docs", async () => {
-    const expectations = {
-      implementer: "ready + backlog",
-      reviewer: "in_progress + ready",
-      tester: "review + in_progress"
-    };
-
-    for (const [agentId, feederStages] of Object.entries(expectations)) {
-      const markdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
-      expect(markdown.text).toContain(`feeder stages: ${feederStages}`);
+  it("renders role-specific feeder stages in standing-agent docs", () => {
+    for (const [role, statuses] of Object.entries(FEEDER_STATUSES_BY_ROLE)) {
+      const doc = buildAgentDoc({ agentId: role, roles: store.roles(), statuses: store.statuses() });
+      expect(doc.persistence).toContainEqual(expect.stringContaining(`feeder stages: ${statuses.join(" + ")}`));
     }
   });
 

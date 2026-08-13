@@ -1,47 +1,42 @@
 import { worktreePath } from "./worktreePaths.js";
 import { formatAgentBootstrapPrompt } from "../shared/agentBootstrap.js";
+import { feederStatusesForRole } from "../shared/roleFeeders.js";
 
 const ROLE_RULES = {
   pm: {
     mission: "Turn operator goals into clear, prioritized, well-scoped tasks for the agent team.",
     accepts: ["ready tasks assigned to pm-agent", "ready tasks with role=pm"],
     outputs: ["roadmaps", "task breakdowns", "acceptance criteria", "follow-up tasks", "blocker decisions"],
-    upstreamStages: ["backlog", "ready"],
     doneMeans: "The next agents can start without guessing scope, priority, or acceptance criteria."
   },
   implementer: {
     mission: "Build one claimed task at a time, keep progress visible, and hand finished work to review.",
     accepts: ["ready tasks assigned to your exact agent id", "ready tasks with role=implementer", "backlog tasks matching your specialty labels"],
     outputs: ["code changes", "focused tests", "implementation notes", "evidence comments"],
-    upstreamStages: ["ready", "backlog"],
     doneMeans: "The task is implemented, tested, commented with evidence, and moved to review."
   },
   reviewer: {
     mission: "Review task outcomes for correctness, risk, missing tests, and readiness to merge or release.",
     accepts: ["tasks in status=review", "ready review tasks assigned to your exact agent id", "ready tasks with role=reviewer"],
     outputs: ["findings", "risk notes", "approval comments", "merge commits", "follow-up tasks"],
-    upstreamStages: ["in_progress", "ready"],
     doneMeans: "Approved work is merged and marked done with a completion record, or requested changes are returned with evidence."
   },
   tester: {
     mission: "Verify behavior through reproducible tests, browser checks, fixtures, or explicit manual evidence.",
     accepts: ["ready or testing tasks assigned to your exact agent id", "testing tasks with role=tester"],
     outputs: ["test coverage", "reproduction steps", "verification notes", "failure reports"],
-    upstreamStages: ["review", "in_progress"],
     doneMeans: "The task has repeatable evidence that the behavior works or a precise failure report."
   },
   researcher: {
     mission: "Collect the smallest useful evidence set that helps PMs, implementers, reviewers, or the operator decide.",
     accepts: ["ready tasks assigned to your exact agent id", "ready tasks with role=researcher"],
     outputs: ["source-backed summaries", "options", "tradeoffs", "open questions"],
-    upstreamStages: ["ready", "backlog"],
     doneMeans: "The task has enough evidence for the next decision without burying the board in notes."
   },
   operator: {
     mission: "Set priorities, answer business/product decisions, and approve direction changes.",
     accepts: ["blocked tasks that need an operator decision", "high-priority planning tasks"],
     outputs: ["decisions", "priority changes", "scope approvals"],
-    upstreamStages: ["blocked"],
     doneMeans: "Agents can proceed without waiting for missing business direction."
   }
 };
@@ -188,7 +183,7 @@ export function buildAgentDoc({
     worktree: worktreeDiscipline(agentId, integrationStatus),
     autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
     workflow,
-    persistence: standingAgentPersistence(profile.role, rule.upstreamStages),
+    persistence: standingAgentPersistence(profile.role),
     accepts: rule.accepts,
     outputs: rule.outputs,
     doneMeans: rule.doneMeans,
@@ -465,8 +460,8 @@ function plannerDecomposerWorkflow() {
   ];
 }
 
-function standingAgentPersistence(role, upstreamStages = []) {
-  const stages = upstreamStages.length ? upstreamStages : ROLE_RULES[role]?.upstreamStages || ["ready", "backlog"];
+function standingAgentPersistence(role) {
+  const stages = feederStatusesForRole(role);
   return [
     `After a next-task or no-eligible-work response, inspect \`upstreamSignal\` for ${role} feeder stages: ${stages.join(" + ")}.`,
     "If `upstreamSignal.total` is greater than 0, do not end the agent. Heartbeat presence with `state=waiting` and include the upstream signal you are waiting on.",
