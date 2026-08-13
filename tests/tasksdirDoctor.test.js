@@ -206,7 +206,9 @@ describe("tasksdir doctor", () => {
       "status: ready",
       "type: bug",
       "priority: high",
-      "external_ref: issue-1"
+      "external_ref: issue-1",
+      "board:",
+      '  touches: ["src/**"]'
     ]);
     await writeTask(root, "two", [
       "id: two",
@@ -224,6 +226,34 @@ describe("tasksdir doctor", () => {
       expect.objectContaining({ key: "external_ref", count: 1 })
     ]);
     expect(renderTasksdirDoctorReport(report)).toContain("Result: safe to enable tasksdir storage.");
+  });
+
+  it("returns no-go for unsafe touch hints without reporting board.touches as unknown", async () => {
+    const root = await tempTasksDir();
+    await writeTask(root, "unsafe", [
+      "id: unsafe",
+      "title: Unsafe touch hint",
+      "status: ready",
+      "type: task",
+      "priority: normal",
+      "board:",
+      '  touches: ["../outside.js"]'
+    ]);
+
+    const report = await inspectTasksDir(root);
+
+    expect(report.go).toBe(false);
+    expect(report.summary).toMatchObject({ taskFiles: 1, parsed: 0, failed: 1 });
+    expect(report.parse.failed).toEqual([
+      expect.objectContaining({
+        file: "unsafe/task.md",
+        reason: expect.stringContaining("touches path hints must stay within the repository")
+      })
+    ]);
+    expect(report.unknownFrontmatterKeys.items).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "board.touches" })])
+    );
+    expect(renderTasksdirDoctorReport(report)).toContain("TASKSDIR PREFLIGHT: NO-GO");
   });
 
   it("parses a generated 550-folder tree and reports its measured size and duration", async () => {

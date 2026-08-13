@@ -315,6 +315,81 @@ describe("WorkboardStore", () => {
     });
   });
 
+  it("persists touched paths and exposes advisory collisions on tasks and next-task selection", async () => {
+    const project = await store.createProject({ name: "Collision Project" });
+    const first = await store.createTask({
+      projectId: project.id,
+      title: "Change storage",
+      status: "ready",
+      role: "implementer",
+      touches: ["server/storage/**"]
+    });
+    const second = await store.createTask({
+      projectId: project.id,
+      title: "Change workboard store",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-1",
+      touches: ["server/storage/workboardStore.js"]
+    });
+    const backlogOnly = await store.createTask({
+      projectId: project.id,
+      title: "Future storage idea",
+      status: "backlog",
+      role: "implementer",
+      touches: ["server/storage/**"]
+    });
+
+    const listed = store.listTasks({ projectId: project.id });
+    expect(listed.find((task) => task.id === first.id)).toMatchObject({
+      touches: ["server/storage/**"],
+      collision: {
+        detected: true,
+        taskIds: expect.arrayContaining([second.id, backlogOnly.id]),
+        paths: ["server/storage/**", "server/storage/workboardStore.js"]
+      }
+    });
+    expect(listed.find((task) => task.id === backlogOnly.id).collision.detected).toBe(true);
+
+    const next = store.getNextTaskForAgent("implementer-backend-2", {
+      projectId: project.id,
+      now: "2026-08-13T12:00:00.000Z"
+    });
+    expect(next.task).toMatchObject({
+      id: first.id,
+      collision: { detected: true, taskIds: expect.arrayContaining([second.id, backlogOnly.id]) }
+    });
+    expect(next.selection.collision).toMatchObject({
+      detected: true,
+      taskIds: expect.arrayContaining([second.id, backlogOnly.id])
+    });
+    expect(next.selection.claim).toMatchObject({ taskId: first.id, expectedStatus: "ready" });
+
+    const updated = await store.updateTask(
+      first.id,
+      { touches: ["src/App.jsx"], expectedRevision: first.revision },
+      "operator-ui"
+    );
+    expect(updated.touches).toEqual(["src/App.jsx"]);
+    expect(store.describeTask(store.getTask(first.id)).collision.detected).toBe(false);
+
+    const raw = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    raw.tasks.find((task) => task.id === first.id).touches = [
+      "./src/App.jsx",
+      "../outside.js",
+      "src/App.jsx"
+    ];
+    await writeFile(path.join(tempDir, "workboard.json"), JSON.stringify(raw, null, 2));
+
+    const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "json" });
+    await reloaded.init();
+    expect(reloaded.getTask(first.id).touches).toEqual(["src/App.jsx"]);
+    expect(() => reloaded.listTasks({ projectId: project.id })).not.toThrow();
+
+    const migrated = JSON.parse(await readFile(path.join(tempDir, "workboard.json"), "utf8"));
+    expect(migrated.tasks.find((task) => task.id === first.id).touches).toEqual(["src/App.jsx"]);
+  });
+
   it("stores, validates, derives, and gates task relationships", async () => {
     const project = await store.createProject({ name: "Relationship Project" });
     const otherProject = await store.createProject({ name: "Other Relationship Project" });

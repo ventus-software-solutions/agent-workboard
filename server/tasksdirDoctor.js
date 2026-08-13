@@ -27,6 +27,7 @@ const KNOWN_BOARD_KEYS = new Set([
   "completion",
   "verificationTarget",
   "blocker",
+  "touches",
   "dependsOn",
   "blockedBy",
   "parentTaskId"

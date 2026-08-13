@@ -187,6 +187,47 @@ describe("operator attention selector", () => {
     expect(result.nextExpectedEvent).toBe("agent progress or delivery evidence");
   });
 
+  it("deduplicates symmetric file-scope collisions into one advisory inbox item", () => {
+    const collision = {
+      detected: true,
+      taskIds: ["task-b"],
+      paths: ["src/App.jsx", "src/**"],
+      items: [{
+        taskId: "task-b",
+        title: "Task task-b",
+        matches: [{ left: "src/App.jsx", right: "src/**" }]
+      }]
+    };
+    const reverse = {
+      detected: true,
+      taskIds: ["task-a"],
+      paths: ["src/**", "src/App.jsx"],
+      items: [{
+        taskId: "task-a",
+        title: "Task task-a",
+        matches: [{ left: "src/**", right: "src/App.jsx" }]
+      }]
+    };
+
+    const result = buildOperatorAttention({
+      tasks: [
+        task("task-a", { collision }),
+        task("task-b", { status: "in_progress", assignee: "implementer-1", collision: reverse })
+      ],
+      agentRegistry: registry(activeAgent("implementer-1", "implementer"))
+    });
+
+    expect(result.actions.filter((action) => action.kind === "collision")).toEqual([
+      expect.objectContaining({
+        id: "collision:task-a",
+        remedy: "open_task",
+        taskId: "task-a",
+        detail: expect.stringContaining("src/App.jsx"),
+        doThis: expect.stringContaining("rebase before delivery")
+      })
+    ]);
+  });
+
   it("recognizes explicit legacy approval comments until structured review verdicts land", () => {
     const result = buildOperatorAttention({
       tasks: [task("legacy-review", { status: "review", comments: [{ body: "VERDICT: APPROVE - focused tests pass." }] })],

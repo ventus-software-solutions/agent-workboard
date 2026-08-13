@@ -44,7 +44,8 @@ describe.skipIf(!hasSqlite3)("WorkboardStore SQLite persistence", () => {
       projectId: project.id,
       title: "Persist O'Brien's task",
       status: "ready",
-      role: "implementer"
+      role: "implementer",
+      touches: ["server/storage/**"]
     });
 
     const persisted = await readSqliteState(tempDir);
@@ -52,13 +53,14 @@ describe.skipIf(!hasSqlite3)("WorkboardStore SQLite persistence", () => {
     expect(persisted.data.projects.some((item) => item.id === project.id)).toBe(true);
     expect(persisted.data.tasks.find((item) => item.id === task.id)).toMatchObject({
       title: "Persist O'Brien's task",
-      status: "ready"
+      status: "ready",
+      touches: ["server/storage/**"]
     });
 
     const reloaded = new WorkboardStore({ dataDir: tempDir, storageMode: "sqlite" });
     await reloaded.init();
     expect(reloaded.listTasks({ projectId: project.id })).toEqual([
-      expect.objectContaining({ id: task.id, title: "Persist O'Brien's task" })
+      expect.objectContaining({ id: task.id, title: "Persist O'Brien's task", touches: ["server/storage/**"] })
     ]);
   });
 

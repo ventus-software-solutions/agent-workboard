@@ -8,6 +8,7 @@ const CATEGORY_RANK = {
   blocker: 70,
   off_script: 65,
   stalled: 60,
+  collision: 55,
   role_gap: 50,
   grooming: 30,
   cleanup: 20,
@@ -124,6 +125,26 @@ export function buildOperatorAttention({
         reason: item.reason
       })
     );
+  }
+
+  const reportedCollisions = new Set();
+  for (const task of tasks) {
+    for (const item of task.collision?.items || []) {
+      const pairKey = [task.id, item.taskId].sort().join(":");
+      if (reportedCollisions.has(pairKey)) continue;
+      reportedCollisions.add(pairKey);
+      const paths = [...new Set((item.matches || []).flatMap((match) => [match.left, match.right]))];
+      actions.push(
+        taskAction({
+          task,
+          kind: "collision",
+          title: `${task.title} overlaps ${item.title}`,
+          detail: `Both tasks may touch ${paths.join(", ") || "the same files"}.`,
+          remedy: "open_task",
+          tasks
+        })
+      );
+    }
   }
 
   const activeAgentIds = new Set(activeAgents.map((agent) => agent.id));
@@ -292,6 +313,12 @@ function attentionCopy(action) {
         what: `${action.task?.assignee || "The assigned agent"} has “${action.title}” claimed, but ${lowercaseStart(action.detail || "its presence reports different work")}.`,
         why: "The claim and the agent's live task binding disagree, so the board cannot trust which work is advancing.",
         doThis: "Click Recover to inspect the binding or return the claim to Ready."
+      };
+    case "collision":
+      return {
+        what: action.detail || `“${action.title}” has overlapping file-scope hints.`,
+        why: "Parallel edits may conflict or invalidate verification after either branch merges.",
+        doThis: "Click Inspect overlap, coordinate sequencing, and rebase before delivery."
       };
     case "role_gap":
       return {

@@ -2525,6 +2525,7 @@ button {
 }
 
 .priorityPill,
+.collisionPill,
 .statusPill,
 .workflowPill,
 .workItemTypePill,
@@ -2669,6 +2670,15 @@ button {
 .relationshipPill.clear {
   background: #243828;
   color: #c9f7d5;
+}
+
+.collisionPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--warning) 58%, transparent);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning-text, #8a5200);
 }
 
 .approvalPill {
@@ -2825,7 +2835,8 @@ button {
 .attentionKind-blocker .operatorAttentionIcon,
 .attentionKind-stalled .operatorAttentionIcon,
 .attentionKind-off_script .operatorAttentionIcon,
-.attentionKind-review_changes .operatorAttentionIcon {
+.attentionKind-review_changes .operatorAttentionIcon,
+.attentionKind-collision .operatorAttentionIcon {
   background: #4b292e;
   color: #ffc0c8;
 }

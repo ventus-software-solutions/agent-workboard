@@ -52,6 +52,10 @@ cd ../wt-agent-workboard-implementer-01-claim-api
 
 Worktrees are created as siblings of the repository checkout by default. Set `WORKBOARD_WORKTREE_ROOT` to put them elsewhere, and set `WORKBOARD_WORKTREE_PREFIX` to replace the default `wt-agent-workboard` directory-name prefix. The API, MCP tools, generated agent docs, and cleanup matching use these settings together.
 
+Tasks may declare optional `touches` hints such as `src/App.jsx` or `server/storage/**`. The board compares these glob-like hints for every ready or claimed task against other unfinished work. Matches appear on both task cards, in the operator inbox, and in `get_next_task`; they warn about collision risk but never prevent a claim.
+
+Record touches after planning when the likely file scope is known. Before every delivery, fetch and rebase onto the current integration base and rerun relevant verification. Rebase again when an overlapping task merges or an Agent Talks message reports an overlapping-file change.
+
 ## Review And Merge
 
 Reviewer agents are the default merge owners. A reviewer scans `status=review`, verifies the branch or worktree evidence, merges approved work, comments the merge SHA and verification, and moves the original task to `done`.
