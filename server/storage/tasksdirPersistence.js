@@ -19,7 +19,7 @@ import {
   setBoardValue,
   setValue
 } from "./frontmatterTaskFile.js";
-import { normalizeVerificationTarget } from "./verificationTarget.js";
+import { normalizeVerificationTarget, verificationTargetRequiredError } from "./verificationTarget.js";
 
 const BOARD_STATUSES = new Set(["backlog", "ready", "in_progress", "review", "testing", "blocked", "done"]);
 const BOARD_TYPES = new Set(["epic", "story", "task", "subtask", "bug", "spike", "chore"]);
@@ -90,6 +90,24 @@ function readLabels(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseVerificationTarget(value) {
+  try {
+    return normalizeVerificationTarget(value);
+  } catch {
+    return null;
+  }
+}
+
+function invalidExternalVerificationTarget(taskId, filePath) {
+  const error = verificationTargetRequiredError();
+  return Object.assign(error, {
+    status: 409,
+    reason: "verification_target_required",
+    taskId,
+    filePath
+  });
 }
 
 // D: legacy mapping table from the task spec. Read-side only — files are never
@@ -178,8 +196,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
   }
 
   const boardVerificationTarget = getBoardValue(doc, "verificationTarget");
-  const verificationTarget =
-    status === "testing" ? normalizeVerificationTarget(boardVerificationTarget, { migrating: true }) : null;
+  const verificationTarget = status === "testing" ? parseVerificationTarget(boardVerificationTarget) : null;
 
   const boardBlocker = getBoardValue(doc, "blocker");
   const blocker = status === "blocked" && boardBlocker && typeof boardBlocker === "object" ? boardBlocker : null;
@@ -424,12 +441,18 @@ export class TasksdirWorkboardPersistence {
     this.entries = new Map(); // folder -> { folder, filePath, fingerprint, doc, view, id }
     this.byId = new Map(); // task id -> entry
     this.sidecarCache = new Map(); // task id -> last persisted sidecar (rollback base for stale rejects)
+    this.initialCompositionPending = false;
+    this.needsMigrationSave = false;
   }
 
   async read() {
     const opsData = await this.ops.read();
     await this.scanTaskFiles();
-    if (!opsData) return null;
+    if (!opsData) {
+      this.initialCompositionPending = this.byId.size > 0;
+      this.needsMigrationSave = false;
+      return null;
+    }
 
     if (Array.isArray(opsData.tasks) && opsData.tasks.length > 0 && !process.env.WORKBOARD_TASKSDIR_IGNORE_SNAPSHOT_TASKS) {
       throw storageError(
@@ -441,10 +464,15 @@ export class TasksdirWorkboardPersistence {
       opsData.tasksdirSidecars && typeof opsData.tasksdirSidecars === "object" && !Array.isArray(opsData.tasksdirSidecars)
         ? opsData.tasksdirSidecars
         : {};
+    const verificationTargetMigration = opsData.tasksdirVerificationTargetGateVersion !== 1;
+    this.needsMigrationSave = verificationTargetMigration;
     const fallbackProjectId = this.resolveFallbackProjectId(opsData);
     const tasks = [];
     this.sidecarCache = new Map();
     for (const entry of this.byId.values()) {
+      if (!verificationTargetMigration && entry.view.status === "testing" && !entry.view.verificationTarget) {
+        throw invalidExternalVerificationTarget(entry.id, entry.filePath);
+      }
       const sidecar = sidecars[entry.id] || {};
       const task = boardTaskFromView(entry.id, entry.view, asText(sidecar.projectId) || fallbackProjectId);
       task.comments = cloneArray(sidecar.comments);
@@ -496,6 +524,25 @@ export class TasksdirWorkboardPersistence {
       const freshDoc = parseValidatedTaskFile(raw, plan.entry.filePath);
       const baseView = plan.entry.view;
       const { view: freshView } = mapFileTask(freshDoc, plan.entry.folder, { fallbackTimestamp: baseView.createdAt });
+      if (freshView.status === "testing" && !freshView.verificationTarget) {
+        applyViewToTask(plan.task, baseView);
+        this.restoreSidecar(plan.task);
+        plan.task.activity.unshift({
+          id: eventId(),
+          actor: "tasksdir",
+          type: "update.rejected",
+          message: "Rejected external testing transition without a verification target.",
+          createdAt: nowIso()
+        });
+        plan.type = "conflict";
+        conflicted.push({
+          taskId: plan.task.id,
+          conflicts: ["verificationTarget"],
+          reason: "verification_target_required",
+          message: `Task ${plan.task.id} entered testing externally without a verification target.`
+        });
+        continue;
+      }
       const { merged, conflicts } = threeWayMergeViews(baseView, plan.nextView, freshView);
       const externalKeys = VIEW_KEYS.filter((key) => !sameValue(baseView[key], freshView[key]));
       plan.entry.doc = freshDoc;
@@ -539,17 +586,22 @@ export class TasksdirWorkboardPersistence {
       else if (plan.type === "patch") await this.patchTaskFile(plan);
     }
 
-    const opsData = buildOpsData(data);
+    const establishVerificationTargetGate = !(this.initialCompositionPending && tasks.length === 0);
+    const opsData = buildOpsData(data, { establishVerificationTargetGate });
     await this.ops.write(opsData);
+    if (establishVerificationTargetGate) {
+      this.initialCompositionPending = false;
+      this.needsMigrationSave = false;
+    }
     this.sidecarCache = new Map(Object.entries(opsData.tasksdirSidecars).map(([id, sidecar]) => [id, clone(sidecar)]));
 
     if (conflicted.length > 0) {
       const first = conflicted[0];
       throw Object.assign(
-        new Error(`Task ${first.taskId} was modified externally in the tasks directory. Reload and retry.`),
+        new Error(first.message || `Task ${first.taskId} was modified externally in the tasks directory. Reload and retry.`),
         {
           status: 409,
-          reason: "stale_task_file",
+          reason: first.reason || "stale_task_file",
           taskId: first.taskId,
           conflicts: first.conflicts,
           conflictedTaskIds: conflicted.map((item) => item.taskId)
@@ -661,13 +713,16 @@ export class TasksdirWorkboardPersistence {
   }
 }
 
-function buildOpsData(data) {
+function buildOpsData(data, { establishVerificationTargetGate = true } = {}) {
   const sidecars = {};
   for (const task of Array.isArray(data.tasks) ? data.tasks : []) {
     sidecars[task.id] = sidecarOfTask(task);
   }
   const { tasks, tasksdirSidecars, ...rest } = data;
-  return { ...rest, tasks: [], tasksdirSidecars: sidecars };
+  const result = { ...rest, tasks: [], tasksdirSidecars: sidecars };
+  if (establishVerificationTargetGate) result.tasksdirVerificationTargetGateVersion = 1;
+  else delete result.tasksdirVerificationTargetGateVersion;
+  return result;
 }
 
 function sidecarOfTask(task) {

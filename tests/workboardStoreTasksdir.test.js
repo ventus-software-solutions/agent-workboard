@@ -177,6 +177,55 @@ describe("WorkboardStore tasksdir mode", () => {
     expect(reconciled.activity.some((event) => event.type === "external.reconciled")).toBe(true);
   });
 
+  it("rejects a cached ready task entering testing externally without a verification target", async () => {
+    const store = await openStore();
+    const original = await readFile(taskFilePath(FBR_BUG), "utf8");
+    await writeFile(taskFilePath(FBR_BUG), original.replace("status: todo", "status: testing"));
+
+    const task = store.getTask(FBR_BUG);
+    await expect(
+      store.updateTask(FBR_BUG, { priority: "high", expectedRevision: task.revision }, "operator")
+    ).rejects.toMatchObject({ status: 409, reason: "verification_target_required", taskId: FBR_BUG });
+
+    const rejected = store.getTask(FBR_BUG);
+    expect(rejected.status).toBe("ready");
+    expect(rejected.priority).toBeNull();
+    expect(rejected.verificationTarget).toBeNull();
+    expect(rejected.activity.some((event) => event.type === "update.rejected")).toBe(true);
+    expect(await readFile(taskFilePath(FBR_BUG), "utf8")).toContain("status: testing");
+  });
+
+  it("rejects a new external testing task without a verification target after the gate is established", async () => {
+    await openStore();
+    await writeTaskFolder("external_testing", "external_testing", { status: "testing" });
+
+    await expect(openStore()).rejects.toMatchObject({
+      status: 409,
+      reason: "verification_target_required",
+      taskId: "external_testing"
+    });
+  });
+
+  it("migrates a testing task that predates the tasksdir verification-target gate", async () => {
+    await writeTaskFolder("legacy_testing", "legacy_testing", { status: "testing" });
+
+    const store = await openStore();
+    expect(store.getTask("legacy_testing")).toMatchObject({
+      status: "testing",
+      verificationTarget: {
+        commitSha: "",
+        mergedTo: "",
+        artifactNote: expect.stringMatching(/before verification targets were required/i)
+      }
+    });
+    expect(await readFile(taskFilePath("legacy_testing"), "utf8")).toContain("verificationTarget:");
+
+    const reloaded = await openStore();
+    expect(reloaded.getTask("legacy_testing").verificationTarget.artifactNote).toMatch(
+      /before verification targets were required/i
+    );
+  });
+
   it("rejects a stale write when the same key changed externally, records it, and keeps the store usable", async () => {
     const store = await openStore();
 

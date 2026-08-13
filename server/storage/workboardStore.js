@@ -567,13 +567,19 @@ export class WorkboardStore {
     if (this.migrateData()) {
       needsSave = true;
     }
+    if (this.persistence.needsMigrationSave) {
+      needsSave = true;
+    }
 
     if (needsSave) {
       await this.save();
       if (this.persistence.workItemsExternal && !persistedData) {
         // First boot composes work items from the tasks dir once ops state exists.
         this.data = await this.readData();
-        this.migrateData();
+        const migratedAfterComposition = this.migrateData();
+        if (migratedAfterComposition || this.persistence.needsMigrationSave) {
+          await this.save();
+        }
       }
     }
   }
