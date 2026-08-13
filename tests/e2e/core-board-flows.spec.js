@@ -148,6 +148,104 @@ test("covers core board flows in the browser", async ({ page }) => {
   await expect.poll(async () => readFile(downloadedPath, "utf8")).toBe("browser attachment evidence\n");
 });
 
+test("keeps project health counters stable while task filters change", async ({ page }) => {
+  const projectName = uniqueName("E2E Stable Health Project");
+  const projectKey = uniqueKey("HLT");
+  const searchTitle = uniqueName("Find the visible implementation target");
+
+  const project = (
+    await postJson(page, "/api/projects", {
+      name: projectName,
+      key: projectKey,
+      description: "Project health must describe the whole project, not the filtered task list."
+    })
+  ).project;
+
+  const taskPayloads = [
+    {
+      title: searchTitle,
+      status: "ready",
+      role: "implementer",
+      workItemType: "task",
+      assignee: "filter-alice"
+    },
+    {
+      title: uniqueName("Hidden blocked reviewer bug"),
+      status: "blocked",
+      role: "reviewer",
+      workItemType: "bug",
+      assignee: "filter-bob"
+    },
+    {
+      title: uniqueName("Hidden review tester chore"),
+      status: "review",
+      role: "tester",
+      workItemType: "chore",
+      assignee: "filter-carol"
+    },
+    {
+      title: uniqueName("Hidden operator approval spike"),
+      status: "in_progress",
+      role: "pm",
+      workItemType: "spike",
+      assignee: "filter-dana"
+    }
+  ];
+
+  const createdTasks = [];
+  for (const task of taskPayloads) {
+    createdTasks.push(
+      (
+        await postJson(page, "/api/tasks", {
+          projectId: project.id,
+          priority: "normal",
+          ...task
+        })
+      ).task
+    );
+  }
+
+  await postJson(page, `/api/tasks/${createdTasks[3].id}/operator-approval`, {
+    requestedBy: "filter-dana",
+    reason: "Keep the approval hidden behind unrelated task filters.",
+    requestedAction: "Approve the filtered health regression.",
+    nextStatus: "review"
+  });
+
+  const tasksTab = page.getByRole("tab", { name: /^Tasks/ });
+  const expectWholeProjectHealth = async () => {
+    await expect(page.locator(".topStats .stat", { hasText: "Open" }).locator("strong")).toHaveText("4");
+    await expect(page.locator(".topStats .stat", { hasText: "Blocked" }).locator("strong")).toHaveText("2");
+    await expect(page.locator(".topStats .stat", { hasText: "Review" }).locator("strong")).toHaveText("1");
+    await expect(page.locator(".topStats .stat", { hasText: "Approvals" }).locator("strong")).toHaveText("1");
+  };
+  const expectSingleFilteredTask = async () => {
+    await expect(tasksTab).toContainText("1 of 4");
+    await expectWholeProjectHealth();
+  };
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(tasksTab).toContainText("4");
+  await expectWholeProjectHealth();
+
+  await page.getByPlaceholder("Search tasks").fill(searchTitle);
+  await expectSingleFilteredTask();
+
+  await page.getByPlaceholder("Search tasks").fill("");
+  await page.getByPlaceholder("Agent").fill("filter-alice");
+  await expectSingleFilteredTask();
+
+  await page.getByPlaceholder("Agent").fill("");
+  await page.getByRole("button", { name: "Reviewer Agent", exact: true }).click();
+  await expectSingleFilteredTask();
+
+  await page.getByRole("button", { name: "Reviewer Agent", exact: true }).click();
+  await page.getByLabel("Work item type filter").selectOption("bug");
+  await expectSingleFilteredTask();
+});
+
 test("keeps wrapped task-card content inside the card at responsive widths", async ({ page }) => {
   const projectName = uniqueName("E2E Card Layout Project");
   const projectKey = uniqueKey("LAY");

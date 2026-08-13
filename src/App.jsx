@@ -543,12 +543,13 @@ export function App() {
   }, [selectedProjectId, filters, loading]);
 
   const boardStats = useMemo(() => {
-    const open = tasks.filter((task) => task.status !== "done").length;
-    const blocked = tasks.filter((task) => task.status === "blocked").length;
-    const review = tasks.filter((task) => task.status === "review").length;
+    const open = projectTasks.filter((task) => task.status !== "done").length;
+    const blocked = projectTasks.filter((task) => task.status === "blocked").length;
+    const review = projectTasks.filter((task) => task.status === "review").length;
     const approvals = projectTasks.filter(isPendingOperatorApproval).length;
     return { open, blocked, review, approvals };
-  }, [projectTasks, tasks]);
+  }, [projectTasks]);
+  const taskFiltersActive = Boolean(filters.q || filters.role || filters.assignee || filters.workItemType);
   const capabilityStats = useMemo(() => {
     const live = capabilities.filter((capability) => capability.status === "live").length;
     const attention = capabilities.filter((capability) => ["broken", "planned", "in_progress", "review"].includes(capability.status)).length;
@@ -889,7 +890,7 @@ export function App() {
         {view === "board" && (
           <WorkspaceTabs
             activeTab={workspaceTab}
-            taskCount={tasks.length}
+            taskCount={taskFiltersActive ? `${tasks.length} of ${projectTasks.length}` : tasks.length}
             coordinationCount={coordinationAttention.count}
             activityCount={activityEvents.length}
             onChange={setWorkspaceTab}
