@@ -251,6 +251,7 @@ describe("Agent Workboard API", () => {
     });
     expect(pmDoc.body.agent.workflow).toContain("Only then look for another task.");
     expect(pmDoc.body.agent.workflow.join("\n")).toContain("identityToken");
+    expect(pmDoc.body.agent.workflow.join("\n")).toContain("bind `taskId` (or `currentTaskId`)");
     expect(pmDoc.body.agent.mcp.then).toContain("release_agent_slot");
     expect(pmDoc.body.agent.worktree.join("\n")).toContain("git worktree add");
     expect(pmDoc.body.agent.cautions.join("\n")).toContain("Do not edit the main checkout directly");
@@ -2257,7 +2258,7 @@ describe("Agent Workboard API", () => {
       .post("/api/agents/mcp-agent/presence")
       .send({
         state: "active",
-        currentTaskId: task.id,
+        taskId: task.id,
         message: "Working from API helper.",
         now: "2026-06-12T15:01:00.000Z"
       })

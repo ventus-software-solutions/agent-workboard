@@ -367,6 +367,7 @@ Use it to reconstruct a sequence, confirm actor attribution, or investigate unex
 ### Recover a stalled agent
 
 1. Check the slot lease, presence, current task binding, and last heartbeat.
+   A **STALLED** warning means ownership is no longer fresh; **OFF-SCRIPT** means a live agent reports a different task or no current task.
 2. Read the task's newest owner-authored comment and evidence; recent progress can explain an expired heartbeat.
 3. Check Agent Talks for a handoff, blocker, or question.
 4. If work is genuinely abandoned, use the stale-work recovery control to return it to `ready` or mark it `blocked` with the exact reason.

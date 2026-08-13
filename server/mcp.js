@@ -323,6 +323,7 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         agentId: z.string(),
         state: z.enum(["active", "waiting", "idle", "paused"]).optional(),
         currentTaskId: z.string().optional(),
+        taskId: z.string().optional().describe("Alias for currentTaskId: the task this agent believes it is working on."),
         currentTask: z.string().optional(),
         projectId: z.string().optional(),
         activeProjectId: z.string().optional(),

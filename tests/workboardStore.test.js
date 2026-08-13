@@ -2947,7 +2947,7 @@ describe("WorkboardStore", () => {
     const active = await store.updateAgentPresence("mcp-agent", {
       state: "active",
       activeProjectId: team.id,
-      currentTaskId: "task_123",
+      taskId: "task_123",
       workMode: "single-task",
       message: "Working the claimed helper task.",
       now: "2026-06-12T15:00:00.000Z"
@@ -3045,6 +3045,16 @@ describe("WorkboardStore", () => {
       runtimeId: "fresh-runtime",
       now: "2026-06-12T15:10:00.000Z"
     });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-3",
+      runtimeId: "off-script-runtime",
+      now: "2026-06-12T15:10:00.000Z"
+    });
+    await store.acquireAgentSlot({
+      agentId: "implementer-backend-4",
+      runtimeId: "unbound-runtime",
+      now: "2026-06-12T15:10:00.000Z"
+    });
     const missingSlotTask = await store.createTask({
       projectId: project.id,
       title: "Assigned to vanished worker",
@@ -3066,10 +3076,34 @@ describe("WorkboardStore", () => {
       role: "implementer",
       assignee: "implementer-backend-2"
     });
+    const offScriptTask = await store.createTask({
+      projectId: project.id,
+      title: "Assigned agent reports another task",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-3"
+    });
+    const unboundTask = await store.createTask({
+      projectId: project.id,
+      title: "Assigned agent reports no task",
+      status: "in_progress",
+      role: "implementer",
+      assignee: "implementer-backend-4"
+    });
 
     await store.updateAgentPresence("implementer-backend-2", {
       state: "active",
       currentTaskId: freshTask.id,
+      now: "2026-06-12T15:10:30.000Z"
+    });
+    await store.updateAgentPresence("implementer-backend-3", {
+      state: "active",
+      taskId: freshTask.id,
+      now: "2026-06-12T15:10:30.000Z"
+    });
+    await store.updateAgentPresence("implementer-backend-4", {
+      state: "active",
+      taskId: "",
       now: "2026-06-12T15:10:30.000Z"
     });
 
@@ -3080,19 +3114,27 @@ describe("WorkboardStore", () => {
 
     // Both stale tasks are created in the same tick, so lastProgressAt can tie and
     // the title tiebreak decides the order. Assert on identity rather than position.
-    expect(stale.tasks.map((item) => item.task.id).sort()).toEqual([missingSlotTask.id, expiredHeartbeatTask.id].sort());
+    expect(stale.tasks.map((item) => item.task.id).sort()).toEqual(
+      [missingSlotTask.id, expiredHeartbeatTask.id, offScriptTask.id, unboundTask.id].sort()
+    );
     expect(stale.tasks.map((item) => item.task.id)).not.toContain(freshTask.id);
 
     const missingSlotEntry = stale.tasks.find((item) => item.task.id === missingSlotTask.id);
     const expiredHeartbeatEntry = stale.tasks.find((item) => item.task.id === expiredHeartbeatTask.id);
+    const offScriptEntry = stale.tasks.find((item) => item.task.id === offScriptTask.id);
+    const unboundEntry = stale.tasks.find((item) => item.task.id === unboundTask.id);
 
     expect(missingSlotEntry).toMatchObject({
+      kind: "stalled",
+      warningLabel: "STALLED",
       reason: "missing_slot",
       assignee: "implementer-backend-99",
       canAcknowledge: false,
       suggestedActions: ["comment", "requeue", "block"]
     });
     expect(expiredHeartbeatEntry).toMatchObject({
+      kind: "stalled",
+      warningLabel: "STALLED",
       reason: "expired_heartbeat",
       assignee: "implementer-backend-1",
       canAcknowledge: true,
@@ -3104,6 +3146,30 @@ describe("WorkboardStore", () => {
       presenceFreshActive: false,
       ownerProgressFresh: false,
       summary: "No fresh heartbeat or owner progress"
+    });
+    expect(offScriptEntry).toMatchObject({
+      kind: "off_script",
+      warningLabel: "OFF-SCRIPT",
+      reason: "presence_task_mismatch",
+      reasonLabel: "Different task reported",
+      freshness: {
+        presenceFreshActive: true,
+        presenceTaskMatches: false,
+        presenceCurrentTaskId: freshTask.id,
+        summary: `Agent reports ${freshTask.id} instead`
+      }
+    });
+    expect(unboundEntry).toMatchObject({
+      kind: "off_script",
+      warningLabel: "OFF-SCRIPT",
+      reason: "presence_task_missing",
+      reasonLabel: "No task reported",
+      freshness: expect.objectContaining({
+        presenceFreshActive: true,
+        presenceTaskMatches: false,
+        presenceCurrentTaskId: "",
+        summary: "Active agent reports no current task"
+      })
     });
   });
 
