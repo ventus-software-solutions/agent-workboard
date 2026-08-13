@@ -186,7 +186,7 @@ function finalizeAgent(agent) {
   const presenceFresh = Boolean(agent.slot?.presenceFresh);
   const leaseFresh = Boolean(agent.slot?.leaseFresh);
   const unresponsive = Boolean(agent.source === "slot" && leaseFresh && !presenceFresh && !agent.slot?.paused);
-  const stalled = Boolean(agent.source === "slot" && currentTask && !presenceFresh && !leaseFresh);
+  const stalled = Boolean(currentTask && !presenceFresh && !leaseFresh);
   const problem = Boolean(
     unresponsive || stalled || agent.slot?.stale || agent.slot?.paused || status === "blocked"
   );

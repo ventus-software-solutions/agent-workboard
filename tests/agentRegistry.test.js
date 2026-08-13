@@ -251,6 +251,27 @@ describe("agent registry derivation", () => {
     expect(registry.groups[0]).toMatchObject({ active: 0, queuedWork: 1, needsAttention: true });
   });
 
+  it("keeps a task-only current worker visible as a stalled problem agent", () => {
+    const registry = buildAgentRegistry({
+      roles: [{ id: "implementer", label: "Implementer Agent" }],
+      agentSlots: { types: [], slots: [] },
+      tasks: [
+        {
+          id: "task-ghost-busy",
+          title: "Continue work without a registered slot",
+          role: "implementer",
+          status: "in_progress",
+          assignee: "ghost-busy-agent"
+        }
+      ]
+    });
+
+    const ghost = registry.agents.find((agent) => agent.id === "ghost-busy-agent");
+    expect(ghost).toMatchObject({ status: "busy", stalled: true, problem: true });
+    expect(registry.groups[0].visibleAgents.map((agent) => agent.id)).toContain("ghost-busy-agent");
+    expect(registry.groups[0].hiddenAgents.map((agent) => agent.id)).not.toContain("ghost-busy-agent");
+  });
+
   it("builds the copyable one-line role bootstrap prompt", () => {
     expect(buildAgentBootstrapPrompt("implementer", "http://localhost:8088/")).toBe(
       "You are implementer. Read http://localhost:8088/api/agent-docs/implementer?format=md and do what it tells you."

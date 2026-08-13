@@ -954,6 +954,41 @@ test("shows the Agents view and filters board tasks by agent", async ({ page }) 
   expect(hasHorizontalOverflow).toBe(false);
 });
 
+test("Busy reveals a task-only current worker outside collapsed history", async ({ page }) => {
+  const projectName = uniqueName("E2E Task-only Busy Agent Project");
+  const projectKey = uniqueKey("TBA");
+  const taskTitle = uniqueName("Keep task-only worker reachable");
+
+  const project = (
+    await postJson(page, "/api/projects", {
+      name: projectName,
+      key: projectKey
+    })
+  ).project;
+  await postJson(page, "/api/tasks", {
+    projectId: project.id,
+    title: taskTitle,
+    role: "implementer",
+    status: "in_progress",
+    assignee: "ghost-busy-agent",
+    priority: "high"
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+
+  const implementerRole = page.locator(".roleSummary", { hasText: "Implementer Agent" });
+  const ghostCard = page.getByTestId("agent-card").filter({ hasText: "ghost-busy-agent" });
+  await expect(implementerRole.locator(".roleSeatsDisclosure")).not.toHaveAttribute("open", "");
+  await expect(ghostCard).toBeVisible();
+  await expect(ghostCard).toContainText("Stalled");
+  await expect(ghostCard).toContainText(taskTitle);
+
+  await page.getByRole("button", { name: /Busy.*show workers/i }).click();
+  await expect(ghostCard).toBeInViewport();
+});
+
 test("lets the operator resolve a pending approval from the board", async ({ page }) => {
   const projectName = uniqueName("E2E Approval Project");
   const projectKey = uniqueKey("APR");
