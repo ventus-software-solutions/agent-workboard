@@ -202,6 +202,39 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
   return { id, view };
 }
 
+// Read-only description of the exact legacy mapping applied by mapFileTask.
+// Import tooling uses this instead of maintaining a second, drift-prone copy
+// of the accepted values and special cases.
+export function previewFileTaskMapping(doc, folderName, options = {}) {
+  const mapped = mapFileTask(doc, folderName, options);
+  const rawStatus = asText(getValue(doc, "status")).toLowerCase();
+  const rawType = asText(getValue(doc, "type")).toLowerCase();
+  const rawPriority = asText(getValue(doc, "priority")).toLowerCase();
+
+  return {
+    ...mapped,
+    mapping: {
+      status: {
+        source: rawStatus || null,
+        target: mapped.view.status,
+        completionType: asText(mapped.view.completion?.completionType) || null,
+        known:
+          BOARD_STATUSES.has(rawStatus) || ["todo", "wont_do", "not_relevant"].includes(rawStatus)
+      },
+      type: {
+        source: rawType || null,
+        target: mapped.view.workItemType,
+        known: BOARD_TYPES.has(rawType) || ["feature", "docs", "idea"].includes(rawType)
+      },
+      priority: {
+        source: rawPriority || null,
+        target: mapped.view.priority,
+        known: !rawPriority || rawPriority === "unset" || BOARD_PRIORITIES.has(rawPriority)
+      }
+    }
+  };
+}
+
 export function fileViewFromBoardTask(task) {
   return {
     title: asText(task.title),
