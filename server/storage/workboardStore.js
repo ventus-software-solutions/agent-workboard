@@ -34,6 +34,9 @@ const WRITE_LOCK_RETRY_MS = 25;
 const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
+// Presence entries whose heartbeat is older than this window are dropped from
+// /api/agents/presence responses (kept in the data store for history).
+const PRESENCE_RETENTION_MS = 24 * 60 * 60 * 1000;
 const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
 const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story"]);
 const MAX_DECOMPOSITION_CHILDREN = 12;
@@ -899,61 +902,83 @@ export class WorkboardStore {
     const currentTime = parseTimestamp(input.now);
     const runtimeId = normalizeText(input.runtimeId) || id("runtime");
     const requestedAgentId = normalizeText(input.agentId);
+    const reclaimToken = normalizeText(input.identityToken || input.reclaimToken);
 
     return this.withWriteLock(async () => {
       this.data = await this.readData();
       this.ensureAgentSlotSchema();
 
       const stats = this.agentSlotTaskStats();
+      const requestedRole = normalizeText(input.role);
+      const validRoles = [
+        ...new Set(this.data.agentTypes.filter((type) => type.capacity > 0).map((type) => type.role))
+      ].sort();
+      if (requestedRole && !validRoles.includes(requestedRole)) {
+        throw httpError(
+          `Agent role ${requestedRole} is not configured. Valid roles: ${validRoles.join(", ")}.`,
+          400,
+          { role: requestedRole, validRoles }
+        );
+      }
+
       const requestedSlot = requestedAgentId
         ? this.data.agentSlots.find((slot) => slot.id === requestedAgentId)
         : null;
-      const typeId = requestedSlot?.typeId || this.inferAgentTypeId(input);
-      const type = this.data.agentTypes.find((candidate) => candidate.id === typeId);
-
-      if (!type) {
-        throw httpError(`Unknown agent type ${typeId || "(none)"}.`, 400, { typeId });
-      }
       if (requestedAgentId && !requestedSlot) {
         throw httpError(`Agent slot ${requestedAgentId} is not configured.`, 404, { agentId: requestedAgentId });
       }
 
-      const typeSlots = this.data.agentSlots
-        .filter((slot) => slot.typeId === type.id)
-        .sort((a, b) => a.slotNumber - b.slotNumber);
-      const capacitySlots = typeSlots.filter((slot) => slot.slotNumber <= type.capacity);
-      const activeSlots = typeSlots.filter((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type).active);
-      const existingRuntimeSlot = runtimeId
-        ? typeSlots.find((slot) => slot.lease?.runtimeId === runtimeId && this.isLeaseFresh(slot.lease, currentTime))
+      // Resolve a persisted identity across the whole registry before inferring a
+      // type. Otherwise a token-only restart can be assigned a free general slot
+      // before the original specialized slot is considered.
+      const identitySlot = reclaimToken
+        ? this.data.agentSlots.find((slot) => slot.lease?.identityToken === reclaimToken)
         : null;
-      const selected =
-        requestedSlot ||
-        existingRuntimeSlot ||
-        (activeSlots.length >= type.capacity
-          ? null
-          : selectAvailableSlot(capacitySlots, {
-              currentTime,
-              runtimeId,
-              stats,
-              isLeaseFresh: (lease) => this.isLeaseFresh(lease, currentTime)
-            }));
+      const targetSlot = requestedSlot || identitySlot;
+      const typeId = targetSlot?.typeId || this.inferAgentTypeId(input);
+
+      const primaryType = this.data.agentTypes.find((candidate) => candidate.id === typeId);
+      if (!primaryType) {
+        throw httpError(`Unknown agent type ${typeId || "(none)"}.`, 400, { typeId });
+      }
+
+      // Role spill-over: when a type is at capacity but was *inferred* (bare role or
+      // specialty labels), fall through to sibling types of the same role ordered by
+      // free seats before failing. An explicit preference (preferredType/agentType/type)
+      // or an explicit agentId is honored as-is - no spill.
+      const explicitPreferred = Boolean(normalizeText(input.preferredType || input.agentType || input.type || ""));
+      const candidateTypes =
+        explicitPreferred || targetSlot
+          ? [primaryType]
+          : this.orderAgentSlotTypesForRole(primaryType, currentTime, stats);
+
+      let selected = null;
+      let selectedType = null;
+      let sameRuntime = false;
+      let selectedViaIdentity = false;
+      let reclaimed = false;
+
+      for (const candidateType of candidateTypes) {
+        const pick = this.pickAgentSlotForType(candidateType, currentTime, stats, {
+          requestedSlot: targetSlot?.typeId === candidateType.id ? targetSlot : null,
+          reclaimToken,
+          runtimeId
+        });
+        if (!pick) continue;
+        selected = pick.slot;
+        selectedType = candidateType;
+        sameRuntime = pick.sameRuntime;
+        selectedViaIdentity = pick.selectedViaIdentity;
+        reclaimed = pick.reclaimed;
+        break;
+      }
 
       if (!selected) {
-        throw httpError(`No available agent slot for ${type.id}; active capacity is ${activeSlots.length}/${type.capacity}.`, 409, {
-          typeId: type.id,
-          capacity: type.capacity,
-          active: activeSlots.length,
-          activeSlotIds: activeSlots.map((slot) => slot.id)
-        });
+        throw this.buildSlotExhaustedError(candidateTypes, currentTime, stats);
       }
 
-      const described = this.describeAgentSlot(selected, currentTime, stats.get(selected.id), type);
-      const sameRuntime = selected.lease?.runtimeId === runtimeId;
       if (selected.paused) {
-        throw httpError(`Agent slot ${selected.id} is paused.`, 409, { agentId: selected.id, typeId: type.id });
-      }
-      if (described.active && !sameRuntime) {
-        throw httpError(`Agent slot ${selected.id} is already active.`, 409, { agentId: selected.id, typeId: type.id });
+        throw httpError(`Agent slot ${selected.id} is paused.`, 409, { agentId: selected.id, typeId: selectedType.id });
       }
 
       const projectContext = this.resolveAgentProjectContext(selected.id, input, {
@@ -962,14 +987,16 @@ export class WorkboardStore {
       });
       const heartbeatAt = currentTime.toISOString();
       const previousLease = selected.lease;
-      const reclaimed = Boolean(previousLease && !this.isLeaseFresh(previousLease, currentTime) && !described.inProgressTaskCount);
+      const identityToken = previousLease?.identityToken || reclaimToken || id("tok");
       selected.lease = {
+        ...(previousLease || {}),
         runtimeId,
+        identityToken,
         acquiredAt: sameRuntime && previousLease?.acquiredAt ? previousLease.acquiredAt : heartbeatAt,
         heartbeatAt,
         expiresAt: new Date(currentTime.getTime() + SLOT_LEASE_MS).toISOString()
       };
-      selected.workMode = normalizeWorkMode(input.workMode) || selected.workMode || type.defaultWorkMode;
+      selected.workMode = normalizeWorkMode(input.workMode) || selected.workMode || selectedType.defaultWorkMode;
       selected.activeProjectId = projectContext.activeProjectId;
       selected.updatedAt = heartbeatAt;
 
@@ -979,8 +1006,10 @@ export class WorkboardStore {
         acquired: true,
         renewed: Boolean(sameRuntime),
         reclaimed,
+        reclaimedViaIdentity: Boolean(selectedViaIdentity && reclaimed),
         agentId: selected.id,
-        typeId: type.id,
+        typeId: selectedType.id,
+        identityToken,
         role: selected.role,
         specialties: [...selected.specialties],
         slotNumber: selected.slotNumber,
@@ -990,8 +1019,113 @@ export class WorkboardStore {
         activeProject: projectContext.activeProject,
         nextTask: this.buildNextTaskGuidance(selected.id, projectContext),
         lease: { ...selected.lease },
-        capacity: type.capacity
+        capacity: selectedType.capacity
       };
+    });
+  }
+
+  orderAgentSlotTypesForRole(primaryType, currentTime, stats) {
+    const siblings = this.data.agentTypes.filter((type) => type.role === primaryType.role);
+    return siblings.slice().sort((a, b) => {
+      if (a.id === primaryType.id) return -1;
+      if (b.id === primaryType.id) return 1;
+      const freeA = a.capacity - this.activeSlotCountForType(a, currentTime, stats);
+      const freeB = b.capacity - this.activeSlotCountForType(b, currentTime, stats);
+      if (freeB !== freeA) return freeB - freeA;
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  activeSlotCountForType(type, currentTime, stats) {
+    return this.data.agentSlots.filter(
+      (slot) => slot.typeId === type.id && this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type).active
+    ).length;
+  }
+
+  pickAgentSlotForType(type, currentTime, stats, { requestedSlot, reclaimToken, runtimeId }) {
+    const typeSlots = this.data.agentSlots
+      .filter((slot) => slot.typeId === type.id)
+      .sort((a, b) => a.slotNumber - b.slotNumber);
+    const capacitySlots = typeSlots.filter((slot) => slot.slotNumber <= type.capacity);
+    const activeSlots = typeSlots.filter((slot) => this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type).active);
+    const existingRuntimeSlot = runtimeId
+      ? typeSlots.find((slot) => slot.lease?.runtimeId === runtimeId && this.isLeaseFresh(slot.lease, currentTime))
+      : null;
+    const identitySlot = reclaimToken ? typeSlots.find((slot) => slot.lease?.identityToken === reclaimToken) : null;
+
+    let slot = requestedSlot || identitySlot || existingRuntimeSlot || null;
+    const selectedViaIdentity = Boolean(identitySlot);
+
+    if (!slot && activeSlots.length < type.capacity) {
+      slot = selectAvailableSlot(capacitySlots, {
+        currentTime,
+        runtimeId,
+        stats,
+        isLeaseFresh: (lease) => this.isLeaseFresh(lease, currentTime)
+      });
+    }
+    if (!slot) return null;
+
+    const described = this.describeAgentSlot(slot, currentTime, stats.get(slot.id), type);
+    const previousLease = slot.lease;
+    const sameRuntime = previousLease?.runtimeId === runtimeId;
+    const leaseFresh = this.isLeaseFresh(previousLease, currentTime);
+    // Identity/restart reclaim only takes over when the existing lease is stale. A
+    // heartbeating lease from the same identity is a live duplicate and must be refused.
+    const sameIdentity = Boolean(selectedViaIdentity && previousLease?.identityToken === reclaimToken && !leaseFresh);
+    const explicitReclaim = Boolean(requestedSlot && !leaseFresh && !sameRuntime);
+
+    if (described.active && !sameRuntime && !sameIdentity && !explicitReclaim) {
+      throw httpError(`Agent slot ${slot.id} is already active.`, 409, { agentId: slot.id, typeId: type.id });
+    }
+
+    const reclaimed = Boolean(
+      previousLease && !leaseFresh && (sameIdentity || explicitReclaim || !described.inProgressTaskCount)
+    );
+
+    return { slot, sameRuntime, selectedViaIdentity: sameIdentity, reclaimed };
+  }
+
+  buildSlotExhaustedError(candidateTypes, currentTime, stats) {
+    const primary = candidateTypes[0];
+    const inactiveLeases = [];
+    for (const type of candidateTypes) {
+      for (const slot of this.data.agentSlots.filter((candidate) => candidate.typeId === type.id && candidate.lease)) {
+        inactiveLeases.push({
+          agentId: slot.id,
+          typeId: type.id,
+          runtimeId: slot.lease.runtimeId || "",
+          expiresAt: slot.lease.expiresAt || "",
+          leaseFresh: this.isLeaseFresh(slot.lease, currentTime)
+        });
+      }
+    }
+    inactiveLeases.sort((a, b) => Date.parse(a.expiresAt || 0) - Date.parse(b.expiresAt || 0));
+    const stagedLeases = inactiveLeases.filter((lease) => !lease.leaseFresh);
+    const earliestFree = inactiveLeases[0]?.expiresAt || "";
+    const earliestFreeLabel =
+      earliestFree && Date.parse(earliestFree) > 0
+        ? new Date(earliestFree).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "";
+    const leasesByType = inactiveLeases.length;
+    const label = candidateTypes.length === 1 ? candidateTypes[0].id : candidateTypes.map((t) => t.id).join("/");
+    const message =
+      leasesByType > 0
+        ? `${label} full: ${leasesByType} lease(s)${earliestFreeLabel ? `, earliest frees at ${earliestFreeLabel}` : ""}`
+        : `No available agent slot for ${primary.id}; active capacity is ${this.activeSlotCountForType(primary, currentTime, stats)}/${primary.capacity}.`;
+    return httpError(message, 409, {
+      typeId: primary.id,
+      typeIds: candidateTypes.map((t) => t.id),
+      types: candidateTypes.map((t) => ({
+        id: t.id,
+        capacity: t.capacity,
+        active: this.activeSlotCountForType(t, currentTime, stats)
+      })),
+      capacity: primary.capacity,
+      active: this.activeSlotCountForType(primary, currentTime, stats),
+      leasedSlots: inactiveLeases,
+      earliestFreeAt: earliestFree,
+      staleLeaseCount: stagedLeases.length
     });
   }
 
@@ -999,8 +1133,82 @@ export class WorkboardStore {
     this.ensureAgentPresenceSchema();
     const currentTime = parseTimestamp(nowInput);
     return Object.values(this.data.agentPresence)
+      .filter((presence) => this.presenceWithinRetention(presence, currentTime))
       .map((presence) => this.describeAgentPresence(presence, currentTime))
       .sort((a, b) => a.agentId.localeCompare(b.agentId));
+  }
+
+  presenceWithinRetention(presence, currentTime) {
+    const heartbeatTime = Date.parse(presence.lastHeartbeat || presence.updatedAt || "");
+    if (!Number.isFinite(heartbeatTime)) return false;
+    return currentTime.getTime() - heartbeatTime <= PRESENCE_RETENTION_MS;
+  }
+
+  async forceReleaseAgentSlot(agentIdInput, input = {}) {
+    const agentId = normalizeText(agentIdInput || input.agentId);
+    if (!agentId) {
+      throw Object.assign(new Error("Agent id is required."), { status: 400 });
+    }
+    const currentTime = parseTimestamp(input.now);
+    const actor = normalizeText(input.actor) || "operator";
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      this.ensureAgentPresenceSchema();
+
+      const slot = this.data.agentSlots.find((candidate) => candidate.id === agentId);
+      if (!slot) {
+        throw httpError("Agent slot not found.", 404, { agentId });
+      }
+
+      const releasedLease = slot.lease ? { ...slot.lease } : null;
+      const wasActive = Boolean(releasedLease && this.isLeaseFresh(releasedLease, currentTime));
+      const returnedTasks = [];
+
+      // Return every in_progress task claimed by this slot to ready (assignee cleared).
+      // Tasks in review/testing/done keep their state - work exists, only the slot frees.
+      for (const task of this.data.tasks) {
+        if (task.assignee !== agentId || task.status !== "in_progress") continue;
+        task.status = "ready";
+        task.assignee = "";
+        task.updatedAt = currentTime.toISOString();
+        task.revision = nextTaskRevision(task);
+        task.activity.unshift({
+          id: id("event"),
+          actor,
+          type: "force_release.returned",
+          message: "Force-released by operator; task returned to queue.",
+          createdAt: currentTime.toISOString()
+        });
+        returnedTasks.push({ taskId: task.id, title: task.title, projectId: task.projectId });
+      }
+
+      slot.lease = null;
+      slot.updatedAt = currentTime.toISOString();
+      slot.paused = false;
+      slot.activeProjectId = "";
+      delete this.data.agentPresence[agentId];
+
+      this.data.events.unshift({
+        id: id("event"),
+        actor,
+        type: "agent.force_release",
+        message: `Force-released agent slot ${agentId}${returnedTasks.length ? `; returned ${returnedTasks.length} task(s) to the queue.` : "."}`,
+        createdAt: currentTime.toISOString()
+      });
+
+      await this.writeData(this.data);
+
+      return {
+        released: true,
+        agentId,
+        wasActive,
+        releasedLease,
+        returnedTasks,
+        activeProjectId: slot.activeProjectId || ""
+      };
+    });
   }
 
   listStaleInProgressTasks({ projectId, now: nowInput } = {}) {

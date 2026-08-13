@@ -142,6 +142,15 @@ button {
   background: #1a1f25;
 }
 
+.dangerButton {
+  border-color: #7d3a3a;
+  color: #ffb4b4;
+}
+
+.agentReleaseButton span {
+  white-space: nowrap;
+}
+
 .viewSwitch {
   display: grid;
   gap: 8px;

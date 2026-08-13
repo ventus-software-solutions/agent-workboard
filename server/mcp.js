@@ -237,8 +237,11 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         heartbeat: {
           presenceTool: "update_presence",
           renewTool: "acquire_agent_slot",
+          releaseTool: "release_agent_slot",
+          identityToken: acquisition.identityToken || "",
           leaseExpiresAt: acquisition.lease?.expiresAt || null,
-          releaseBehavior: "No explicit release tool is required; stop renewing the lease and the slot becomes available after expiry."
+          releaseBehavior:
+            "On graceful shutdown keep the identityToken and re-pass it to acquire_agent_slot as identityToken on restart to reclaim this slot. To free the slot immediately (operator override) use release_agent_slot; otherwise stop renewing and the lease expires on its own."
         }
       });
     }
@@ -288,6 +291,27 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
       asText({
         presence: await store.updateAgentPresence(input.agentId, input)
       })
+  );
+
+  server.registerTool(
+    "release_agent_slot",
+    {
+      title: "Force-release agent slot",
+      description:
+        "Operator override that frees an agent slot immediately, ignoring its lease. In-progress tasks claimed by the slot are returned to ready with the assignee cleared. Use only for truly gone or misbehaving agents.",
+      inputSchema: {
+        agentId: z.string(),
+        actor: z.string().optional(),
+        now: z.string().optional()
+      }
+    },
+    async (input) =>
+      asText(
+        await store.forceReleaseAgentSlot(input.agentId, {
+          actor: input.actor,
+          now: input.now
+        })
+      )
   );
 
   server.registerTool(
