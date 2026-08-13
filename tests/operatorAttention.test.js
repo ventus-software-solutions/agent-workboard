@@ -54,6 +54,10 @@ describe("operator attention selector", () => {
         status: "review",
         reviewVerdict: { decision: "approve", findingsCount: 0 }
       }),
+      task("review-changes", {
+        status: "ready",
+        reviewVerdict: { decision: "request_changes", findingsCount: 2, reviewer: "reviewer-agent", commitSha: "abc1234" }
+      }),
       task("blocked", {
         status: "blocked",
         blocker: { type: "dependency", reason: "Waiting for schema" }
@@ -87,8 +91,12 @@ describe("operator attention selector", () => {
     });
 
     expect(result.actions.map((action) => action.kind)).toEqual(
-      expect.arrayContaining(["approval", "merge", "blocker", "stalled", "role_gap", "grooming", "cleanup"])
+      expect.arrayContaining(["approval", "merge", "review_changes", "blocker", "stalled", "role_gap", "grooming", "cleanup"])
     );
+    expect(result.actions.find((action) => action.kind === "review_changes")).toMatchObject({
+      taskId: "review-changes",
+      detail: expect.stringContaining("2 review findings")
+    });
     expect(result.actions[0]).toMatchObject({ kind: "approval", taskId: "approval", downstreamCount: 4 });
     expect(result.actions.find((action) => action.id === "role-gap:implementer")).toMatchObject({
       remedy: "copy_prompt",

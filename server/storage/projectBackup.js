@@ -120,6 +120,9 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     childTaskIds: normalizeTaskIdList(source.childTaskIds),
     dependencyStatus: normalizeDependencyStatus(source.dependencyStatus),
     assignee: normalizeText(source.assignee),
+    reviewedBy: normalizeText(source.reviewedBy),
+    testedBy: normalizeText(source.testedBy),
+    reviewVerdict: normalizeReviewVerdict(source.reviewVerdict),
     labels: normalizeTaskLabels(source.labels),
     completion: status === "done" ? normalizeCompletionRecord(completionInput, helpers) : null,
     createdAt,
@@ -128,6 +131,20 @@ function normalizeBackupTask(value, projectId, index, helpers) {
     comments: normalizeBackupComments(source.comments, { index, taskId }, helpers),
     attachments: normalizeBackupAttachments(source.attachments, { index, taskId }, helpers),
     activity: normalizeBackupActivity(source.activity, { index, taskId }, helpers)
+  };
+}
+
+function normalizeReviewVerdict(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const decision = normalizeText(value.decision);
+  if (!["approve", "request_changes"].includes(decision)) return null;
+  const findingsCount = Number(value.findingsCount ?? 0);
+  return {
+    decision,
+    findingsCount: Number.isInteger(findingsCount) && findingsCount >= 0 ? findingsCount : 0,
+    reviewer: normalizeText(value.reviewer),
+    commitSha: normalizeText(value.commitSha),
+    createdAt: normalizeText(value.createdAt)
   };
 }
 

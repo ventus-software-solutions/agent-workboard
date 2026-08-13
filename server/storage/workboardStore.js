@@ -775,6 +775,16 @@ export class WorkboardStore {
         task.approvalHistory = [];
         migrated = true;
       }
+      for (const field of ["reviewedBy", "testedBy"]) {
+        if (typeof task[field] !== "string") {
+          task[field] = "";
+          migrated = true;
+        }
+      }
+      if (task.reviewVerdict === undefined) {
+        task.reviewVerdict = null;
+        migrated = true;
+      }
     }
 
     if (this.ensureDefaultCapabilities()) {
@@ -2357,6 +2367,9 @@ export class WorkboardStore {
       completion,
       blocker,
       approvalHistory: [],
+      reviewedBy: "",
+      testedBy: "",
+      reviewVerdict: null,
       createdAt,
       updatedAt: createdAt,
       revision: 1,
@@ -2525,6 +2538,33 @@ export class WorkboardStore {
       throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
     }
 
+    if (task.status !== requestedStatus && task.status === "review" && task.reviewedBy) {
+      throw httpError("Resolve the active review claim with a structured verdict before changing task status.", 409, {
+        reason: "review_verdict_required",
+        taskId: task.id,
+        requestedStatus,
+        reviewedBy: task.reviewedBy
+      });
+    }
+
+    if (task.status !== requestedStatus && task.status === "testing" && task.testedBy) {
+      throw httpError("Resolve the active testing claim before changing task status.", 409, {
+        reason: "testing_resolution_required",
+        taskId: task.id,
+        requestedStatus,
+        testedBy: task.testedBy
+      });
+    }
+
+    if (task.status === "review" && requestedStatus === "in_progress" && task.assignee !== actorId) {
+      throw httpError("Only the implementation assignee may move a reviewed task back into progress.", 409, {
+        reason: "review_return_requires_assignee",
+        taskId: task.id,
+        assignee: task.assignee,
+        actor: actorId
+      });
+    }
+
     if (hasCompletionPatch && requestedStatus !== "done") {
       throw Object.assign(new Error("Completion records can only be saved on done tasks."), { status: 400 });
     }
@@ -2561,6 +2601,17 @@ export class WorkboardStore {
       if (task.status !== next) {
         changes.push(`status:${task.status}->${next}`);
         task.status = next;
+        // Keep the previous review verdict across status changes so a task that
+        // re-enters review without new commit evidence remains visibly distinct.
+        // addComment clears a request_changes verdict only when commit evidence lands.
+        if (next !== "review" && task.reviewedBy) {
+          task.reviewedBy = "";
+          changes.push("reviewedBy:released");
+        }
+        if (next !== "testing" && task.testedBy) {
+          task.testedBy = "";
+          changes.push("testedBy:released");
+        }
         if (next === "done") {
           task.completion = nextCompletion;
           changes.push(`completion:${task.completion.completionType}`);
@@ -2813,6 +2864,143 @@ export class WorkboardStore {
     });
   }
 
+  async claimTaskStage(taskId, input = {}) {
+    const agentId = normalizeText(input.agentId || input.reviewer || input.tester || input.assignee);
+    if (!agentId) throw httpError("Stage claim agentId is required.", 400);
+    const expectedStatus = normalizeText(input.expectedStatus);
+    if (!expectedStatus || !["review", "testing"].includes(expectedStatus)) {
+      throw httpError("Stage claims require expectedStatus review or testing.", 400);
+    }
+    const field = expectedStatus === "review" ? "reviewedBy" : "testedBy";
+    const requiredRole = expectedStatus === "review" ? "reviewer" : "tester";
+    const expectedClaimant = normalizeText(input.expectedClaimant);
+    const actor = normalizeText(input.actor) || agentId;
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      this.ensureAgentSlotSchema();
+      const task = this.getTask(taskId);
+      if (task.status !== expectedStatus) {
+        throw httpError(`Stage claim expected status ${expectedStatus}, found ${task.status}.`, 409, {
+          reason: "stage_status_changed",
+          taskId,
+          expectedStatus,
+          actualStatus: task.status
+        });
+      }
+      if (task.assignee === agentId) {
+        throw httpError(`The implementation assignee cannot claim the ${expectedStatus} stage of their own task.`, 409, {
+          reason: "stage_self_claim",
+          taskId,
+          expectedStatus,
+          assignee: task.assignee,
+          agentId
+        });
+      }
+      const profile = this.resolveWorkAgentProfile(agentId, input);
+      if (profile.role !== requiredRole) {
+        throw httpError(`${expectedStatus} work requires a ${requiredRole} agent slot.`, 409, {
+          reason: "stage_role_mismatch",
+          requiredRole,
+          actualRole: profile.role
+        });
+      }
+      if (isOneActiveTaskWorkMode(profile.workMode)) {
+        const activeTask = findActiveTaskForAgent(this.data.tasks, agentId, task.id);
+        if (activeTask) throw activeTaskClaimError(agentId, activeTask, profile.workMode);
+      }
+      if (normalizeText(task[field]) !== expectedClaimant) {
+        throw httpError(`${expectedStatus} stage is already claimed by ${task[field] || "another agent"}.`, 409, {
+          reason: "stage_already_claimed",
+          taskId,
+          field,
+          expectedClaimant,
+          actualClaimant: task[field] || ""
+        });
+      }
+
+      const claimedAt = now();
+      task[field] = agentId;
+      task.revision = nextTaskRevision(task);
+      task.updatedAt = claimedAt;
+      task.activity.unshift({
+        id: id("event"), actor, type: `${expectedStatus}.claimed`,
+        message: `${agentId} claimed ${expectedStatus} without changing implementation assignee ${task.assignee || "(unassigned)"}.`,
+        createdAt: claimedAt
+      });
+      this.pushStageTalk(task, agentId, "update", `${agentId} claimed ${expectedStatus} for ${task.title}.`, claimedAt);
+      await this.writeData(this.data);
+      return task;
+    });
+  }
+
+  async resolveTaskStage(taskId, input = {}) {
+    const agentId = normalizeText(input.agentId || input.reviewer || input.tester);
+    if (!agentId) throw httpError("Stage resolution agentId is required.", 400);
+    const expectedStatus = normalizeText(input.expectedStatus);
+    if (!expectedStatus || !["review", "testing"].includes(expectedStatus)) {
+      throw httpError("Stage resolution requires expectedStatus review or testing.", 400);
+    }
+    const field = expectedStatus === "review" ? "reviewedBy" : "testedBy";
+    const actor = normalizeText(input.actor) || agentId;
+
+    return this.withWriteLock(async () => {
+      this.data = await this.readData();
+      const task = this.getTask(taskId);
+      if (task.status !== expectedStatus) {
+        throw httpError(`Stage resolution expected status ${expectedStatus}, found ${task.status}.`, 409);
+      }
+      if (task[field] !== agentId) {
+        throw httpError(`${agentId} does not own the active ${expectedStatus} claim.`, 409, {
+          reason: "stage_claim_owner_mismatch",
+          actualClaimant: task[field] || ""
+        });
+      }
+
+      const resolvedAt = now();
+      const previousStatus = task.status;
+      let message = `${agentId} released ${expectedStatus}.`;
+      if (expectedStatus === "review") {
+        const decision = normalizeText(input.decision);
+        if (!["approve", "request_changes"].includes(decision)) {
+          throw httpError("Review resolution decision must be approve or request_changes.", 400);
+        }
+        const findingsCount = Number(input.findingsCount ?? 0);
+        if (!Number.isInteger(findingsCount) || findingsCount < 0) {
+          throw httpError("Review findingsCount must be a non-negative integer.", 400);
+        }
+        const commitSha = normalizeText(input.commitSha);
+        if (!commitSha) throw httpError("Review resolution commitSha is required.", 400);
+        task.reviewVerdict = { decision, findingsCount, reviewer: agentId, commitSha, createdAt: resolvedAt };
+        if (decision === "request_changes") {
+          task.status = "ready";
+          this.rebuildTaskRelationshipDerivatives();
+        }
+        message = `${agentId} recorded ${decision} with ${findingsCount} finding${findingsCount === 1 ? "" : "s"} for ${commitSha}.`;
+      }
+      task[field] = "";
+      task.revision = nextTaskRevision(task);
+      task.updatedAt = resolvedAt;
+      task.activity.unshift({ id: id("event"), actor, type: `${expectedStatus}.resolved`, message, createdAt: resolvedAt });
+      if (task.status !== previousStatus) {
+        task.activity.unshift({
+          id: id("event"), actor, type: "updated",
+          message: `Updated status:${previousStatus}->${task.status}.`, createdAt: resolvedAt
+        });
+      }
+      this.pushStageTalk(task, agentId, expectedStatus === "review" ? "decision" : "update", message, resolvedAt);
+      await this.writeData(this.data);
+      return task;
+    });
+  }
+
+  pushStageTalk(task, agentId, kind, body, createdAt) {
+    this.data.talkMessages.unshift({
+      id: id("talk"), projectId: task.projectId, authorAgentId: agentId, kind, body,
+      relatedTaskId: task.id, mentions: task.assignee ? [task.assignee] : [], createdAt
+    });
+  }
+
   async addComment(taskId, input) {
     const task = this.getTask(taskId);
     const body = normalizeText(input.body);
@@ -2827,6 +3015,14 @@ export class WorkboardStore {
       createdAt
     };
     task.comments.unshift(comment);
+    const evidenceCommitSha = normalizeText(input.evidence?.commitSha || input.commitSha);
+    if (evidenceCommitSha && task.reviewVerdict?.decision === "request_changes") {
+      task.reviewVerdict = null;
+      task.activity.unshift({
+        id: id("event"), actor: comment.author, type: "review.evidence_added",
+        message: `Cleared changes-requested verdict after new evidence ${evidenceCommitSha}.`, createdAt
+      });
+    }
     task.activity.unshift({
       id: id("event"),
       actor: comment.author,
@@ -4144,7 +4340,7 @@ function reviewerCandidateBuckets(tasks, agentId, profile) {
   return [
     {
       reason: "review_queue",
-      tasks: sortNextTasks(tasks.filter((task) => task.status === "review"))
+      tasks: sortNextTasks(tasks.filter((task) => task.status === "review" && !task.reviewedBy && task.assignee !== agentId))
     },
     {
       reason: "assigned_to_agent",
@@ -4170,6 +4366,24 @@ function reviewerCandidateBuckets(tasks, agentId, profile) {
 
 function workerCandidateBuckets(tasks, agentId, profile) {
   const eligibleTasks = tasks.filter((task) => taskIsEligibleForProfile(task, profile) && taskRelationshipsAllowClaim(task));
+  if (profile.role === "tester") {
+    return [
+      {
+        reason: "testing_queue",
+        tasks: sortNextTasks(
+          eligibleTasks.filter((task) => task.status === "testing" && !task.testedBy && task.assignee !== agentId)
+        )
+      },
+      {
+        reason: "assigned_to_agent",
+        tasks: sortNextTasks(eligibleTasks.filter((task) => task.status === "ready" && task.assignee === agentId))
+      },
+      {
+        reason: "role_queue",
+        tasks: sortNextTasks(eligibleTasks.filter((task) => task.status === "ready" && task.role === profile.role && isUnassignedOrMine(task, agentId)))
+      }
+    ];
+  }
   const specialtyTasks = isPlannerDecomposerProfile(profile)
     ? eligibleTasks.filter((task) => ["ready", "backlog"].includes(task.status) && isUnassignedOrMine(task, agentId))
     : eligibleTasks.filter(
@@ -4259,7 +4473,13 @@ function isOneActiveTaskWorkMode(workMode) {
 
 function findActiveTaskForAgent(tasks, agentId, excludedTaskId = "") {
   return tasks
-    .filter((task) => task.status === "in_progress" && task.assignee === agentId && task.id !== excludedTaskId)
+    .filter(
+      (task) =>
+        task.id !== excludedTaskId &&
+        ((task.status === "in_progress" && task.assignee === agentId) ||
+          (task.status === "review" && task.reviewedBy === agentId) ||
+          (task.status === "testing" && task.testedBy === agentId))
+    )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title))[0];
 }
 
@@ -4347,16 +4567,26 @@ function staleTaskRevisionError(task, expectedRevision) {
 }
 
 function buildSelection(reason, task, agentId) {
-  if (reason === "review_queue") {
-    return {
+  if (reason === "review_queue" || reason === "testing_queue") {
+    const selection = {
       reason,
-      review: {
+      stageClaim: {
+        taskId: task.id,
+        agentId,
+        originalAssignee: task.assignee || "",
+        expectedStatus: task.status,
+        expectedClaimant: ""
+      }
+    };
+    if (reason === "review_queue") {
+      selection.review = {
         taskId: task.id,
         reviewer: agentId,
         originalAssignee: task.assignee || "",
         status: task.status
-      }
-    };
+      };
+    }
+    return selection;
   }
 
   return {

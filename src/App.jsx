@@ -2429,6 +2429,7 @@ function OperatorAttentionPanel({
 function attentionIcon(kind) {
   if (kind === "approval") return UserRoundCheck;
   if (kind === "merge") return GitMerge;
+  if (kind === "review_changes") return AlertCircle;
   if (kind === "blocker") return AlertCircle;
   if (kind === "stalled") return WifiOff;
   if (kind === "grooming") return ClipboardList;
@@ -2823,6 +2824,12 @@ function TaskCard({
           </span>
         )}
         {currentStatus && <span className="statusPill">{statusControlLabel(task.status, currentStatus)}</span>}
+        {task.reviewedBy && <span className="stageOwnerPill">Review: {task.reviewedBy}</span>}
+        {task.testedBy && <span className="stageOwnerPill">Testing: {task.testedBy}</span>}
+        {task.reviewVerdict?.decision === "request_changes" && (
+          <span className="changesRequestedPill">Changes requested ({task.reviewVerdict.findingsCount})</span>
+        )}
+        {task.reviewVerdict?.decision === "approve" && <span className="reviewApprovedPill">Review approved</span>}
         {workflowCue && <span className="workflowPill">{workflowCue}</span>}
         {dependencyState !== "clear" && <span className={`relationshipPill ${dependencyState}`}>{relationshipStateLabel(dependencyState)}</span>}
         {task.childTaskIds?.length > 0 && <span className="relationshipPill clear">{task.childTaskIds.length} child</span>}
@@ -3011,6 +3018,24 @@ function TaskDrawer({ task, tasks, statuses, roles, workItemTypes, completionTyp
         statuses={statuses}
         onDecide={(payload) => runDrawerMutation(() => api.decideOperatorApproval(task.id, payload))}
       />
+
+      {(task.reviewedBy || task.testedBy || task.reviewVerdict) && (
+        <div className="drawerSection stageRecord">
+          <div className="sectionTitle">
+            <UserRoundCheck size={17} />
+            <span>Stage ownership and verdict</span>
+          </div>
+          {task.reviewedBy && <p>Review claimed by <strong>{task.reviewedBy}</strong></p>}
+          {task.testedBy && <p>Testing claimed by <strong>{task.testedBy}</strong></p>}
+          {task.reviewVerdict && (
+            <div className={`reviewVerdictRecord ${task.reviewVerdict.decision}`}>
+              <strong>{task.reviewVerdict.decision === "approve" ? "Approved" : "Changes requested"}</strong>
+              <span>{task.reviewVerdict.findingsCount} findings · {task.reviewVerdict.reviewer}</span>
+              <code>{task.reviewVerdict.commitSha}</code>
+            </div>
+          )}
+        </div>
+      )}
 
       <CompletionPanel
         task={task}

@@ -102,6 +102,10 @@ export const api = {
   createTask: (task) => request("/api/tasks", { method: "POST", body: JSON.stringify(task) }),
   updateTask: (taskId, patch) => request(`/api/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   claimTask: (taskId, claim) => request(`/api/tasks/${taskId}/claim`, { method: "POST", body: JSON.stringify(claim) }),
+  claimTaskStage: (taskId, claim) =>
+    request(`/api/tasks/${taskId}/stage-claim`, { method: "POST", body: JSON.stringify(claim) }),
+  resolveTaskStage: (taskId, resolution) =>
+    request(`/api/tasks/${taskId}/stage-resolution`, { method: "POST", body: JSON.stringify(resolution) }),
   requestOperatorApproval: (taskId, input) =>
     request(`/api/tasks/${taskId}/operator-approval`, { method: "POST", body: JSON.stringify(input) }),
   decideOperatorApproval: (taskId, input) =>

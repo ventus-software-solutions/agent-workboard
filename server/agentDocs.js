@@ -138,11 +138,14 @@ export function buildAgentDoc({
   const activeProjectLabel = activeProject ? `${activeProject.key || activeProject.name} (${activeProject.id})` : "No active project assigned";
   const filters = taskFilters(profile, activeProjectId);
   const isReviewer = profile.role === "reviewer";
+  const isTester = profile.role === "tester";
+  const usesStageClaims = isReviewer || isTester;
   const workflow = isPlannerDecomposer ? plannerDecomposerWorkflow() : sharedWorkflow();
   const mcpTools = [
     "acquire_agent_slot",
     "get_next_task",
     "claim_task",
+    ...(usesStageClaims ? ["claim_task_stage", "resolve_task_stage"] : []),
     ...(isPlannerDecomposer ? ["decompose_task"] : []),
     "update_presence",
     "post_talk_message",
@@ -177,7 +180,9 @@ export function buildAgentDoc({
       `Then find ready tasks where role=${profile.role}.`,
       "Then find ready/backlog tasks matching your specialty labels.",
       "Sort by urgent, high, normal, low. Prefer ready over backlog.",
-      "Claim exactly one task before doing substantive work."
+      usesStageClaims
+        ? "Claim review/testing work with the stage claim returned by next-task; this preserves the implementation assignee."
+        : "Claim exactly one task before doing substantive work."
     ],
     integrationStatus,
     worktree: worktreeDiscipline(agentId, integrationStatus),
@@ -191,6 +196,8 @@ export function buildAgentDoc({
       listProjects: `${baseUrl}/api/projects`,
       listTasks: `${baseUrl}/api/tasks?${new URLSearchParams(filters).toString()}`,
       claimTask: `${baseUrl}/api/tasks/{taskId}/claim`,
+      stageClaim: `${baseUrl}/api/tasks/{taskId}/stage-claim`,
+      stageResolution: `${baseUrl}/api/tasks/{taskId}/stage-resolution`,
       bootstrap: `${baseUrl}/api/bootstrap`,
       agentSlots: `${baseUrl}/api/agent-slots`,
       nextTask: `${baseUrl}/api/agents/${encodeURIComponent(agentId)}/next-task`,
@@ -209,7 +216,9 @@ export function buildAgentDoc({
     statuses: statuses.map((status) => status.id),
     cautions: [
       "Do not work unclaimed tasks.",
-      "Do not claim tasks by PATCHing assignee/status directly; use the claim endpoint or MCP `claim_task`.",
+      usesStageClaims
+        ? "Do not claim review/testing work by PATCHing assignee/status; use the stage-claim endpoint or MCP `claim_task_stage`."
+        : "Do not claim tasks by PATCHing assignee/status directly; use the claim endpoint or MCP `claim_task`.",
       "Do not edit the main checkout directly for implementation work. Use a task branch/worktree first.",
       "Do not claim more than one task at a time unless the operator explicitly asks.",
       ...(isPlannerDecomposer ? ["Do not implement code from decomposition container tasks; create or propose child tasks and hand the parent off with evidence."] : []),
@@ -493,11 +502,13 @@ function reviewerMergeRules() {
   return [
     "A review is not complete just because you wrote findings. It is complete when the task is merged and marked done, or returned with requested changes.",
     "Review tasks in `status=review` before taking ordinary reviewer-role backlog work.",
+    "CAS-claim the review through `POST /api/tasks/{taskId}/stage-claim` or `claim_task_stage`; never replace the implementation assignee.",
     "Inspect the implementer's task comments, branch/worktree path, commit evidence, and stated test output.",
     "Run the relevant verification yourself when practical, at minimum `npm test` and `npm run build` for code changes before merge.",
-    "If approved, merge the branch or commit according to the current repo workflow, then mark the original task done with completionType=merged, commitSha, branch, mergedTo, tests, and notes.",
+    "Resolve the claim with a typed approve/request_changes verdict, findings count, reviewer, and reviewed commit. If approved, merge and mark done with completionType=merged, commitSha, branch, mergedTo, tests, and notes.",
     "For no-code planning, audit-only, or superseded closures, mark done with completionType=no-code, audit-only, or superseded and include clear notes or supersededByTaskId.",
-    "If changes are needed, comment specific findings and move the original task back to `ready` or `blocked` with the reason.",
+    "If changes are needed, comment specific findings and resolve the active review claim with `decision=request_changes`; stage resolution records the verdict and returns the task to `ready`.",
+    "Do not move a claimed review task to `blocked` to request changes. If the review itself cannot continue, hand off the claim or ask an operator to recover the stale claim so the verdict record is not bypassed.",
     "If you cannot merge because of permissions, conflicts, or unclear ownership, explicitly assign merge to another reviewer/operator and leave the task in `review` with the blocker."
   ];
 }

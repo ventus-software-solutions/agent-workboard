@@ -4,6 +4,7 @@ const GROOMING_STALE_DAYS = 7;
 const CATEGORY_RANK = {
   approval: 90,
   merge: 80,
+  review_changes: 75,
   blocker: 70,
   stalled: 60,
   role_gap: 50,
@@ -55,6 +56,20 @@ export function buildOperatorAttention({
           kind: "merge",
           title: task.title,
           detail: "Review approved; merge or route the delivery according to the deployment process.",
+          remedy: "open_task",
+          tasks
+        })
+      );
+      continue;
+    }
+
+    if (task.status === "ready" && task.reviewVerdict?.decision === "request_changes") {
+      actions.push(
+        taskAction({
+          task,
+          kind: "review_changes",
+          title: task.title,
+          detail: `${task.reviewVerdict.findingsCount || 0} review finding${task.reviewVerdict.findingsCount === 1 ? "" : "s"} requested by ${task.reviewVerdict.reviewer || "reviewer"} on ${task.reviewVerdict.commitSha || "the reviewed commit"}.`,
           remedy: "open_task",
           tasks
         })
