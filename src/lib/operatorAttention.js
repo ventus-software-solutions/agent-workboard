@@ -9,7 +9,8 @@ const CATEGORY_RANK = {
   stalled: 60,
   role_gap: 50,
   grooming: 30,
-  cleanup: 20
+  cleanup: 20,
+  data_source: 85
 };
 
 export function buildOperatorAttention({
@@ -20,6 +21,7 @@ export function buildOperatorAttention({
   promptTemplate = "",
   origin = "http://localhost:8088",
   projectId = "",
+  project = null,
   now = new Date()
 } = {}) {
   const agents = Array.isArray(agentRegistry.agents) ? agentRegistry.agents : [];
@@ -33,6 +35,18 @@ export function buildOperatorAttention({
   const activeRoles = countActiveRoles(activeAgents);
   const actions = [];
   const stalledTaskIds = new Set();
+
+  if (project?.dataSource?.health?.status === "error") {
+    actions.push({
+      id: `data-source:${project.id}`,
+      kind: "data_source",
+      title: `${project.name} tasks folder is unavailable`,
+      detail: project.dataSource.health.message || project.dataSource.tasksDir,
+      remedy: "retry_data_source",
+      projectId: project.id,
+      downstreamCount: tasks.filter((task) => task.status !== "done").length
+    });
+  }
 
   for (const task of tasks) {
     if (isPendingOperatorApproval(task)) {
@@ -290,6 +304,12 @@ function attentionCopy(action) {
         doThis: action.remedy === "cleanup"
           ? "Click Clean to remove the verified worktree and merged branch."
           : "Click Copy host commands and run them in the trusted host checkout."
+      };
+    case "data_source":
+      return {
+        what: `The project tasks folder cannot be read: ${action.detail || "unknown storage error"}.`,
+        why: "Work items from this project may be incomplete, but other projects remain available.",
+        doThis: "Fix the folder path or permissions, then click Retry source."
       };
     default:
       return {

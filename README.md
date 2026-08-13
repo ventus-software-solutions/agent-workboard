@@ -112,6 +112,8 @@ Set `WORKBOARD_STORAGE=json` to use the plain JSON file store instead.
 
 Set `WORKBOARD_STORAGE=tasksdir` (plus `WORKBOARD_TASKS_DIR=/abs/path/to/tasks`) to persist work items as markdown task folders (`<task-id>/task.md` with YAML frontmatter and a markdown body) in a git-tracked directory. Mutations rewrite only the affected task file, atomically; unknown frontmatter keys and the markdown body round-trip byte-for-byte. Everything that is not a work item (agent slots, presence, talks, capabilities, projects, and per-task comments/activity) stays in the ops store under `WORKBOARD_DATA_DIR`. The board never runs git commands; committing the tasks directory stays the operator's job.
 
+For a multi-project board, keep the instance in its normal `sqlite` or `json` mode and use **New project → Tasks folder path** to bind one project to an existing tasks directory. The UI runs the read-only doctor and requires confirmation of a successful report before creation. Other projects continue using the instance store, and a bound folder failure is isolated to that project. An optional repository path scopes that project's integration-status and worktree guidance. The global `tasksdir` mode remains the single-tree compatibility fallback.
+
 Before pointing the board at an existing task tree, run the read-only preflight doctor:
 
 ```bash

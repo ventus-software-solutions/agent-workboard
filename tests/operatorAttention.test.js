@@ -267,6 +267,31 @@ describe("operator attention selector", () => {
       doThis: expect.stringMatching(/^Open the task/)
     });
   });
+
+  it("surfaces a project tasks-folder failure without classifying healthy work as blocked", () => {
+    const result = buildOperatorAttention({
+      tasks: [task("healthy", { status: "done" })],
+      project: {
+        id: "project_folder",
+        name: "Folder project",
+        dataSource: {
+          tasksDir: "/repo/tasks",
+          health: { status: "error", message: "Permission denied" }
+        }
+      }
+    });
+
+    expect(result.actions).toContainEqual(
+      expect.objectContaining({
+        id: "data-source:project_folder",
+        kind: "data_source",
+        remedy: "retry_data_source",
+        what: expect.stringContaining("Permission denied"),
+        why: expect.stringContaining("other projects remain available"),
+        doThis: expect.stringContaining("Retry source")
+      })
+    );
+  });
 });
 
 describe("bootstrap prompt rendering", () => {

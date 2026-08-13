@@ -42,7 +42,8 @@ export const api = {
   updateDeploymentSettings: (settings) =>
     request("/api/deployment-settings", { method: "PATCH", body: JSON.stringify(settings) }),
   agentDocs: () => request("/api/agent-docs"),
-  integrationStatus: () => request("/api/integration-status"),
+  integrationStatus: (projectId = "") =>
+    request(`/api/integration-status${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`),
   agentSlots: () => request("/api/agent-slots"),
   updateAgentType: (typeId, patch) =>
     request(`/api/agent-types/${encodeURIComponent(typeId)}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -57,7 +58,10 @@ export const api = {
       body: JSON.stringify(presence)
     }),
   projects: () => request("/api/projects"),
+  preflightProject: (input) => request("/api/projects/preflight", { method: "POST", body: JSON.stringify(input) }),
   createProject: (project) => request("/api/projects", { method: "POST", body: JSON.stringify(project) }),
+  refreshProjectDataSource: (projectId) =>
+    request(`/api/projects/${encodeURIComponent(projectId)}/data-source/refresh`, { method: "POST" }),
   capabilities: (filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value !== undefined && value !== ""));
     return request(`/api/capabilities${params.size ? `?${params}` : ""}`);

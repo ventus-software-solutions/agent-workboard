@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createServer as createViteServer } from "vite";
 import { createApp } from "../../server/app.js";
@@ -355,6 +355,41 @@ test("linkifies safe task URLs while keeping markup and unsafe schemes inert", a
   await expect(talk.locator("img")).toHaveCount(0);
   await expect(talk.locator('a[href^="javascript:"]')).toHaveCount(0);
   await expect(talk.locator('a[href^="data:"]')).toHaveCount(0);
+});
+
+test("creates a folder-backed project only after a visible successful preflight confirmation", async ({ page }) => {
+  test.skip(process.env.WORKBOARD_STORAGE === "tasksdir", "Global tasksdir mode is the single-tree compatibility fallback.");
+  const projectName = uniqueName("E2E Folder Source Project");
+  const projectKey = uniqueKey("SRC");
+  const tasksDir = path.join(dataDir, `source-${projectKey.toLowerCase()}`);
+  await cp(path.join(projectRoot, "tests", "fixtures", "tasksdir"), tasksDir, { recursive: true });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: "Project", exact: true }).click();
+  const dialog = page.locator(".dialog");
+  await dialog.getByLabel("Name").fill(projectName);
+  await dialog.getByLabel("Key").fill(projectKey);
+  await dialog.getByLabel(/Tasks folder path/).fill(tasksDir);
+  await dialog.getByLabel(/Repository path/).fill(projectRoot);
+
+  const createButton = dialog.getByRole("button", { name: "Create project" });
+  await expect(createButton).toBeDisabled();
+  await dialog.getByRole("button", { name: "Check tasks folder" }).click();
+  const report = dialog.locator(".projectPreflight");
+  await expect(report).toContainText("Preflight passed");
+  await expect(report).toContainText("4 parsed, 0 failed across 4 task files");
+  await expect(createButton).toBeDisabled();
+
+  await dialog.getByLabel(/I reviewed this report/).check();
+  await expect(createButton).toBeEnabled();
+  await createButton.click();
+
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(taskCard(page, "Rewrite the onboarding guide for the new tariff flow")).toBeVisible();
+  await expect(page.locator(".integrationStatus")).toBeVisible();
+
+  await page.getByRole("button", { name: /Demo Agent Project/ }).click();
+  await expect(taskCard(page, "Implement the first useful workflow")).toBeVisible();
 });
 
 test("keeps project health counters stable while task filters change", async ({ page }) => {

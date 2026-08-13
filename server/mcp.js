@@ -19,6 +19,12 @@ function asText(value) {
   };
 }
 
+function projectIntegrationStatus(store, projectId = "") {
+  if (!projectId || typeof store.getProject !== "function") return getIntegrationStatus();
+  const project = store.getProject(projectId);
+  return getIntegrationStatus(project.dataSource?.repoDir ? { cwd: project.dataSource.repoDir } : undefined);
+}
+
 export function registerWorkboardMcpTools(server, store, { baseUrl = "http://localhost:8088" } = {}) {
   server.registerTool(
     "get_agent_instructions",
@@ -32,15 +38,16 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
     },
     async (input) => {
       const agentSlotRegistry = store.listAgentSlots();
+      const projectContext = store.getAgentProjectContext(input.agentId);
       const doc = buildAgentDoc({
         agentId: input.agentId,
         roles: store.roles(),
         statuses: store.statuses(),
         agentSlots: agentSlotRegistry.slots,
         agentTypes: agentSlotRegistry.types,
-        integrationStatus: getIntegrationStatus(),
+        integrationStatus: projectIntegrationStatus(store, projectContext.activeProjectId),
         baseUrl,
-        projectContext: store.getAgentProjectContext(input.agentId),
+        projectContext,
         deploymentSettings: store.getDeploymentSettings?.() || null
       });
       return asText(input.format === "json" ? doc : renderAgentDocMarkdown(doc));
@@ -253,7 +260,7 @@ export function registerWorkboardMcpTools(server, store, { baseUrl = "http://loc
         statuses: store.statuses(),
         agentSlots: agentSlotRegistry.slots,
         agentTypes: agentSlotRegistry.types,
-        integrationStatus: getIntegrationStatus(),
+        integrationStatus: projectIntegrationStatus(store, projectContext.activeProjectId),
         projectContext,
         baseUrl,
         deploymentSettings: store.getDeploymentSettings?.() || null

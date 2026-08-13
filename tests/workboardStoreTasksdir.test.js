@@ -271,6 +271,16 @@ describe("WorkboardStore tasksdir mode", () => {
     await expect(missing.init()).rejects.toThrow(/does not exist/);
   });
 
+  it("keeps global tasksdir mode as a single-tree fallback instead of accepting project bindings", async () => {
+    const store = await openStore();
+    await expect(
+      store.createProject({ name: "Second tree", dataSource: { tasksDir: path.join(tempDir, "other-tasks") } })
+    ).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "project_data_sources_unavailable_in_global_tasksdir" }
+    });
+  });
+
   it("binds a duplicated frontmatter id to the canonical folder (folder name == id)", async () => {
     // A copied folder with a stale id: must never hijack the canonical task,
     // regardless of readdir order (dupe_a sorts before the canonical folder,

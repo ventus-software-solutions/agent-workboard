@@ -1,5 +1,6 @@
 import express from "express";
 import multer from "multer";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import { getIntegrationStatus } from "./integrationStatus.js";
 import { clientDisconnectMiddleware, finishHttpError } from "./httpResilience.js";
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
 import { cleanupWorktree, createWorktreeCleanupReport, validateWorktreeCleanupRequest } from "./worktreeCleanup.js";
+import { inspectTasksDir } from "./tasksdirDoctor.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -23,6 +25,7 @@ const PROCESS_STARTED_AT = new Date().toISOString();
 export function createApp({
   store,
   integrationStatusProvider = getIntegrationStatus,
+  tasksdirDoctor = inspectTasksDir,
   worktreeCleanupProvider = createWorktreeCleanupReport,
   worktreeCleanupAction = cleanupWorktree,
   logger = console,
@@ -37,13 +40,18 @@ export function createApp({
   app.use(clientDisconnectMiddleware({ logger }));
   app.use(express.json({ limit: "2mb" }));
 
-  const integrationStatus = () => integrationStatusProvider();
+  const projectPreflights = new Map();
+  const integrationStatus = (projectId = "") => {
+    const project = projectId ? store.getProject(projectId) : null;
+    const cwd = project?.dataSource?.repoDir || undefined;
+    return integrationStatusProvider(cwd ? { cwd } : undefined);
+  };
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true, service: "agent-workboard" });
   });
 
-  app.get("/api/meta", (_req, res) => {
+  app.get("/api/meta", (req, res) => {
     res.json({
       roles: store.roles(),
       statuses: store.statuses(),
@@ -55,7 +63,7 @@ export function createApp({
         version,
         storageMode: store.persistence?.mode || "unknown"
       },
-      integrationStatus: integrationStatus(),
+      integrationStatus: integrationStatus(req.query.projectId),
       blockerTypes: store.blockerTypes(),
       operatorApprovalDecisions: store.operatorApprovalDecisions()
     });
@@ -91,15 +99,16 @@ export function createApp({
   app.get("/api/agent-docs/:agentId", (req, res) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const agentSlotRegistry = store.listAgentSlots();
+    const projectContext = store.getAgentProjectContext(req.params.agentId);
     const doc = buildAgentDoc({
       agentId: req.params.agentId,
       roles: store.roles(),
       statuses: store.statuses(),
       agentSlots: agentSlotRegistry.slots,
       agentTypes: agentSlotRegistry.types,
-      integrationStatus: integrationStatus(),
+      integrationStatus: integrationStatus(projectContext.activeProjectId),
       baseUrl,
-      projectContext: store.getAgentProjectContext(req.params.agentId),
+      projectContext,
       deploymentSettings: store.getDeploymentSettings()
     });
 
@@ -143,9 +152,9 @@ export function createApp({
     }
   });
 
-  app.get("/api/integration-status", (_req, res, next) => {
+  app.get("/api/integration-status", (req, res, next) => {
     try {
-      res.json({ integrationStatus: integrationStatus() });
+      res.json({ integrationStatus: integrationStatus(req.query.projectId) });
     } catch (error) {
       next(error);
     }
@@ -153,7 +162,8 @@ export function createApp({
 
   app.post("/api/bootstrap", async (req, res, next) => {
     try {
-      res.json({ ...(await store.acquireAgentSlot(req.body)), integrationStatus: integrationStatus() });
+      const acquisition = await store.acquireAgentSlot(req.body);
+      res.json({ ...acquisition, integrationStatus: integrationStatus(acquisition.activeProjectId) });
     } catch (error) {
       next(error);
     }
@@ -207,10 +217,62 @@ export function createApp({
     }
   });
 
+  app.post("/api/projects/preflight", async (req, res, next) => {
+    try {
+      if (!store.projectDataSourcesSupported()) {
+        throw Object.assign(
+          new Error("Per-project tasks folders require WORKBOARD_STORAGE=sqlite or json; global tasksdir mode already owns one tree."),
+          { status: 409, details: { reason: "project_data_sources_unavailable_in_global_tasksdir" } }
+        );
+      }
+      const tasksDirInput = String(req.body.tasksDir || "").trim();
+      if (!tasksDirInput) {
+        throw Object.assign(new Error("tasksDir is required for project preflight."), { status: 400 });
+      }
+      const tasksDir = path.resolve(tasksDirInput);
+      const report = await tasksdirDoctor(tasksDir);
+      if (!report.go) {
+        res.json({ report, confirmationToken: "" });
+        return;
+      }
+      for (const [token, confirmation] of projectPreflights) {
+        if (confirmation.expiresAt < Date.now()) projectPreflights.delete(token);
+      }
+      const confirmationToken = randomUUID();
+      projectPreflights.set(confirmationToken, { tasksDir, expiresAt: Date.now() + 10 * 60_000 });
+      res.json({ report, confirmationToken });
+    } catch (error) {
+      if (!error.status) {
+        error.status = 400;
+        error.details = { reason: "tasksdir_preflight_failed", code: error.code || "" };
+      }
+      next(error);
+    }
+  });
+
   app.post("/api/projects", async (req, res, next) => {
     try {
+      if (req.body.dataSource?.tasksDir) {
+        const tasksDir = path.resolve(String(req.body.dataSource.tasksDir).trim());
+        const confirmation = projectPreflights.get(req.body.preflightToken);
+        projectPreflights.delete(req.body.preflightToken);
+        if (!confirmation || confirmation.tasksDir !== tasksDir || confirmation.expiresAt < Date.now()) {
+          throw Object.assign(new Error("Run a successful tasks-directory preflight and confirm its report first."), {
+            status: 409,
+            details: { reason: "tasksdir_preflight_required", tasksDir }
+          });
+        }
+      }
       const project = await store.createProject(req.body);
       res.status(201).json({ project });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/projects/:projectId/data-source/refresh", async (req, res, next) => {
+    try {
+      res.json({ project: await store.refreshProjectDataSource(req.params.projectId) });
     } catch (error) {
       next(error);
     }

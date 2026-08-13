@@ -1,3 +1,5 @@
+import { normalizeProjectDataSource } from "./projectDataSource.js";
+
 export const PROJECT_BACKUP_PACKAGE_TYPE = "agent-workboard.project-backup";
 export const PROJECT_BACKUP_PACKAGE_VERSION = 1;
 
@@ -59,11 +61,13 @@ function normalizeBackupProject(value, { now }) {
   }
 
   const createdAt = normalizeText(source.createdAt) || now();
+  const dataSource = normalizeProjectDataSource(source.dataSource);
   return {
     id: projectId,
     key: slugify(source.key || name),
     name,
     description: normalizeText(source.description),
+    ...(dataSource ? { dataSource } : {}),
     createdAt,
     updatedAt: normalizeText(source.updatedAt) || createdAt,
     archived: source.archived === true

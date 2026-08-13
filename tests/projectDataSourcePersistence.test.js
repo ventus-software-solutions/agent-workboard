@@ -1,0 +1,154 @@
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { WorkboardStore } from "../server/storage/workboardStore.js";
+
+const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "tasksdir");
+
+describe("per-project tasks-directory persistence", () => {
+  let dataDir;
+  let tasksDir;
+
+  beforeEach(async () => {
+    dataDir = await mkdtemp(path.join(os.tmpdir(), "agent-workboard-project-source-"));
+    tasksDir = path.join(dataDir, "external-tasks");
+    await cp(fixturesDir, tasksDir, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it("keeps folder-backed and ops-backed projects together without mixing their work items", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const folderProject = await store.createProject({
+      name: "Folder Project",
+      key: "FOLDER",
+      dataSource: { tasksDir, repoDir: dataDir }
+    });
+    const opsProject = await store.createProject({ name: "Ops Project", key: "OPS" });
+
+    expect(folderProject.dataSource).toMatchObject({
+      tasksDir: path.resolve(tasksDir),
+      repoDir: path.resolve(dataDir),
+      health: { status: "ready" }
+    });
+    expect(store.listTasks({ projectId: folderProject.id })).toHaveLength(4);
+    expect(store.listTasks({ projectId: opsProject.id })).toHaveLength(0);
+
+    const opsTask = await store.createTask({ projectId: opsProject.id, title: "Stored in ops" });
+    const folderTask = await store.createTask({ projectId: folderProject.id, title: "Stored in task.md" });
+    expect(store.listTasks({ projectId: opsProject.id }).map((task) => task.id)).toEqual([opsTask.id]);
+    expect(store.listTasks({ projectId: folderProject.id }).map((task) => task.id)).toContain(folderTask.id);
+    expect(await readFile(path.join(tasksDir, folderTask.id, "task.md"), "utf8")).toContain("Stored in task.md");
+
+    const persistedOps = JSON.parse(await readFile(path.join(dataDir, "workboard.json"), "utf8"));
+    expect(persistedOps.tasks.map((task) => task.id)).toContain(opsTask.id);
+    expect(persistedOps.tasks.map((task) => task.id)).not.toContain(folderTask.id);
+    expect(persistedOps.projectTasksdirSidecars[folderProject.id]).toHaveProperty(folderTask.id);
+
+    const reloaded = new WorkboardStore({ dataDir, storageMode: "json" });
+    await reloaded.init();
+    expect(reloaded.listTasks({ projectId: opsProject.id }).map((task) => task.id)).toEqual([opsTask.id]);
+    expect(reloaded.listTasks({ projectId: folderProject.id }).map((task) => task.id)).toContain(folderTask.id);
+  });
+
+  it("composes project task folders over the SQLite ops store", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "sqlite" });
+    await store.init();
+    const folderProject = await store.createProject({ name: "SQLite folder project", dataSource: { tasksDir } });
+    const opsProject = await store.createProject({ name: "SQLite ops project" });
+    const folderTask = await store.createTask({ projectId: folderProject.id, title: "SQLite external task" });
+    const opsTask = await store.createTask({ projectId: opsProject.id, title: "SQLite internal task" });
+
+    const reloaded = new WorkboardStore({ dataDir, storageMode: "sqlite" });
+    await reloaded.init();
+    expect(reloaded.listTasks({ projectId: folderProject.id }).map((task) => task.id)).toContain(folderTask.id);
+    expect(reloaded.listTasks({ projectId: opsProject.id }).map((task) => task.id)).toEqual([opsTask.id]);
+  });
+
+  it("isolates an unreadable project folder and keeps healthy projects writable", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const missingTasksDir = path.join(dataDir, "missing-tasks");
+    const degraded = await store.createProject({
+      name: "Degraded Folder Project",
+      dataSource: { tasksDir: missingTasksDir }
+    });
+    const healthy = await store.createProject({ name: "Healthy Ops Project" });
+
+    expect(degraded.dataSource.health).toMatchObject({ status: "error" });
+    expect(degraded.dataSource.health.message).toContain("does not exist");
+    await expect(store.createTask({ projectId: degraded.id, title: "Must not disappear" })).rejects.toMatchObject({
+      status: 503,
+      reason: "project_tasksdir_unavailable"
+    });
+
+    const task = await store.createTask({ projectId: healthy.id, title: "Healthy write" });
+    expect(store.getTask(task.id).title).toBe("Healthy write");
+    expect(store.getProject(degraded.id).dataSource.health.status).toBe("error");
+
+    await cp(fixturesDir, missingTasksDir, { recursive: true });
+    const recovered = await store.refreshProjectDataSource(degraded.id);
+    expect(recovered.dataSource.health.status).toBe("ready");
+    expect(store.listTasks({ projectId: degraded.id })).toHaveLength(4);
+  });
+
+  it("keeps stale-file CAS failures inside the folder-backed project revision space", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const folderProject = await store.createProject({ name: "CAS Folder Project", dataSource: { tasksDir } });
+    const opsProject = await store.createProject({ name: "CAS Ops Project" });
+    const external = store.listTasks({ projectId: folderProject.id }).find((task) => task.id === "task_docs_cleanup");
+    const taskFile = path.join(tasksDir, "task_docs_cleanup", "task.md");
+    const before = await readFile(taskFile, "utf8");
+    await writeFile(
+      taskFile,
+      before.replace("Rewrite the onboarding guide for the new tariff flow", "Externally renamed documentation flow")
+    );
+
+    await expect(
+      store.updateTask(external.id, { title: "Board rename", expectedRevision: external.revision }, "operator")
+    ).rejects.toMatchObject({ status: 409, reason: "stale_task_file", projectId: folderProject.id });
+
+    const opsTask = await store.createTask({ projectId: opsProject.id, title: "Independent revision" });
+    const updated = await store.updateTask(
+      opsTask.id,
+      { title: "Independent revision updated", expectedRevision: opsTask.revision },
+      "operator"
+    );
+    expect(updated).toMatchObject({ title: "Independent revision updated", revision: 2 });
+  });
+
+  it("rejects binding the same tasks directory to two projects", async () => {
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    await store.createProject({ name: "First Binding", dataSource: { tasksDir } });
+    await expect(store.createProject({ name: "Second Binding", dataSource: { tasksDir } })).rejects.toMatchObject({
+      status: 409,
+      details: { reason: "tasksdir_already_bound" }
+    });
+  });
+
+  it("degrades only the later folder project when task ids collide across sources", async () => {
+    const secondTasksDir = path.join(dataDir, "second-external-tasks");
+    await cp(fixturesDir, secondTasksDir, { recursive: true });
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const first = await store.createProject({ name: "First ID space", dataSource: { tasksDir } });
+    const second = await store.createProject({ name: "Second ID space", dataSource: { tasksDir: secondTasksDir } });
+
+    expect(store.getProject(first.id).dataSource.health.status).toBe("ready");
+    expect(second.dataSource.health).toMatchObject({
+      status: "error",
+      code: "CROSS_PROJECT_TASK_ID_COLLISION",
+      message: expect.stringContaining("task_docs_cleanup")
+    });
+    expect(store.listTasks({ projectId: first.id })).toHaveLength(4);
+    expect(store.listTasks({ projectId: second.id })).toHaveLength(0);
+  });
+});
