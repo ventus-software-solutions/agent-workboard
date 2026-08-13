@@ -3,8 +3,11 @@ import {
   AGENT_BOOTSTRAP_ROLE_IDS,
   bootstrapPromptFor,
   buildBootstrapCards,
+  countClaimableReadyTasks,
   showIdleSpawnNudge
 } from "../src/lib/agentBootstrap.js";
+import { formatAgentBootstrapPrompt } from "../shared/agentBootstrap.js";
+import { listAgentDocs } from "../server/agentDocs.js";
 
 const roles = [
   { id: "pm", label: "PM Agent", summary: "Breaks goals into tasks." },
@@ -40,6 +43,44 @@ describe("agentBootstrap", () => {
     expect(bootstrapPromptFor("implementer", "https://board.example")).toBe(
       "You are implementer. Read https://board.example/api/agent-docs/implementer?format=md and do what it tells you."
     );
+  });
+
+  it("uses the same authoritative prompt formatter as the agent-docs endpoint", () => {
+    const docs = listAgentDocs({ roles: [], statuses: [] });
+
+    expect(docs.usage.promptTemplate).toBe(
+      formatAgentBootstrapPrompt({ agentType: "{agentType}", origin: "http://localhost:8088" })
+    );
+    expect(bootstrapPromptFor("implementer", "http://localhost:8088")).toBe(
+      docs.usage.promptTemplate.replaceAll("{agentType}", "implementer")
+    );
+  });
+
+  it("counts only ready work that the workflow considers directly claimable", () => {
+    const workItemTypes = [
+      { id: "epic", claimable: false },
+      { id: "story", claimable: false },
+      { id: "task", claimable: true },
+      { id: "bug", claimable: true }
+    ];
+    const tasks = [
+      { id: "claimable-task", status: "ready", workItemType: "task", dependencyStatus: { state: "clear" } },
+      { id: "claimable-bug", status: "ready", workItemType: "bug" },
+      { id: "epic-container", status: "ready", workItemType: "epic", dependencyStatus: { state: "clear" } },
+      { id: "story-container", status: "ready", workItemType: "story", dependencyStatus: { state: "clear" } },
+      { id: "waiting-dependency", status: "ready", workItemType: "task", dependencyStatus: { state: "waiting" } },
+      { id: "blocked-dependency", status: "ready", workItemType: "task", dependencyStatus: { state: "blocked" } },
+      {
+        id: "pending-approval",
+        status: "ready",
+        workItemType: "task",
+        dependencyStatus: { state: "clear" },
+        blocker: { type: "operator_approval", status: "pending" }
+      },
+      { id: "already-running", status: "in_progress", workItemType: "task", dependencyStatus: { state: "clear" } }
+    ];
+
+    expect(countClaimableReadyTasks(tasks, workItemTypes)).toBe(2);
   });
 
   it("shows the idle nudge only when there are ready tasks and zero active slots", () => {

@@ -1,4 +1,5 @@
 import { worktreePath } from "./worktreePaths.js";
+import { formatAgentBootstrapPrompt } from "../shared/agentBootstrap.js";
 
 const ROLE_RULES = {
   pm: {
@@ -77,7 +78,10 @@ export function listAgentDocs({ roles, statuses, integrationStatus = null }) {
     usage: {
       json: "/api/agent-docs/{agentId}",
       markdown: "/api/agent-docs/{agentId}?format=md",
-      promptTemplate: "You are {agentType}. Read http://localhost:8088/api/agent-docs/{agentType}?format=md and do what it tells you."
+      promptTemplate: formatAgentBootstrapPrompt({
+        agentType: "{agentType}",
+        origin: "http://localhost:8088"
+      })
     },
     suggestedAgents: [
       "pm",

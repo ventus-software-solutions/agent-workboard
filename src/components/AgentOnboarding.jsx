@@ -3,7 +3,8 @@ import { Check, Copy, X } from "lucide-react";
 import {
   AGENT_BOOTSTRAP_ROLE_IDS,
   bootstrapPromptFor,
-  buildBootstrapCards
+  buildBootstrapCards,
+  showIdleSpawnNudge
 } from "../lib/agentBootstrap.js";
 
 const FIRST_RUN_DISMISS_KEY = "agentWorkboard.onboardingStripDismissed";
@@ -145,7 +146,7 @@ function BootstrapRoleCards({ roles, origin }) {
 export function AgentOnboarding({ roles = [], readyTaskCount = 0, activeSlotCount = 0 }) {
   const origin = currentOrigin();
   const cards = useMemo(() => buildBootstrapCards(roles, origin), [roles, origin]);
-  const showIdle = readyTaskCount > 0 && activeSlotCount === 0;
+  const showIdle = showIdleSpawnNudge({ readyTaskCount, activeSlotCount });
 
   if (cards.length === 0) return null;
 

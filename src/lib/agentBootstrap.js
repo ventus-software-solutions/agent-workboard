@@ -1,14 +1,14 @@
-// @platform-candidate: agent-bootstrap-prompt — single source of the one-line
-// bootstrap prompt for the operator onboarding UI. The prompt shape mirrors the
-// template served by GET /api/agent-docs/{agentType}?format=md (server/agentDocs.js).
-// Keep the midpoint template string here so the frontend never hardcodes it twice.
+import { formatAgentBootstrapPrompt } from "../../shared/agentBootstrap.js";
+import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
+
+// UI-specific role/card selection; prompt text lives in the shared server/client formatter.
 
 // Agent roles that an operator can hand a bootstrap prompt to. `operator` is
 // excluded because it is a human/operator identity, not a spawnable agent role.
 export const AGENT_BOOTSTRAP_ROLE_IDS = ["pm", "implementer", "reviewer", "tester", "researcher"];
 
 export function bootstrapPromptFor(role, origin) {
-  return `You are ${role}. Read ${origin}/api/agent-docs/${role}?format=md and do what it tells you.`;
+  return formatAgentBootstrapPrompt({ agentType: role, origin });
 }
 
 export function buildBootstrapCards(roles = [], origin = "") {
@@ -23,6 +23,18 @@ export function buildBootstrapCards(roles = [], origin = "") {
       prompt: bootstrapPromptFor(id, origin)
     };
   }).filter(Boolean);
+}
+
+export function countClaimableReadyTasks(tasks = [], workItemTypes = []) {
+  const claimableWorkItemTypes = new Set(
+    workItemTypes.filter((workItemType) => workItemType.claimable).map((workItemType) => workItemType.id)
+  );
+
+  return tasks.filter((task) => {
+    if (task.status !== "ready" || !claimableWorkItemTypes.has(task.workItemType || "task")) return false;
+    if ((task.labels || []).some((label) => DECOMPOSITION_LABELS.has(label))) return false;
+    return taskRelationshipsAllowClaim(task);
+  }).length;
 }
 
 // Idle-state nudge: show only when there is claimable ready work but no agent is

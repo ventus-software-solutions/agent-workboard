@@ -3,6 +3,7 @@ import { mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildProjectBackup, normalizeProjectBackup } from "./projectBackup.js";
 import { createWorkboardPersistence } from "./persistence.js";
+import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 
 export const STATUSES = [
   { id: "backlog", label: "Backlog" },
@@ -35,7 +36,6 @@ const WRITE_LOCK_TIMEOUT_MS = 5000;
 const STALE_WRITE_LOCK_MS = 30000;
 const SLOT_LEASE_MS = 15 * 60 * 1000;
 const PLANNER_DECOMPOSER_TYPE_ID = "planner-decomposer";
-const DECOMPOSITION_LABELS = new Set(["decomposition-needed", "needs-decomposition", "ready-for-decomposition", "epic", "story"]);
 const MAX_DECOMPOSITION_CHILDREN = 12;
 const MAX_TASK_LABELS = 12;
 const UPSTREAM_STATUSES_BY_ROLE = {
@@ -3446,11 +3446,6 @@ function deriveTaskDependencyStatus(task, tasksById) {
 
 function relationshipTargetSatisfied(task) {
   return ["review", "done"].includes(task.status);
-}
-
-function taskRelationshipsAllowClaim(task) {
-  const state = task.dependencyStatus?.state || "clear";
-  return state === "clear" || task.status === "review";
 }
 
 function relationshipBlockedCandidate(task) {

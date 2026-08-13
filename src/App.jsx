@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { api } from "./lib/api.js";
 import { buildAgentRegistry } from "./lib/agentRegistry.js";
+import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
@@ -833,7 +834,7 @@ export function App() {
           <>
             <AgentOnboarding
               roles={meta.roles}
-              readyTaskCount={projectTasks.filter((task) => task.status === "ready").length}
+              readyTaskCount={countClaimableReadyTasks(projectTasks, meta.workItemTypes)}
               activeSlotCount={agentSlots.slots.filter((slot) => slot.active).length}
             />
             <AgentsRegistry
