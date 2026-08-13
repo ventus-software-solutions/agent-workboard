@@ -2685,8 +2685,8 @@ export class WorkboardStore {
     let nextExternalSource = task.externalSource || null;
     if ("externalSource" in patch) {
       nextExternalSource = normalizeTaskExternalSource(patch.externalSource);
-      if (task.externalSource && nextExternalSource && externalSourceKey(task.externalSource) !== externalSourceKey(nextExternalSource)) {
-        throw httpError("Task externalSource identity cannot be changed after it is linked.", 409, {
+      if (task.externalSource && externalSourceKey(task.externalSource) !== externalSourceKey(nextExternalSource)) {
+        throw httpError("Task externalSource identity cannot be changed or removed after it is linked.", 409, {
           taskId: task.id,
           currentExternalSource: externalSourceKey(task.externalSource),
           requestedExternalSource: externalSourceKey(nextExternalSource)

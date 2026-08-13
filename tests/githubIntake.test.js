@@ -195,6 +195,54 @@ describe("GitHub intake synchronization", () => {
         "stale-client"
       )
     ).rejects.toMatchObject({ status: 409 });
+
+    await expect(
+      store.updateTask(created.id, { externalSource: null, expectedRevision: updated.revision }, "client")
+    ).rejects.toMatchObject({
+      status: 409,
+      details: {
+        taskId: created.id,
+        currentExternalSource: "github:acme/work:issue:23",
+        requestedExternalSource: ""
+      }
+    });
+    expect(store.getTask(created.id)).toMatchObject({
+      revision: updated.revision,
+      externalSource: { provider: "github", repository: "acme/work", kind: "issue", number: 23 }
+    });
+  });
+
+  it("rejects API unlinking and keeps an imported issue idempotent on the next sync", async () => {
+    const client = mutableClient({ pulls: [], issues: [issue()] });
+    const service = intakeService(client);
+    await expect(service.sync()).resolves.toMatchObject({ created: 1, fetched: { pullRequests: 0, issues: 1 } });
+
+    const imported = store.listTasks({ projectId: "project_demo" }).find((task) => task.externalSource?.kind === "issue");
+    const app = createApp({ store, githubIntake: service });
+    const rejected = await request(app)
+      .patch(`/api/tasks/${imported.id}`)
+      .send({ externalSource: null, expectedRevision: imported.revision, actor: "operator-ui" })
+      .expect(409);
+
+    expect(rejected.body.error).toMatchObject({
+      message: "Task externalSource identity cannot be changed or removed after it is linked.",
+      details: {
+        taskId: imported.id,
+        currentExternalSource: "github:acme/work:issue:23",
+        requestedExternalSource: ""
+      }
+    });
+    await expect(service.sync()).resolves.toMatchObject({ created: 0, updated: 0, unchanged: 1 });
+
+    const importedIssues = store
+      .listTasks({ projectId: "project_demo" })
+      .filter((task) => task.externalSource?.kind === "issue" && task.externalSource.number === 23);
+    expect(importedIssues).toHaveLength(1);
+    expect(importedIssues[0]).toMatchObject({
+      id: imported.id,
+      revision: imported.revision,
+      externalSource: { provider: "github", repository: "acme/work", kind: "issue", number: 23 }
+    });
   });
 
   it("coalesces overlapping timer and on-demand sync requests into one REST pass", async () => {
