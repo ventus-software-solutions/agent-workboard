@@ -33,7 +33,7 @@ import {
   X
 } from "lucide-react";
 import { api } from "./lib/api.js";
-import { buildAgentRegistry } from "./lib/agentRegistry.js";
+import { buildAgentBootstrapPrompt, buildAgentRegistry } from "./lib/agentRegistry.js";
 import { countClaimableReadyTasks } from "./lib/agentBootstrap.js";
 import { buildOperatorAttention } from "./lib/operatorAttention.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
@@ -115,6 +115,18 @@ function formatClock(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function formatHeartbeatAge(value, currentTime = Date.now()) {
+  if (!value) return "No heartbeat";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "No heartbeat";
+  const elapsedMinutes = Math.max(0, Math.floor((currentTime - timestamp) / 60_000));
+  if (elapsedMinutes < 1) return "Heartbeat just now";
+  if (elapsedMinutes < 60) return `Heartbeat ${elapsedMinutes}m ago`;
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `Heartbeat ${elapsedHours}h ago`;
+  return `Heartbeat ${Math.floor(elapsedHours / 24)}d ago`;
 }
 
 export function App() {
@@ -834,24 +846,25 @@ export function App() {
               <>
                 <Stat
                   icon={Bot}
-                  label="Configured slots"
-                  value={agentRegistry.configuredAgentCount}
-                  sublabel={`${agentRegistry.historicalAssigneeCount} historical listed`}
-                  title="Configured agent slots. Historical task-only assignees are listed separately below and do not count as active capacity."
+                  label="Active"
+                  value={agentRegistry.activeAgents}
+                  sublabel={`${agentRegistry.unresponsiveAgents} unresponsive`}
+                  title="Agents with a fresh presence heartbeat. Lease-fresh agents without a heartbeat are counted separately as unresponsive."
                 />
                 <Stat
                   icon={Clock3}
                   label="Busy"
                   value={agentRegistry.busyAgents}
-                  sublabel="current work"
-                  title="Agents with an in-progress task, including task-only assignees only when they have current work."
+                  sublabel="show workers"
+                  title="Show agents with current in-progress work."
+                  onClick={() => document.querySelector(".agentStatus-busy")?.scrollIntoView({ behavior: "smooth", block: "center" })}
                 />
                 <Stat
-                  icon={AlertCircle}
-                  label="Blocked"
-                  value={agentRegistry.blockedAgents}
-                  sublabel="current work"
-                  title="Agents with blocked open work, excluding completed-only historical identities."
+                  icon={CheckCircle2}
+                  label="Available"
+                  value={agentRegistry.availableAgents}
+                  sublabel={`${agentRegistry.configuredAgentCount} seats`}
+                  title="Configured seats currently available for an agent to fill."
                 />
               </>
             ) : (
@@ -936,11 +949,6 @@ export function App() {
           />
         ) : view === "agents" ? (
           <>
-            <AgentOnboarding
-              roles={meta.roles}
-              readyTaskCount={countClaimableReadyTasks(projectTasks, meta.workItemTypes)}
-              activeSlotCount={agentSlots.slots.filter((slot) => slot.active).length}
-            />
             <AgentsRegistry
               registry={agentRegistry}
               onOpenTask={openLinkedTask}
@@ -950,6 +958,14 @@ export function App() {
               onReleaseAgent={handleReleaseAgent}
               updatingAgentId={agentControlPending}
             />
+            <details className="agentsAdvanced agentsOnboardingAdvanced">
+              <summary>Advanced: onboarding guide</summary>
+              <AgentOnboarding
+                roles={meta.roles}
+                readyTaskCount={countClaimableReadyTasks(projectTasks, meta.workItemTypes)}
+                activeSlotCount={agentSlots.slots.filter((slot) => slot.active).length}
+              />
+            </details>
           </>
         ) : workspaceTab === "coordination" ? (
           <CoordinationWorkspace
@@ -1058,15 +1074,27 @@ export function App() {
   );
 }
 
-function Stat({ icon: Icon, label, value, sublabel = "", title = "" }) {
-  return (
-    <div className="stat" title={title || sublabel}>
+function Stat({ icon: Icon, label, value, sublabel = "", title = "", onClick = null }) {
+  const content = (
+    <>
       <Icon size={16} />
       <span className="statLabel">
         <span>{label}</span>
         {sublabel && <small>{sublabel}</small>}
       </span>
       <strong>{value}</strong>
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" className="stat statButton" title={title || sublabel} onClick={onClick}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="stat" title={title || sublabel}>
+      {content}
     </div>
   );
 }
@@ -1610,40 +1638,83 @@ function AttentionAgentList({ agents }) {
   );
 }
 
+function RoleIcon({ role }) {
+  const Icon = roleIcons[role] || Bot;
+  return <Icon size={18} />;
+}
+
 function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot, onUpdateAgentTypeCapacity, onReleaseAgent, updatingAgentId }) {
-  const groups = registry.groups.filter((group) => group.agents.length > 0);
+  const [promptRole, setPromptRole] = useState("");
+  const [copiedRole, setCopiedRole] = useState("");
+  const groups = registry.groups;
 
   if (groups.length === 0) {
     return <div className="emptyState">No agents found.</div>;
   }
 
+  async function copyPrompt(role) {
+    const prompt = buildAgentBootstrapPrompt(role, window.location.origin);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(prompt);
+    }
+    setCopiedRole(role);
+    window.setTimeout(() => setCopiedRole((current) => (current === role ? "" : current)), 1600);
+  }
+
   return (
     <section className="agentsRegistry" aria-label="Agents">
-      <AgentTypeCapacityPanel
-        types={registry.typeSummaries}
-        onUpdateCapacity={onUpdateAgentTypeCapacity}
-        updatingAgentId={updatingAgentId}
-      />
       {groups.map((group) => (
-        <section className="agentGroup" key={group.role}>
-          <div className="agentGroupHeader">
-            <div>
-              <div className="sectionLabel">{group.role}</div>
-              <h3>{group.label}</h3>
+        <section className={`agentGroup roleSummary ${group.needsAttention ? "needsAttention" : ""}`} key={group.role}>
+          <div className="roleSummaryHeader">
+            <div className="roleSummaryIdentity">
+              <span className="agentIcon">
+                <RoleIcon role={group.role} />
+              </span>
+              <div>
+                <div className="sectionLabel">{group.role}</div>
+                <h3>{group.label}</h3>
+                <p>
+                  {group.active} active / {group.configured} seats ({group.available} available)
+                  {group.unresponsive > 0 ? ` · ${group.unresponsive} unresponsive` : ""}
+                </p>
+              </div>
             </div>
-            <div className="agentGroupStats">
-              <span>{group.configured} slots</span>
-              {group.historical > 0 && <span>{group.historical} historical</span>}
-              <span>{group.busy} busy</span>
-              <span>{group.blocked} blocked</span>
-              <span>{group.waiting} waiting</span>
-              <span>{group.idle} idle</span>
-            </div>
+            {group.canFill ? (
+              <button
+                type="button"
+                className="ghostButton fillSeatButton"
+                aria-expanded={promptRole === group.role}
+                aria-controls={`fill-prompt-${group.role}`}
+                onClick={() => setPromptRole((current) => (current === group.role ? "" : group.role))}
+              >
+                <Plus size={15} />
+                <span>Fill a seat</span>
+              </button>
+            ) : (
+              <span className="noSeatsLabel">No configured seats</span>
+            )}
           </div>
 
-          {group.configuredAgents.length > 0 && (
-            <div className="agentGrid">
-              {group.configuredAgents.map((agent) => (
+          {group.needsAttention && (
+            <div className="roleWarning" role="status">
+              <AlertCircle size={16} />
+              <span>{group.queuedWork} queued item(s), but no agent has a fresh heartbeat.</span>
+            </div>
+          )}
+
+          {promptRole === group.role && (
+            <div className="fillPrompt" id={`fill-prompt-${group.role}`}>
+              <code>{buildAgentBootstrapPrompt(group.role, window.location.origin)}</code>
+              <button type="button" className="ghostButton" onClick={() => copyPrompt(group.role)}>
+                <ClipboardList size={15} />
+                <span>{copiedRole === group.role ? "Copied" : "Copy prompt"}</span>
+              </button>
+            </div>
+          )}
+
+          {group.visibleAgents.length > 0 ? (
+            <div className="agentGrid liveAgentGrid">
+              {group.visibleAgents.map((agent) => (
                 <AgentCard
                   key={agent.id}
                   agent={agent}
@@ -1655,23 +1726,40 @@ function AgentsRegistry({ registry, onOpenTask, onFilterAgent, onUpdateAgentSlot
                 />
               ))}
             </div>
+          ) : (
+            <p className="roleQuietState">No active or problem agents.</p>
           )}
 
-          {group.historicalAgents.length > 0 && (
-            <>
-              <div className="agentSubgroupHeader">
-                <span>Historical assignees</span>
-                <small>Task-only identities, not configured capacity</small>
-              </div>
+          {group.hiddenAgents.length > 0 && (
+            <details className="roleSeatsDisclosure">
+              <summary>Show all seats and history ({group.hiddenAgents.length} more)</summary>
               <div className="agentGrid historicalAgentGrid">
-                {group.historicalAgents.map((agent) => (
-                  <AgentCard key={agent.id} agent={agent} onOpenTask={onOpenTask} onFilterAgent={onFilterAgent} />
+                {group.hiddenAgents.map((agent) => (
+                  <AgentCard
+                    key={agent.id}
+                    agent={agent}
+                    onOpenTask={onOpenTask}
+                    onFilterAgent={onFilterAgent}
+                    onUpdateAgentSlot={onUpdateAgentSlot}
+                    onReleaseAgent={onReleaseAgent}
+                    updatingAgentId={updatingAgentId}
+                  />
                 ))}
               </div>
-            </>
+            </details>
           )}
         </section>
       ))}
+
+      <details className="agentsAdvanced">
+        <summary>Advanced: agent types and capacity</summary>
+        <p>Type taxonomy, specialties, desired capacity, and individual slot diagnostics.</p>
+        <AgentTypeCapacityPanel
+          types={registry.typeSummaries}
+          onUpdateCapacity={onUpdateAgentTypeCapacity}
+          updatingAgentId={updatingAgentId}
+        />
+      </details>
     </section>
   );
 }
@@ -1729,8 +1817,8 @@ function AgentTypeCapacityPanel({ types, onUpdateCapacity, updatingAgentId }) {
             <div className="agentTypeStats">
               <span>{type.capacity} desired</span>
               <span>{type.occupied} occupied</span>
-              <span>{type.free} free</span>
-              <span>{type.stale} stale</span>
+              <span>{type.free} available</span>
+              <span>{type.stale} needs cleanup</span>
               <span>{type.configured} configured</span>
             </div>
 
@@ -1752,7 +1840,9 @@ function AgentTypeCapacityPanel({ types, onUpdateCapacity, updatingAgentId }) {
                   title={slot.currentTask ? slot.currentTask.title : slot.statusLabel}
                 >
                   {slot.id}
-                  <small>{slot.currentTask ? "occupied" : slot.available ? "free" : slot.statusLabel.toLowerCase()}</small>
+                  <small>
+                    {slot.currentTask ? "occupied" : slot.available ? "available" : slot.stale ? "needs cleanup" : slot.statusLabel.toLowerCase()}
+                  </small>
                 </span>
               ))}
             </div>
@@ -1773,6 +1863,15 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
   const selectedWorkMode = workModeOptions.some((option) => option.id === agent.workMode)
     ? agent.workMode
     : workModeOptions[0].id;
+  const displayStatus = agent.paused
+    ? "Paused"
+    : agent.unresponsive
+      ? "Unresponsive"
+      : agent.stalled
+        ? "Stalled"
+        : agent.presenceFresh
+          ? "Active"
+          : agent.statusLabel;
 
   function confirmForceRelease() {
     const taskNames = returnableTasks.map((task) => task.title).join(", ");
@@ -1786,7 +1885,10 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
   }
 
   return (
-    <article className={`agentCard agentStatus-${agent.status} agentSource-${agent.source}`} data-testid="agent-card">
+    <article
+      className={`agentCard agentStatus-${agent.status} agentSource-${agent.source} ${agent.problem ? "agentProblem" : ""}`}
+      data-testid="agent-card"
+    >
       <div className="agentCardHeader">
         <div className="agentIdentity">
           <span className="agentIcon">
@@ -1797,20 +1899,42 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
             <p>{agent.typeLabel}</p>
           </div>
         </div>
-        <span className="agentStatusBadge">{agent.statusLabel}</span>
+        <span className="agentStatusBadge">{displayStatus}</span>
       </div>
 
       <div className="agentMeta">
         <span>{agent.roleLabel}</span>
         {agent.source === "task-assignee" && <span>historical assignee</span>}
-        {agent.workMode && <span>{agent.workMode}</span>}
-        {agent.stale && <span>stale</span>}
-        {agent.available && <span>available</span>}
-        <span>{agent.lastActivityAt ? formatDate(agent.lastActivityAt) : "No activity"}</span>
+        <span>{formatHeartbeatAge(agent.heartbeatAt)}</span>
       </div>
 
-      {isConfiguredSlot && (
-        <div className="agentControls" aria-label={`${agent.id} controls`}>
+      <div className="agentPresenceMessage">
+        <div className="sectionLabel">Last message</div>
+        <p>{agent.presenceMessage || "No presence message"}</p>
+      </div>
+
+      <div className="agentCurrentTask">
+        <div className="sectionLabel">Current Task</div>
+        {agent.currentTask ? (
+          <button className="linkButton" onClick={() => onOpenTask(agent.currentTask.id)}>
+            {agent.currentTask.title}
+          </button>
+        ) : (
+          <p>No current task</p>
+        )}
+      </div>
+
+      <details className="agentDetailsDisclosure">
+        <summary>Details{isConfiguredSlot ? " and controls" : ""}</summary>
+        <div className="agentMeta">
+          {agent.workMode && <span>{agent.workMode}</span>}
+          {agent.stale && <span>stale</span>}
+          {agent.available && <span>available</span>}
+          <span>{agent.lastActivityAt ? formatDate(agent.lastActivityAt) : "No activity"}</span>
+        </div>
+
+        {isConfiguredSlot && (
+          <div className="agentControls" aria-label={`${agent.id} controls`}>
           <label className="agentModeControl">
             <span>Mode</span>
             <select
@@ -1844,8 +1968,8 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
           >
             <span>Force release</span>
           </button>
-        </div>
-      )}
+          </div>
+        )}
 
       <div className="agentCounts">
         <span>{agent.openTaskCount} open</span>
@@ -1860,17 +1984,6 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
           ))}
         </div>
       )}
-
-      <div className="agentCurrentTask">
-        <div className="sectionLabel">Current Task</div>
-        {agent.currentTask ? (
-          <button className="linkButton" onClick={() => onOpenTask(agent.currentTask.id)}>
-            {agent.currentTask.title}
-          </button>
-        ) : (
-          <p>No current task</p>
-        )}
-      </div>
 
       <div className="agentTaskLinks">
         <div className="sectionLabel">Assigned Tasks</div>
@@ -1894,6 +2007,7 @@ function AgentCard({ agent, onOpenTask, onFilterAgent, onUpdateAgentSlot, onRele
           <span>Assigned tasks</span>
         </button>
       </div>
+      </details>
     </article>
   );
 }

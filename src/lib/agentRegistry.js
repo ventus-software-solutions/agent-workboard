@@ -85,15 +85,35 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     const groupAgents = agents.filter((agent) => agent.role === role);
     const configuredGroupAgents = groupAgents.filter(isConfiguredAgent);
     const historicalGroupAgents = groupAgents.filter(isHistoricalAssignee);
+    const withinCapacityAgents = configuredGroupAgents.filter((agent) => agent.withinCapacity);
+    const activeAgents = configuredGroupAgents.filter((agent) => agent.presenceFresh && !agent.paused);
+    const unresponsiveAgents = configuredGroupAgents.filter((agent) => agent.unresponsive);
+    const problemAgents = groupAgents.filter((agent) => agent.problem);
+    const visibleAgents = groupAgents.filter((agent) => agent.presenceFresh || agent.problem);
+    const hiddenAgents = groupAgents.filter((agent) => !visibleAgents.includes(agent));
+    const roleTypes = typeSummaries.filter((type) => type.role === role);
+    const queuedWork = tasks.filter((task) => task.role === role && ["ready", "backlog"].includes(task.status)).length;
     return {
       role,
       label: roleById.get(role)?.label || titleize(role),
       agents: groupAgents,
       configuredAgents: configuredGroupAgents,
       historicalAgents: historicalGroupAgents,
+      types: roleTypes,
+      activeAgents,
+      unresponsiveAgents,
+      problemAgents,
+      visibleAgents,
+      hiddenAgents,
       total: groupAgents.length,
-      configured: configuredGroupAgents.length,
+      configured: withinCapacityAgents.length,
       historical: historicalGroupAgents.length,
+      active: activeAgents.length,
+      unresponsive: unresponsiveAgents.length,
+      available: withinCapacityAgents.filter((agent) => agent.available).length,
+      queuedWork,
+      needsAttention: queuedWork > 0 && activeAgents.length === 0,
+      canFill: roleTypes.some((type) => type.capacity > 0),
       busy: groupAgents.filter((agent) => agent.status === "busy").length,
       blocked: groupAgents.filter((agent) => agent.status === "blocked").length,
       waiting: groupAgents.filter((agent) => agent.status === "waiting").length,
@@ -108,6 +128,10 @@ export function buildAgentRegistry({ agentSlots = {}, tasks = [], roles = [] } =
     totalAgents: agents.length,
     configuredAgentCount: configuredAgents.length,
     historicalAssigneeCount: historicalAgents.length,
+    activeAgents: configuredAgents.filter((agent) => agent.presenceFresh && !agent.paused).length,
+    unresponsiveAgents: configuredAgents.filter((agent) => agent.unresponsive).length,
+    availableAgents: configuredAgents.filter((agent) => agent.withinCapacity && agent.available).length,
+    problemAgents: agents.filter((agent) => agent.problem).length,
     busyAgents: agents.filter((agent) => agent.status === "busy").length,
     blockedAgents: agents.filter((agent) => agent.status === "blocked").length,
     waitingAgents: agents.filter((agent) => agent.status === "waiting").length,
@@ -159,6 +183,19 @@ function finalizeAgent(agent) {
   const blockedTaskCount = openTasks.filter((task) => task.status === "blocked").length;
   const reviewTaskCount = openTasks.filter((task) => task.status === "review").length;
   const status = agentStatus({ agent, currentTask, openTasks, blockedTaskCount, reviewTaskCount });
+  const presenceFresh = Boolean(agent.slot?.presenceFresh);
+  const leaseFresh = Boolean(agent.slot?.leaseFresh);
+  const unresponsive = Boolean(agent.source === "slot" && leaseFresh && !presenceFresh && !agent.slot?.paused);
+  const stalled = Boolean(agent.source === "slot" && currentTask && !presenceFresh && !leaseFresh);
+  const problem = Boolean(
+    unresponsive || stalled || agent.slot?.stale || agent.slot?.paused || status === "blocked"
+  );
+  const heartbeatAt =
+    agent.slot?.presence?.lastHeartbeat ||
+    agent.slot?.presence?.updatedAt ||
+    agent.slot?.lease?.heartbeatAt ||
+    agent.slot?.lease?.acquiredAt ||
+    "";
 
   return {
     id: agent.id,
@@ -174,6 +211,13 @@ function finalizeAgent(agent) {
     statusLabel: STATUS_LABELS[status] || titleize(status),
     active: Boolean(agent.slot?.active),
     activeProjectId: agent.slot?.activeProjectId || "",
+    presenceFresh,
+    leaseFresh,
+    unresponsive,
+    stalled,
+    problem,
+    heartbeatAt,
+    presenceMessage: agent.slot?.presence?.message || agent.slot?.presence?.noEligibleWork?.message || "",
     paused: Boolean(agent.slot?.paused),
     stale: Boolean(agent.slot?.stale),
     waiting: agent.slot?.presence?.state === "waiting" && agent.slot?.presence?.status === "waiting",
@@ -194,6 +238,13 @@ function finalizeAgent(agent) {
       ...assignedTasks.flatMap((task) => [task.updatedAt, task.createdAt, ...(task.activity || []).map((event) => event.createdAt)])
     ])
   };
+}
+
+export function buildAgentBootstrapPrompt(role, baseUrl = "http://127.0.0.1:8088") {
+  const normalizedRole = String(role || "").trim();
+  const normalizedBaseUrl = String(baseUrl || "http://127.0.0.1:8088").replace(/\/$/, "");
+  if (!normalizedRole) return "";
+  return `You are ${normalizedRole}. Read ${normalizedBaseUrl}/api/agent-docs/${encodeURIComponent(normalizedRole)}?format=md and do what it tells you.`;
 }
 
 function agentStatus({ agent, currentTask, openTasks, blockedTaskCount, reviewTaskCount }) {
