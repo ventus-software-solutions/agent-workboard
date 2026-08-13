@@ -26,6 +26,32 @@ const BOARD_STATUSES = new Set(["backlog", "ready", "in_progress", "review", "te
 const BOARD_TYPES = new Set(["epic", "story", "task", "subtask", "bug", "spike", "chore"]);
 const BOARD_PRIORITIES = new Set(["low", "normal", "high", "urgent"]);
 const DEFAULT_ROLE = "implementer";
+const LEGACY_TYPE_MAPPINGS = new Map([
+  ["feature", { target: "task", labels: [] }],
+  ["docs", { target: "chore", labels: ["docs"] }],
+  ["idea", { target: "spike", labels: ["idea"] }],
+  ["improvement", { target: "task", labels: ["improvement"] }],
+  ["infrastructure", { target: "task", labels: ["infrastructure"] }],
+  ["investigation", { target: "task", labels: ["investigation"] }],
+  ["security", { target: "task", labels: ["security"] }],
+  ["test", { target: "task", labels: ["test"] }],
+  ["verification", { target: "task", labels: ["verification"] }],
+  ["decision", { target: "spike", labels: [] }]
+]);
+const LEGACY_STATUS_MAPPINGS = new Map([
+  ["todo", { target: "ready" }],
+  ["wont_do", { target: "done", completionType: "no-code" }],
+  ["not_relevant", { target: "done", completionType: "superseded" }],
+  ["cancelled", { target: "done", completionType: "superseded" }],
+  ["in-review", { target: "review" }]
+]);
+const LEGACY_PRIORITY_MAPPINGS = new Map([
+  ["critical", "urgent"],
+  ["p1", "urgent"],
+  ["medium", "normal"],
+  ["-", null],
+  ["unset", null]
+]);
 
 // Fixed key set of the file-mapped projection used for diffing and merging.
 const VIEW_KEYS = [
@@ -122,30 +148,28 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
 
   let workItemType = "task";
   const extraLabels = [];
+  let typeKnown = !rawType;
   if (BOARD_TYPES.has(rawType)) {
     workItemType = rawType;
-  } else if (rawType === "feature") {
-    workItemType = "task";
-  } else if (rawType === "docs") {
-    workItemType = "chore";
-    extraLabels.push("docs");
-  } else if (rawType === "idea") {
-    workItemType = "spike";
-    extraLabels.push("idea");
+    typeKnown = true;
+  } else if (LEGACY_TYPE_MAPPINGS.has(rawType)) {
+    const mappedType = LEGACY_TYPE_MAPPINGS.get(rawType);
+    workItemType = mappedType.target;
+    extraLabels.push(...mappedType.labels);
+    typeKnown = true;
   }
 
   let status = "backlog";
   let legacyClosed = "";
+  let statusKnown = false;
   if (BOARD_STATUSES.has(rawStatus)) {
     status = rawStatus;
-  } else if (rawStatus === "todo") {
-    status = "ready";
-  } else if (rawStatus === "wont_do") {
-    status = "done";
-    legacyClosed = "wont_do";
-  } else if (rawStatus === "not_relevant") {
-    status = "done";
-    legacyClosed = "not_relevant";
+    statusKnown = true;
+  } else if (LEGACY_STATUS_MAPPINGS.has(rawStatus)) {
+    const mappedStatus = LEGACY_STATUS_MAPPINGS.get(rawStatus);
+    status = mappedStatus.target;
+    legacyClosed = mappedStatus.completionType ? rawStatus : "";
+    statusKnown = true;
   }
   // Ideas need operator approval before they are claimable: legacy `todo`
   // lands in backlog instead of ready. Board-written `ready` is authoritative,
@@ -158,7 +182,19 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
   const assignee = !owner || owner === "unassigned" ? "" : owner;
 
   const rawPriority = asText(getValue(doc, "priority")).toLowerCase();
-  const priority = BOARD_PRIORITIES.has(rawPriority) ? rawPriority : null;
+  const priority = BOARD_PRIORITIES.has(rawPriority)
+    ? rawPriority
+    : LEGACY_PRIORITY_MAPPINGS.has(rawPriority)
+      ? LEGACY_PRIORITY_MAPPINGS.get(rawPriority)
+      : null;
+  const priorityKnown = !rawPriority || BOARD_PRIORITIES.has(rawPriority) || LEGACY_PRIORITY_MAPPINGS.has(rawPriority);
+
+  const unmappedValues = [
+    ...(!statusKnown ? [{ kind: "status", value: rawStatus || "(missing)", target: status }] : []),
+    ...(!typeKnown ? [{ kind: "type", value: rawType || "(missing)", target: workItemType }] : []),
+    ...(!priorityKnown ? [{ kind: "priority", value: rawPriority || "(missing)", target: priority }] : [])
+  ];
+  if (unmappedValues.length > 0) extraLabels.push("unmapped-value");
 
   const labels = [...new Set([...readLabels(getValue(doc, "labels")), ...extraLabels])];
   const touches = normalizeTaskTouches(readLabels(getBoardValue(doc, "touches")));
@@ -178,12 +214,12 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
         completedAt: updatedAt,
         notes: "Closed as wont_do in the tasks directory."
       };
-    } else if (legacyClosed === "not_relevant") {
+    } else if (["not_relevant", "cancelled"].includes(legacyClosed)) {
       completion = {
         completionType: "superseded",
         completedBy: "tasksdir",
         completedAt: updatedAt,
-        notes: "Closed as not_relevant in the tasks directory."
+        notes: `Closed as ${legacyClosed} in the tasks directory.`
       };
     } else {
       completion = {
@@ -228,40 +264,36 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     blockedBy,
     parentTaskId: asText(getBoardValue(doc, "parentTaskId"))
   };
-  return { id, view };
+  return {
+    id,
+    view,
+    mapping: {
+      status: {
+        source: rawStatus || null,
+        target: view.status,
+        completionType: asText(view.completion?.completionType) || null,
+        known: statusKnown
+      },
+      type: {
+        source: rawType || null,
+        target: view.workItemType,
+        known: typeKnown
+      },
+      priority: {
+        source: rawPriority || null,
+        target: view.priority,
+        known: priorityKnown
+      }
+    },
+    unmappedValues
+  };
 }
 
 // Read-only description of the exact legacy mapping applied by mapFileTask.
 // Import tooling uses this instead of maintaining a second, drift-prone copy
 // of the accepted values and special cases.
 export function previewFileTaskMapping(doc, folderName, options = {}) {
-  const mapped = mapFileTask(doc, folderName, options);
-  const rawStatus = asText(getValue(doc, "status")).toLowerCase();
-  const rawType = asText(getValue(doc, "type")).toLowerCase();
-  const rawPriority = asText(getValue(doc, "priority")).toLowerCase();
-
-  return {
-    ...mapped,
-    mapping: {
-      status: {
-        source: rawStatus || null,
-        target: mapped.view.status,
-        completionType: asText(mapped.view.completion?.completionType) || null,
-        known:
-          BOARD_STATUSES.has(rawStatus) || ["todo", "wont_do", "not_relevant"].includes(rawStatus)
-      },
-      type: {
-        source: rawType || null,
-        target: mapped.view.workItemType,
-        known: BOARD_TYPES.has(rawType) || ["feature", "docs", "idea"].includes(rawType)
-      },
-      priority: {
-        source: rawPriority || null,
-        target: mapped.view.priority,
-        known: !rawPriority || rawPriority === "unset" || BOARD_PRIORITIES.has(rawPriority)
-      }
-    }
-  };
+  return mapFileTask(doc, folderName, options);
 }
 
 export function fileViewFromBoardTask(task) {
@@ -500,7 +532,7 @@ export class TasksdirWorkboardPersistence {
     }
 
     const { tasksdirSidecars, ...rest } = opsData;
-    return { ...rest, tasks };
+    return { ...rest, tasks, tasksdirDiagnostics: { unmappedValues: this.collectUnmappedValues() } };
   }
 
   async write(data) {
@@ -619,6 +651,8 @@ export class TasksdirWorkboardPersistence {
         }
       );
     }
+
+    return { tasksdirDiagnostics: { unmappedValues: this.collectUnmappedValues() } };
   }
 
   restoreSidecar(task) {
@@ -641,14 +675,16 @@ export class TasksdirWorkboardPersistence {
     await mkdir(dirPath, { recursive: true });
     const doc = newTaskDoc(plan.nextView, plan.task.id);
     await atomicWrite(filePath, serializeTaskFile(doc));
-    await this.cacheEntry(folder, filePath, doc, plan.nextView, plan.task.id);
+    const entry = await this.cacheEntry(folder, filePath, doc, plan.nextView, plan.task.id);
+    applyViewToTask(plan.task, entry.view);
   }
 
   async patchTaskFile(plan) {
     const { entry } = plan;
     applyViewToDoc(entry.doc, entry.view, plan.nextView);
     await atomicWrite(entry.filePath, serializeTaskFile(entry.doc));
-    await this.cacheEntry(entry.folder, entry.filePath, entry.doc, plan.nextView, entry.id);
+    const cached = await this.cacheEntry(entry.folder, entry.filePath, entry.doc, plan.nextView, entry.id);
+    applyViewToTask(plan.task, cached.view);
   }
 
   resolveFallbackProjectId(opsData) {
@@ -660,9 +696,11 @@ export class TasksdirWorkboardPersistence {
 
   async cacheEntry(folder, filePath, doc, view, id) {
     const fileStat = await stat(filePath);
-    const entry = { folder, filePath, fingerprint: `${fileStat.mtimeMs}:${fileStat.size}`, doc, view, id };
+    const { view: mappedView, mapping } = mapFileTask(doc, folder, { fallbackTimestamp: view.createdAt });
+    const entry = { folder, filePath, fingerprint: `${fileStat.mtimeMs}:${fileStat.size}`, doc, view: mappedView, mapping, id };
     this.entries.set(folder, entry);
     this.byId.set(id, entry);
+    return entry;
   }
 
   dropEntry(entry) {
@@ -707,8 +745,8 @@ export class TasksdirWorkboardPersistence {
             filePath
           });
         }
-        const { id, view } = mapped;
-        entry = { folder, filePath, fingerprint, doc, view, id };
+        const { id, view, mapping } = mapped;
+        entry = { folder, filePath, fingerprint, doc, view, mapping, id };
         this.entries.set(folder, entry);
       }
       const existing = this.byId.get(entry.id);
@@ -730,6 +768,22 @@ export class TasksdirWorkboardPersistence {
     for (const folder of [...this.entries.keys()]) {
       if (!seenFolders.has(folder)) this.entries.delete(folder);
     }
+  }
+
+  collectUnmappedValues() {
+    const grouped = new Map();
+    for (const entry of this.byId.values()) {
+      for (const [kind, item] of Object.entries(entry.mapping || {}).filter(([, candidate]) => !candidate.known)) {
+        const value = item.source || "(missing)";
+        const target = item.target || "none";
+        const key = `${kind}\0${value}\0${target}`;
+        const warning = grouped.get(key) || { code: "UNMAPPED_TASK_VALUE", kind, value, target, count: 0, files: [] };
+        warning.count += 1;
+        warning.files.push(`${entry.folder}/task.md`);
+        grouped.set(key, warning);
+      }
+    }
+    return [...grouped.values()].sort((a, b) => `${a.kind}\0${a.value}`.localeCompare(`${b.kind}\0${b.value}`));
   }
 }
 

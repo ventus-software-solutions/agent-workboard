@@ -202,6 +202,63 @@ describe("per-project tasks-directory persistence", () => {
     expect(healthy.every((task) => task.collision.detected)).toBe(true);
   });
 
+  it("keeps unknown enum tasks available and exposes project-scoped mapping warnings", async () => {
+    const unknownTasksDir = path.join(dataDir, "unknown-enum-tasks");
+    const taskDir = path.join(unknownTasksDir, "future-task");
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(
+      path.join(taskDir, "task.md"),
+      "---\nid: future-task\ntitle: Future task\nstatus: someday\ntype: gizmo\npriority: extreme\n---\nBody\n"
+    );
+    const store = new WorkboardStore({ dataDir, storageMode: "json" });
+    await store.init();
+    const project = await store.createProject({ name: "Tolerant Folder Project", dataSource: { tasksDir: unknownTasksDir } });
+
+    expect(project.dataSource.health).toMatchObject({
+      status: "ready",
+      warnings: expect.arrayContaining([
+        expect.objectContaining({ code: "UNMAPPED_TASK_VALUE", kind: "status", value: "someday", target: "backlog" }),
+        expect.objectContaining({ code: "UNMAPPED_TASK_VALUE", kind: "type", value: "gizmo", target: "task" }),
+        expect.objectContaining({ code: "UNMAPPED_TASK_VALUE", kind: "priority", value: "extreme", target: "none" })
+      ])
+    });
+    expect(store.listTasks({ projectId: project.id })).toEqual([
+      expect.objectContaining({
+        id: "future-task",
+        status: "backlog",
+        workItemType: "task",
+        priority: null,
+        labels: ["unmapped-value"]
+      })
+    ]);
+
+    const futureTask = store.getTask("future-task");
+    const corrected = await store.updateTask(
+      futureTask.id,
+      {
+        status: "ready",
+        workItemType: "bug",
+        priority: "normal",
+        expectedRevision: futureTask.revision
+      },
+      "operator"
+    );
+    expect(corrected).toMatchObject({
+      status: "ready",
+      workItemType: "bug",
+      priority: "normal",
+      labels: []
+    });
+    expect(store.getProject(project.id).dataSource.health).toMatchObject({ status: "ready", warnings: [] });
+    await expect(readFile(path.join(taskDir, "task.md"), "utf8")).resolves.toMatch(
+      /status: ready[\s\S]*type: bug[\s\S]*priority: normal/
+    );
+
+    const refreshed = await store.refreshProjectDataSource(project.id);
+    expect(refreshed.dataSource.health).toMatchObject({ status: "ready", warnings: [] });
+    expect(store.getTask(futureTask.id).labels).toEqual([]);
+  });
+
   it("keeps stale-file CAS failures inside the folder-backed project revision space", async () => {
     const store = new WorkboardStore({ dataDir, storageMode: "json" });
     await store.init();

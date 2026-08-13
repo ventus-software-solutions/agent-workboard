@@ -24,7 +24,10 @@ export function normalizeProjectDataSource(value, { migrating = false } = {}) {
       status: value.health.status === "error" ? "error" : "ready",
       message: text(value.health.message),
       code: text(value.health.code),
-      checkedAt: text(value.health.checkedAt)
+      checkedAt: text(value.health.checkedAt),
+      warnings: Array.isArray(value.health.warnings)
+        ? value.health.warnings.filter((warning) => warning && typeof warning === "object").map((warning) => ({ ...warning }))
+        : []
     };
   }
   return normalized;

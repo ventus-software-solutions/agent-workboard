@@ -12,7 +12,8 @@ const CATEGORY_RANK = {
   role_gap: 50,
   grooming: 30,
   cleanup: 20,
-  data_source: 85
+  data_source: 85,
+  data_source_mapping: 84
 };
 
 export function buildOperatorAttention({
@@ -47,6 +48,23 @@ export function buildOperatorAttention({
       remedy: "retry_data_source",
       projectId: project.id,
       downstreamCount: tasks.filter((task) => task.status !== "done").length
+    });
+  }
+  const mappingWarnings = Array.isArray(project?.dataSource?.health?.warnings)
+    ? project.dataSource.health.warnings
+    : [];
+  if (project?.dataSource?.health?.status !== "error" && mappingWarnings.length > 0) {
+    const affectedFiles = new Set(mappingWarnings.flatMap((warning) => warning.files || []));
+    actions.push({
+      id: `data-source-mapping:${project.id}`,
+      kind: "data_source_mapping",
+      title: `${project.name} has unmapped tasks-folder values`,
+      detail: mappingWarnings
+        .map((warning) => `${warning.kind}=${warning.value} -> ${warning.target || "none"} (${warning.count})`)
+        .join(", "),
+      remedy: "inspect_data_source",
+      projectId: project.id,
+      downstreamCount: affectedFiles.size
     });
   }
 
@@ -345,6 +363,12 @@ function attentionCopy(action) {
         what: `The project tasks folder cannot be read: ${action.detail || "unknown storage error"}.`,
         why: "Work items from this project may be incomplete, but other projects remain available.",
         doThis: "Fix the folder path or permissions, then click Retry source."
+      };
+    case "data_source_mapping":
+      return {
+        what: `The project tasks folder contains values the board does not recognize: ${action.detail}.`,
+        why: "The tasks remain available through safe defaults and carry the unmapped-value label, but their intended workflow meaning needs review.",
+        doThis: "Inspect the named source values and update the task files or extend the mapping before relying on those fields."
       };
     default:
       return {

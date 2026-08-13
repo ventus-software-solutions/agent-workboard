@@ -2540,7 +2540,7 @@ function attentionIcon(kind) {
   if (kind === "collision") return GitMerge;
   if (kind === "grooming") return ClipboardList;
   if (kind === "cleanup") return Archive;
-  if (kind === "data_source") return Database;
+  if (["data_source", "data_source_mapping"].includes(kind)) return Database;
   return Bot;
 }
 

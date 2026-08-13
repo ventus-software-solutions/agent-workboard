@@ -100,6 +100,7 @@ describe("legacy status/type/priority mapping", () => {
     ["review", "review"],
     ["testing", "testing"],
     ["blocked", "blocked"],
+    ["in-review", "review"],
     ["mystery_status", "backlog"]
   ])("maps file status %s to board status %s", (fileStatus, boardStatus) => {
     const { view } = mapFileTask(docFromFrontmatter([...base, `status: ${fileStatus}`, "type: bug"]), "t1");
@@ -119,6 +120,12 @@ describe("legacy status/type/priority mapping", () => {
     expect(view.completion).toMatchObject({ completionType: "superseded" });
   });
 
+  it("maps cancelled to done with a superseded completion", () => {
+    const { view } = mapFileTask(docFromFrontmatter([...base, "status: cancelled", "type: task"]), "t1");
+    expect(view.status).toBe("done");
+    expect(view.completion).toMatchObject({ completionType: "superseded", notes: expect.stringContaining("cancelled") });
+  });
+
   it("backfills a legacy-needs-audit completion for done files without a board record", () => {
     const { view } = mapFileTask(docFromFrontmatter([...base, "status: done", "type: bug"]), "t1");
     expect(view.completion).toMatchObject({ completionType: "legacy-needs-audit" });
@@ -131,7 +138,15 @@ describe("legacy status/type/priority mapping", () => {
     ["feature", "task", []],
     ["docs", "chore", ["docs"]],
     ["idea", "spike", ["idea"]],
-    ["whatever", "task", []]
+    ["improvement", "task", ["improvement"]],
+    ["infrastructure", "task", ["infrastructure"]],
+    ["investigation", "task", ["investigation"]],
+    ["security", "task", ["security"]],
+    ["test", "task", ["test"]],
+    ["verification", "task", ["verification"]],
+    ["decision", "spike", []],
+    ["", "task", []],
+    ["whatever", "task", ["unmapped-value"]]
   ])("maps file type %s to board type %s", (fileType, boardType, extraLabels) => {
     const { view } = mapFileTask(docFromFrontmatter([...base, "status: ready", `type: ${fileType}`]), "t1");
     expect(view.workItemType).toBe(boardType);
@@ -173,6 +188,75 @@ describe("legacy status/type/priority mapping", () => {
     expect(named.assignee).toBe("implementer-backend-1");
     expect(named.priority).toBe("urgent");
     expect(named.labels).toEqual(["a", "b"]);
+  });
+
+  it.each([
+    ["critical", "urgent"],
+    ["p1", "urgent"],
+    ["medium", "normal"],
+    ["-", null],
+    ["unset", null],
+    ["", null]
+  ])("maps source priority %s to %s", (source, target) => {
+    const line = source ? [`priority: ${source}`] : [];
+    const { view, mapping } = mapFileTask(
+      docFromFrontmatter(["id: t1", 'title: "T"', "status: ready", "type: task", ...line]),
+      "t1"
+    );
+    expect(view.priority).toBe(target);
+    expect(mapping.priority.known).toBe(true);
+  });
+
+  it("labels unknown future values and reports every safe fallback", () => {
+    const { view, unmappedValues } = mapFileTask(
+      docFromFrontmatter([
+        "id: t1",
+        'title: "T"',
+        "status: future-state",
+        "type: future-kind",
+        "priority: future-priority"
+      ]),
+      "t1"
+    );
+
+    expect(view).toMatchObject({ status: "backlog", workItemType: "task", priority: null });
+    expect(view.labels).toContain("unmapped-value");
+    expect(unmappedValues).toEqual([
+      { kind: "status", value: "future-state", target: "backlog" },
+      { kind: "type", value: "future-kind", target: "task" },
+      { kind: "priority", value: "future-priority", target: null }
+    ]);
+  });
+
+  it("preserves mapped source tokens until the board changes that exact field", () => {
+    const doc = docFromFrontmatter([
+      "id: t1",
+      'title: "T"',
+      "status: in-review",
+      "type: improvement",
+      "priority: critical",
+      "labels: [existing]"
+    ]);
+    const { view } = mapFileTask(doc, "t1");
+
+    applyViewToDoc(doc, view, { ...view, title: "Renamed", revision: 2 });
+    let rewritten = serializeTaskFile(doc);
+    expect(rewritten).toContain("status: in-review");
+    expect(rewritten).toContain("type: improvement");
+    expect(rewritten).toContain("priority: critical");
+
+    const remapped = mapFileTask(parseTaskFile(rewritten), "t1").view;
+    const mutated = parseTaskFile(rewritten);
+    applyViewToDoc(mutated, remapped, {
+      ...remapped,
+      status: "testing",
+      workItemType: "bug",
+      priority: "high"
+    });
+    rewritten = serializeTaskFile(mutated);
+    expect(rewritten).toContain("status: testing");
+    expect(rewritten).toContain("type: bug");
+    expect(rewritten).toContain("priority: high");
   });
 });
 
