@@ -31,5 +31,8 @@ export function buildUpdateTaskStatusPatch(input) {
   if (input.completion !== undefined) {
     patch.completion = input.completion;
   }
+  if (input.verificationTarget !== undefined) {
+    patch.verificationTarget = input.verificationTarget;
+  }
   return patch;
 }

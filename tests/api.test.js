@@ -272,6 +272,9 @@ describe("Agent Workboard API", () => {
           expect.stringContaining("operator stops you")
         ])
       );
+      expect(agentDoc.body.agent.verificationFlow.join("\n")).toContain("verificationTarget");
+      expect(agentDoc.body.agent.verificationFlow.join("\n")).toContain("running system");
+      expect(agentDoc.body.agent.verificationFlow.join("\n")).toContain("commit SHA");
 
       const agentMarkdown = await request(app).get(`/api/agent-docs/${agentId}?format=md`).expect(200);
       expect(agentMarkdown.text).toContain("## Autonomous Go-Ahead");
@@ -284,6 +287,9 @@ describe("Agent Workboard API", () => {
       expect(agentMarkdown.text).toContain("state=waiting");
       expect(agentMarkdown.text).toContain("recheckAfterSeconds");
       expect(agentMarkdown.text).toContain("/api/events");
+      expect(agentMarkdown.text).toContain("## Deploy Verification Flow");
+      expect(agentMarkdown.text).toContain("verificationTarget");
+      expect(agentMarkdown.text).toContain("running system");
     }
 
     const mcpDoc = await request(app).get("/api/agent-docs/mcp-agent").expect(200);
@@ -570,6 +576,34 @@ describe("Agent Workboard API", () => {
     }
   });
 
+  it("backfills a visible legacy target when restoring pre-gate testing tasks", async () => {
+    const backup = {
+      packageType: "agent-workboard.project-backup",
+      packageVersion: 1,
+      project: { id: "project_legacy_testing", key: "LEGACY-TEST", name: "Legacy Testing" },
+      tasks: [
+        {
+          id: "task_legacy_testing",
+          projectId: "project_legacy_testing",
+          title: "Verify an older deployment",
+          status: "testing",
+          priority: "high",
+          role: "tester",
+          workItemType: "task"
+        }
+      ],
+      events: []
+    };
+
+    await request(app).post("/api/projects/import").send(backup).expect(201);
+    const restored = (await request(app).get("/api/tasks/task_legacy_testing").expect(200)).body.task;
+    expect(restored.verificationTarget).toMatchObject({
+      commitSha: "",
+      mergedTo: "",
+      artifactNote: expect.stringMatching(/before verification targets were required/i)
+    });
+  });
+
   it("rejects project backup imports with cross-project event id collisions", async () => {
     const existing = (await request(app).post("/api/projects").send({ name: "Existing Event API", key: "EEAPI" }).expect(201)).body
       .project;
@@ -786,6 +820,110 @@ describe("Agent Workboard API", () => {
       priority: "normal",
       role: "implementer",
       labels: ["backend"]
+    });
+  });
+
+  it("requires and persists a structured verification target on every testing entry path", async () => {
+    const project = (await request(app).post("/api/projects").send({ name: "Testing Gate API" }).expect(201)).body.project;
+
+    const rejectedCreate = await request(app)
+      .post("/api/tasks")
+      .send({ projectId: project.id, title: "Missing create target", status: "testing" })
+      .expect(400);
+    expect(rejectedCreate.body.error).toMatchObject({
+      details: { reason: "verification_target_required", field: "verificationTarget" }
+    });
+
+    const createdInTesting = await request(app)
+      .post("/api/tasks")
+      .send({
+        projectId: project.id,
+        title: "Created with target",
+        status: "testing",
+        verificationTarget: { artifactNote: "Running image registry.example/workboard:sha-123" }
+      })
+      .expect(201);
+    expect(createdInTesting.body.task.verificationTarget).toEqual({
+      commitSha: "",
+      mergedTo: "",
+      artifactNote: "Running image registry.example/workboard:sha-123"
+    });
+
+    const task = (
+      await request(app)
+        .post("/api/tasks")
+        .send({ projectId: project.id, title: "Move through testing", status: "review" })
+        .expect(201)
+    ).body.task;
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "testing", actor: "operator" })
+      .expect(400)
+      .expect((response) => expect(response.body.error.details.reason).toBe("verification_target_required"));
+
+    const testing = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({
+        status: "testing",
+        actor: "operator",
+        verificationTarget: { commitSha: "abc123", mergedTo: "main" }
+      })
+      .expect(200);
+    expect(testing.body.task).toMatchObject({
+      status: "testing",
+      verificationTarget: { commitSha: "abc123", mergedTo: "main", artifactNote: "" }
+    });
+
+    const returned = await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ status: "ready", actor: "tester" })
+      .expect(200);
+    expect(returned.body.task.verificationTarget).toBeNull();
+
+    await request(app)
+      .patch(`/api/tasks/${task.id}`)
+      .send({ actor: "operator", verificationTarget: { commitSha: "stale" } })
+      .expect(400);
+
+    const approvalTask = (
+      await request(app)
+        .post("/api/tasks")
+        .send({ projectId: project.id, title: "Approval to testing", status: "in_progress" })
+        .expect(201)
+    ).body.task;
+    await request(app)
+      .post(`/api/tasks/${approvalTask.id}/operator-approval`)
+      .send({
+        requestedBy: "implementer-agent",
+        reason: "Merge is ready for runtime verification.",
+        requestedAction: "Approve the deployed artifact.",
+        nextStatus: "testing"
+      })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/tasks/${approvalTask.id}/operator-approval/decision`)
+      .send({ decision: "approved", decidedBy: "operator", nextStatus: "testing" })
+      .expect(400)
+      .expect((response) => expect(response.body.error.details.reason).toBe("verification_target_required"));
+
+    const approved = await request(app)
+      .post(`/api/tasks/${approvalTask.id}/operator-approval/decision`)
+      .send({
+        decision: "approved",
+        decidedBy: "operator",
+        nextStatus: "testing",
+        verificationTarget: { mergedTo: "staging", artifactNote: "https://staging.example.test" }
+      })
+      .expect(200);
+    expect(approved.body.task).toMatchObject({
+      status: "testing",
+      verificationTarget: {
+        commitSha: "",
+        mergedTo: "staging",
+        artifactNote: "https://staging.example.test"
+      }
     });
   });
 

@@ -19,6 +19,7 @@ import {
   setBoardValue,
   setValue
 } from "./frontmatterTaskFile.js";
+import { normalizeVerificationTarget } from "./verificationTarget.js";
 
 const BOARD_STATUSES = new Set(["backlog", "ready", "in_progress", "review", "testing", "blocked", "done"]);
 const BOARD_TYPES = new Set(["epic", "story", "task", "subtask", "bug", "spike", "chore"]);
@@ -39,6 +40,7 @@ const VIEW_KEYS = [
   "createdAt",
   "updatedAt",
   "completion",
+  "verificationTarget",
   "blocker",
   "dependsOn",
   "blockedBy",
@@ -175,6 +177,10 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     completion = null;
   }
 
+  const boardVerificationTarget = getBoardValue(doc, "verificationTarget");
+  const verificationTarget =
+    status === "testing" ? normalizeVerificationTarget(boardVerificationTarget, { migrating: true }) : null;
+
   const boardBlocker = getBoardValue(doc, "blocker");
   const blocker = status === "blocked" && boardBlocker && typeof boardBlocker === "object" ? boardBlocker : null;
 
@@ -195,6 +201,7 @@ export function mapFileTask(doc, folderName, { fallbackTimestamp = nowIso() } = 
     createdAt,
     updatedAt,
     completion,
+    verificationTarget,
     blocker,
     dependsOn,
     blockedBy,
@@ -250,6 +257,10 @@ export function fileViewFromBoardTask(task) {
     createdAt: asText(task.createdAt),
     updatedAt: asText(task.updatedAt),
     completion: task.completion && typeof task.completion === "object" ? JSON.parse(JSON.stringify(task.completion)) : null,
+    verificationTarget:
+      task.verificationTarget && typeof task.verificationTarget === "object"
+        ? JSON.parse(JSON.stringify(task.verificationTarget))
+        : null,
     blocker: task.blocker && typeof task.blocker === "object" ? JSON.parse(JSON.stringify(task.blocker)) : null,
     dependsOn: Array.isArray(task.dependsOn) ? task.dependsOn.map(String) : [],
     blockedBy: Array.isArray(task.blockedBy) ? task.blockedBy.map(String) : [],
@@ -280,6 +291,7 @@ export function boardTaskFromView(id, view, projectId) {
     childTaskIds: [],
     dependencyStatus: emptyDependencyStatus(),
     completion: view.completion ? { ...view.completion } : null,
+    verificationTarget: view.verificationTarget ? { ...view.verificationTarget } : null,
     blocker: view.blocker ? { ...view.blocker } : null,
     approvalHistory: [],
     reviewedBy: "",
@@ -307,6 +319,7 @@ function applyViewToTask(task, view) {
   task.createdAt = view.createdAt;
   task.updatedAt = view.updatedAt;
   task.completion = view.completion ? { ...view.completion } : null;
+  task.verificationTarget = view.verificationTarget ? { ...view.verificationTarget } : null;
   task.blocker = view.blocker ? { ...view.blocker } : null;
   task.dependsOn = [...view.dependsOn];
   task.blockedBy = [...view.blockedBy];
@@ -334,6 +347,9 @@ export function applyViewToDoc(doc, baseView, nextView) {
   if (!sameValue(baseView.updatedAt, nextView.updatedAt)) setBoardValue(doc, "updatedAt", nextView.updatedAt);
   if (!sameValue(baseView.completion, nextView.completion)) {
     setBoardValue(doc, "completion", nextView.completion ? JSON.stringify(nextView.completion) : "");
+  }
+  if (!sameValue(baseView.verificationTarget, nextView.verificationTarget)) {
+    setBoardValue(doc, "verificationTarget", nextView.verificationTarget ? JSON.stringify(nextView.verificationTarget) : "");
   }
   if (!sameValue(baseView.blocker, nextView.blocker)) {
     setBoardValue(doc, "blocker", nextView.blocker ? JSON.stringify(nextView.blocker) : "");

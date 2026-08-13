@@ -176,6 +176,40 @@ test("shows stage ownership and structured changes-requested verdicts on tasks",
   await expect(card.getByText("Changes requested (2)")).toHaveCount(0, { timeout: 10_000 });
 });
 
+test("requires a visible running-artifact target before moving work into testing", async ({ page }) => {
+  const title = uniqueName("Verify deployed testing target");
+  const taskResponse = await page.request.post(`${apiBaseURL}/api/tasks`, {
+    data: {
+      projectId: "project_demo",
+      title,
+      status: "review",
+      role: "implementer",
+      assignee: "implementer-agent"
+    }
+  });
+  expect(taskResponse.ok()).toBe(true);
+
+  await page.goto(baseURL);
+  await taskCard(page, title).click();
+  const drawer = page.locator(".drawer");
+  await drawer.locator(".statusRow").getByRole("button", { name: /Testing/ }).click();
+
+  const targetForm = drawer.locator(".verificationTargetForm");
+  await expect(targetForm).toBeVisible();
+  const moveButton = targetForm.getByRole("button", { name: "Move to Testing" });
+  await expect(moveButton).toBeDisabled();
+
+  await targetForm.getByLabel("Commit SHA").fill("deployabc123");
+  await targetForm.getByLabel("Merged To").fill("main");
+  await moveButton.click();
+
+  const testingCard = page.locator('.kanbanColumn[data-status-id="testing"] .taskCard', { hasText: title });
+  await expect(testingCard).toBeVisible();
+  await expect(testingCard.locator(".verificationTargetPill")).toContainText("deployabc123");
+  await expect(drawer.locator(".verificationTargetRecord")).toContainText("deployabc123");
+  await expect(drawer.locator(".verificationTargetRecord")).toContainText("Merged to: main");
+});
+
 test("edits deployment process rules from Settings and updates generated agent docs", async ({ page }) => {
   const rules = "- Deliver through a branch and PR.\n- Coordinator merges foundation-class changes.";
 

@@ -19,13 +19,13 @@ const ROLE_RULES = {
     mission: "Review task outcomes for correctness, risk, missing tests, and readiness to merge or release.",
     accepts: ["tasks in status=review", "ready review tasks assigned to your exact agent id", "ready tasks with role=reviewer"],
     outputs: ["findings", "risk notes", "approval comments", "merge commits", "follow-up tasks"],
-    doneMeans: "Approved work is merged and marked done with a completion record, or requested changes are returned with evidence."
+    doneMeans: "Approved implementation work is merged and moved to testing with a verification target, no-runtime work is closed with evidence, or requested changes are returned."
   },
   tester: {
     mission: "Verify behavior through reproducible tests, browser checks, fixtures, or explicit manual evidence.",
     accepts: ["ready or testing tasks assigned to your exact agent id", "testing tasks with role=tester"],
     outputs: ["test coverage", "reproduction steps", "verification notes", "failure reports"],
-    doneMeans: "The task has repeatable evidence that the behavior works or a precise failure report."
+    doneMeans: "The running verification target has repeatable evidence and a merged completion with SHA and notes, or the task has a precise failure report."
   },
   researcher: {
     mission: "Collect the smallest useful evidence set that helps PMs, implementers, reviewers, or the operator decide.",
@@ -54,6 +54,13 @@ const AUTONOMOUS_GO_AHEAD = {
   migrationGuidance:
     "For active tasks already waiting only for ordinary go-ahead, post an acknowledgement citing this policy and continue; if the work is ambiguous or approval-marked, convert the wait into an operator approval request or blocked status."
 };
+
+const DEPLOY_VERIFICATION_FLOW = [
+  "An approved code review is not the final state: merge the exact reviewed commit before runtime verification.",
+  "Move merged implementation work to `testing` with a structured `verificationTarget` containing a commit SHA, merged destination, or artifact note.",
+  "A tester stage-claims the task and verifies the running system or named artifact, not only the pre-merge test suite.",
+  "The tester records the running checks, resolves the testing claim, and marks the task done with merged completion evidence including the SHA and verification notes; failures return with precise evidence."
+];
 
 const SPECIALTY_KEYWORDS = [
   ["frontend", ["frontend", "ui", "ux", "react", "browser", "design"]],
@@ -106,7 +113,8 @@ export function listAgentDocs({ roles, statuses, integrationStatus = null, deplo
     ...(deploymentProcessRules ? { deploymentProcessRules } : {}),
     worktree: worktreeDiscipline(undefined, integrationStatus),
     autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
-    workflow: sharedWorkflow()
+    workflow: sharedWorkflow(),
+    verificationFlow: DEPLOY_VERIFICATION_FLOW
   };
 }
 
@@ -183,6 +191,7 @@ export function buildAgentDoc({
     worktree: worktreeDiscipline(agentId, integrationStatus),
     autonomousGoAhead: AUTONOMOUS_GO_AHEAD,
     workflow,
+    verificationFlow: DEPLOY_VERIFICATION_FLOW,
     persistence: standingAgentPersistence(profile.role),
     accepts: rule.accepts,
     outputs: rule.outputs,
@@ -278,6 +287,9 @@ export function renderAgentDocMarkdown(doc) {
       : []),
     "## Workflow",
     ...doc.workflow.map((line, index) => `${index + 1}. ${line}`),
+    "",
+    "## Deploy Verification Flow",
+    ...doc.verificationFlow.map((line, index) => `${index + 1}. ${line}`),
     "",
     "## Autonomous Go-Ahead",
     `Status: \`${doc.autonomousGoAhead.status}\`.`,
@@ -495,12 +507,13 @@ function sharedWorkflow() {
 
 function reviewerMergeRules() {
   return [
-    "A review is not complete just because you wrote findings. It is complete when the task is merged and marked done, or returned with requested changes.",
+    "A review is not complete just because you wrote findings. It is complete when the task is returned with requested changes, or the approved artifact is merged and handed to testing with a verification target (no-runtime work may close directly with evidence).",
     "Review tasks in `status=review` before taking ordinary reviewer-role backlog work.",
     "CAS-claim the review through `POST /api/tasks/{taskId}/stage-claim` or `claim_task_stage`; never replace the implementation assignee.",
     "Inspect the implementer's task comments, branch/worktree path, commit evidence, and stated test output.",
     "Run the relevant verification yourself when practical, at minimum `npm test` and `npm run build` for code changes before merge.",
-    "Resolve the claim with a typed approve/request_changes verdict, findings count, reviewer, and reviewed commit. If approved, merge and mark done with completionType=merged, commitSha, branch, mergedTo, tests, and notes.",
+    "Resolve the claim with a typed approve/request_changes verdict, findings count, reviewer, and reviewed commit. If approved, merge the exact reviewed commit; for implementation work move it to testing with a verification target instead of marking it done.",
+    "The tester verifies the running target and owns the completionType=merged record with commitSha, branch, mergedTo, tests, and verification notes. Only work with no runtime artifact should close directly after review.",
     "For no-code planning, audit-only, or superseded closures, mark done with completionType=no-code, audit-only, or superseded and include clear notes or supersededByTaskId.",
     "If changes are needed, comment specific findings and resolve the active review claim with `decision=request_changes`; stage resolution records the verdict and returns the task to `ready`.",
     "Do not move a claimed review task to `blocked` to request changes. If the review itself cannot continue, hand off the claim or ask an operator to recover the stale claim so the verdict record is not bypassed.",

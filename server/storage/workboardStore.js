@@ -9,6 +9,7 @@ import {
   normalizeProjectDataSource,
   pathIdentity
 } from "./projectDataSource.js";
+import { normalizeVerificationTarget, verificationTargetRequiredError } from "./verificationTarget.js";
 import { DECOMPOSITION_LABELS, taskRelationshipsAllowClaim } from "../../shared/taskClaimability.js";
 import { feederStatusesForRole } from "../../shared/roleFeeders.js";
 import { isSafeHttpUrl } from "../../shared/taskLinks.js";
@@ -407,6 +408,13 @@ function readCompletionInput(input) {
   return { hasCompletion: false, completionInput: undefined };
 }
 
+function readVerificationTargetInput(input) {
+  if (Object.prototype.hasOwnProperty.call(input, "verificationTarget") && input.verificationTarget !== undefined) {
+    return { hasVerificationTarget: true, verificationTargetInput: input.verificationTarget };
+  }
+  return { hasVerificationTarget: false, verificationTargetInput: undefined };
+}
+
 function slugify(value, fallback = "project") {
   const slug = normalizeText(value)
     .toUpperCase()
@@ -785,6 +793,17 @@ export class WorkboardStore {
 
       if (task.status !== "done" && task.completion === undefined) {
         task.completion = null;
+        migrated = true;
+      }
+
+      if (task.status === "testing") {
+        const verificationTarget = normalizeVerificationTarget(task.verificationTarget, { migrating: true });
+        if (JSON.stringify(task.verificationTarget) !== JSON.stringify(verificationTarget)) {
+          task.verificationTarget = verificationTarget;
+          migrated = true;
+        }
+      } else if (task.verificationTarget !== null) {
+        task.verificationTarget = null;
         migrated = true;
       }
 
@@ -2141,6 +2160,7 @@ export class WorkboardStore {
     }
 
     task.status = "blocked";
+    task.verificationTarget = null;
     task.blocker = {
       type: "operator_approval",
       status: "pending",
@@ -2198,6 +2218,16 @@ export class WorkboardStore {
     if (nextStatus === "done") {
       throw Object.assign(new Error("Operator approval decisions cannot move tasks directly to done."), { status: 400 });
     }
+    const { hasVerificationTarget, verificationTargetInput } = readVerificationTargetInput(input);
+    if (decision === "approved" && nextStatus === "testing" && !hasVerificationTarget) {
+      throw verificationTargetRequiredError();
+    }
+    if (hasVerificationTarget && (decision !== "approved" || nextStatus !== "testing")) {
+      throw Object.assign(new Error("Verification targets can only be saved when an approved decision moves a task to testing."), {
+        status: 400
+      });
+    }
+    const verificationTarget = hasVerificationTarget ? normalizeVerificationTarget(verificationTargetInput) : null;
 
     const historyRecord = {
       id: id("approval"),
@@ -2210,16 +2240,19 @@ export class WorkboardStore {
       requestedBy: task.blocker.requestedBy,
       requestedAt: task.blocker.requestedAt,
       requestedAction: task.blocker.requestedAction,
-      reason: task.blocker.reason
+      reason: task.blocker.reason,
+      ...(verificationTarget ? { verificationTarget } : {})
     };
     task.approvalHistory = Array.isArray(task.approvalHistory) ? task.approvalHistory : [];
     task.approvalHistory.unshift(historyRecord);
 
     if (decision === "approved") {
       task.status = nextStatus;
+      task.verificationTarget = nextStatus === "testing" ? verificationTarget : null;
       task.blocker = null;
     } else if (decision === "changes_requested") {
       task.status = nextStatus;
+      task.verificationTarget = null;
       task.blocker =
         nextStatus === "blocked"
           ? {
@@ -2232,6 +2265,7 @@ export class WorkboardStore {
           : null;
     } else {
       task.status = "blocked";
+      task.verificationTarget = null;
       task.blocker = {
         ...task.blocker,
         status: "rejected",
@@ -2397,6 +2431,7 @@ export class WorkboardStore {
     const createdAt = now();
     const actor = normalizeText(input.actor) || "operator";
     const { hasCompletion, completionInput } = readCompletionInput(input);
+    const { hasVerificationTarget, verificationTargetInput } = readVerificationTargetInput(input);
 
     if (status === "done" && !hasCompletion) {
       throw Object.assign(new Error("A completion record is required before creating a done task."), { status: 400 });
@@ -2406,7 +2441,15 @@ export class WorkboardStore {
       throw Object.assign(new Error("Completion records can only be saved on done tasks."), { status: 400 });
     }
 
+    if (status === "testing" && !hasVerificationTarget) {
+      throw verificationTargetRequiredError();
+    }
+    if (status !== "testing" && hasVerificationTarget) {
+      throw Object.assign(new Error("Verification targets can only be saved on testing tasks."), { status: 400 });
+    }
+
     const completion = status === "done" ? normalizeCompletionRecord(completionInput, { actor }) : null;
+    const verificationTarget = status === "testing" ? normalizeVerificationTarget(verificationTargetInput) : null;
     if (completion) {
       this.validateCompletionCapabilityLinks(completion, projectId);
     }
@@ -2434,6 +2477,7 @@ export class WorkboardStore {
       childTaskIds: [],
       dependencyStatus: emptyDependencyStatus(),
       completion,
+      verificationTarget,
       blocker,
       approvalHistory: [],
       reviewedBy: "",
@@ -2551,11 +2595,13 @@ export class WorkboardStore {
     const expectedRevision = readExpectedTaskRevision(patch);
     const requiresRevision = isFullTaskEditPatch(patch) || expectedRevision.provided;
     const { hasCompletion: hasCompletionPatch, completionInput: completionPatch } = readCompletionInput(patch);
+    const { hasVerificationTarget: hasVerificationTargetPatch, verificationTargetInput } = readVerificationTargetInput(patch);
     let completionAppliedDuringStatusChange = false;
     const requestedStatus = Object.prototype.hasOwnProperty.call(patch, "status")
       ? readTaskEnumField(patch, "status", STATUS_IDS, task.status)
       : task.status;
     let nextCompletion = null;
+    let nextVerificationTarget = task.verificationTarget || null;
     const hasBlockerPatch = Object.prototype.hasOwnProperty.call(patch, "blocker");
     const hasRelationshipPatch = ["dependsOn", "blockedBy", "parentTaskId", "childTaskIds"].some((field) =>
       Object.prototype.hasOwnProperty.call(patch, field)
@@ -2605,6 +2651,16 @@ export class WorkboardStore {
 
     if (task.status !== requestedStatus && requestedStatus === "done" && !hasCompletionPatch) {
       throw Object.assign(new Error("A completion record is required before moving a task to done."), { status: 400 });
+    }
+
+    if (task.status !== requestedStatus && requestedStatus === "testing" && !hasVerificationTargetPatch) {
+      throw verificationTargetRequiredError();
+    }
+    if (hasVerificationTargetPatch && requestedStatus !== "testing") {
+      throw Object.assign(new Error("Verification targets can only be saved on testing tasks."), { status: 400 });
+    }
+    if (hasVerificationTargetPatch) {
+      nextVerificationTarget = normalizeVerificationTarget(verificationTargetInput);
     }
 
     if (task.status !== requestedStatus && task.status === "review" && task.reviewedBy) {
@@ -2697,6 +2753,13 @@ export class WorkboardStore {
           task.completion = null;
           changes.push("completion:cleared");
         }
+        if (next === "testing") {
+          task.verificationTarget = nextVerificationTarget;
+          changes.push("verificationTarget");
+        } else if (task.verificationTarget) {
+          task.verificationTarget = null;
+          changes.push("verificationTarget:cleared");
+        }
         if (next !== "blocked" && task.blocker) {
           task.blocker = null;
           changes.push("blocker:cleared");
@@ -2709,6 +2772,11 @@ export class WorkboardStore {
         task.completion = nextCompletion;
         changes.push(`completion:${nextCompletion.completionType}`);
       }
+    }
+
+    if (hasVerificationTargetPatch && task.status === "testing" && JSON.stringify(task.verificationTarget) !== JSON.stringify(nextVerificationTarget)) {
+      task.verificationTarget = nextVerificationTarget;
+      changes.push("verificationTarget");
     }
 
     if ("priority" in patch) {
