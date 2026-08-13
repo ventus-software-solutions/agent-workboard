@@ -1,7 +1,10 @@
 import path from "node:path";
 import { createApp } from "./app.js";
 import { formatListenUrl, isNetworkExposedHost, readListenConfig } from "./listenConfig.js";
+import { installProcessErrorGuards } from "./processResilience.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
+
+installProcessErrorGuards();
 
 const listenConfig = readListenConfig(process.env);
 const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");

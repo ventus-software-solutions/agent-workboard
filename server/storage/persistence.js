@@ -177,15 +177,23 @@ function execSqliteJson(sqliteCommand, dbPath, query) {
   });
 }
 
-function runSqliteScript(sqliteCommand, dbPath, sql) {
+export function runSqliteScript(sqliteCommand, dbPath, sql, spawnProcess = spawn) {
   return new Promise((resolve, reject) => {
-    const child = spawn(sqliteCommand, ["-batch", dbPath], {
+    const child = spawnProcess(sqliteCommand, ["-batch", dbPath], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
+
+    const rejectOnce = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(wrapSqliteError(error, stderr));
+    };
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -195,21 +203,26 @@ function runSqliteScript(sqliteCommand, dbPath, sql) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", (error) => {
-      settled = true;
-      reject(wrapSqliteError(error, stderr));
-    });
+    child.stdin.on("error", rejectOnce);
+    child.stdout.on("error", rejectOnce);
+    child.stderr.on("error", rejectOnce);
+    child.on("error", rejectOnce);
     child.on("close", (code) => {
       if (settled) {
         return;
       }
+      settled = true;
       if (code === 0) {
         resolve(stdout);
         return;
       }
       reject(new Error(`sqlite3 exited with code ${code}: ${stderr || stdout}`.trim()));
     });
-    child.stdin.end(sql);
+    try {
+      child.stdin.end(sql);
+    } catch (error) {
+      rejectOnce(error);
+    }
   });
 }
 

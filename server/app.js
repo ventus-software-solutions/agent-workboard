@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildAgentDoc, listAgentDocs, renderAgentDocMarkdown } from "./agentDocs.js";
 import { getIntegrationStatus } from "./integrationStatus.js";
+import { clientDisconnectMiddleware, finishHttpError } from "./httpResilience.js";
 import { MCP_TOOL_NAMES } from "./mcpToolHandlers.js";
 import { cleanupWorktree, createWorktreeCleanupReport, validateWorktreeCleanupRequest } from "./worktreeCleanup.js";
 
@@ -21,10 +22,15 @@ export function createApp({
   store,
   integrationStatusProvider = getIntegrationStatus,
   worktreeCleanupProvider = createWorktreeCleanupReport,
-  worktreeCleanupAction = cleanupWorktree
+  worktreeCleanupAction = cleanupWorktree,
+  logger = console,
+  staticDir = path.resolve(__dirname, "../dist")
 } = {}) {
   const app = express();
 
+  // This must precede body parsing, API routes, and express.static so every
+  // response and underlying socket has an error listener before any write.
+  app.use(clientDisconnectMiddleware({ logger }));
   app.use(express.json({ limit: "2mb" }));
 
   const integrationStatus = () => integrationStatusProvider();
@@ -385,7 +391,11 @@ export function createApp({
   app.get("/api/tasks/:taskId/attachments/:attachmentId/download", async (req, res, next) => {
     try {
       const { attachment, filePath } = await store.getAttachment(req.params.taskId, req.params.attachmentId);
-      res.download(filePath, attachment.filename);
+      res.download(filePath, attachment.filename, (error) => {
+        if (error) {
+          next(error);
+        }
+      });
     } catch (error) {
       next(error);
     }
@@ -397,19 +407,25 @@ export function createApp({
     });
   });
 
-  const distDir = path.resolve(__dirname, "../dist");
-  if (existsSync(distDir)) {
-    app.use(express.static(distDir));
+  if (existsSync(staticDir)) {
+    app.use(express.static(staticDir));
     app.use((req, res, next) => {
       if (req.path.startsWith("/api")) {
         next();
         return;
       }
-      res.sendFile(path.join(distDir, "index.html"));
+      res.sendFile(path.join(staticDir, "index.html"), (error) => {
+        if (error) {
+          next(error);
+        }
+      });
     });
   }
 
-  app.use((error, _req, res, _next) => {
+  app.use((error, req, res, next) => {
+    if (finishHttpError(error, req, res, next, { logger })) {
+      return;
+    }
     const status = error.status || (error.code === "LIMIT_FILE_SIZE" ? 413 : 500);
     res.status(status).json({
       error: {
