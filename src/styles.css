@@ -499,7 +499,8 @@ button {
   color: #bdf2d1;
 }
 
-.refreshStatus.disconnected {
+.refreshStatus.disconnected,
+.refreshStatus.reconnecting {
   border-color: #6f3944;
   background: #2b1c21;
   color: #ffbfca;

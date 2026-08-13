@@ -39,6 +39,7 @@ import { copyTextToClipboard } from "./lib/clipboard.js";
 import { buildOperatorAttention, usesDedicatedSpawnRemedy } from "./lib/operatorAttention.js";
 import { describeTaskSaveError } from "./lib/taskSaveErrors.js";
 import { getTaskDropMove } from "./lib/kanbanDrag.js";
+import { createPollingScheduler } from "./lib/polling.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
 
@@ -80,6 +81,7 @@ const activityTypes = [
   { id: "approval.decided", label: "Approval" }
 ];
 const LIVE_POLL_INTERVAL_MS = 2500;
+const LIVE_POLL_MAX_BACKOFF_MS = 30_000;
 const SIDEBAR_PREFERENCE_KEY = "agentWorkboard.sidebarCollapsed";
 const SIDEBAR_NARROW_QUERY = "(max-width: 920px)";
 
@@ -129,6 +131,21 @@ function formatHeartbeatAge(value, currentTime = Date.now()) {
   const elapsedHours = Math.floor(elapsedMinutes / 60);
   if (elapsedHours < 24) return `Heartbeat ${elapsedHours}h ago`;
   return `Heartbeat ${Math.floor(elapsedHours / 24)}d ago`;
+}
+
+function hasTaskFilters(filters) {
+  return Boolean(filters.q || filters.role || filters.assignee || filters.workItemType);
+}
+
+async function fetchTaskLists(projectId, filters) {
+  const filteredResultPromise = api.tasks({ projectId, ...filters });
+  if (!hasTaskFilters(filters)) {
+    const result = await filteredResultPromise;
+    return { filteredTasks: result.tasks, projectTasks: result.tasks };
+  }
+
+  const [filteredResult, projectResult] = await Promise.all([filteredResultPromise, api.tasks({ projectId })]);
+  return { filteredTasks: filteredResult.tasks, projectTasks: projectResult.tasks };
 }
 
 export function App() {
@@ -190,10 +207,12 @@ export function App() {
     status: "connecting",
     lastCheckedAt: "",
     lastUpdatedAt: "",
+    nextRetryAt: "",
     error: ""
   });
   const boardVersionRef = useRef("");
   const boardProjectRef = useRef("");
+  const pollBoardStateRef = useRef(null);
   const initialLoadStartedRef = useRef(false);
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
@@ -259,28 +278,33 @@ export function App() {
     ]);
     const nextProjects = projectsResult.projects;
     const nextProjectId = projectId || nextProjects[0]?.id || "";
-    const [tasksResult, projectTasksResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult] = nextProjectId
+    const [taskListsResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult] = nextProjectId
       ? await Promise.all([
-          api.tasks({
-            projectId: nextProjectId,
+          fetchTaskLists(nextProjectId, {
             q: filters.q,
             role: filters.role,
             assignee: filters.assignee,
             workItemType: filters.workItemType
           }),
-          api.tasks({ projectId: nextProjectId }),
           api.talks(nextProjectId, talkFilters),
           api.staleInProgressTasks({ projectId: nextProjectId }),
           api.capabilities({ projectId: nextProjectId, ...capabilityFilters }),
           api.projectActivity(nextProjectId, activityFilters),
           fetchWorktreeCleanup()
         ])
-      : [{ tasks: [] }, { tasks: [] }, { messages: [] }, { tasks: [] }, { capabilities: [] }, { activity: [] }, emptyWorktreeCleanup()];
+      : [
+          { filteredTasks: [], projectTasks: [] },
+          { messages: [] },
+          { tasks: [] },
+          { capabilities: [] },
+          { activity: [] },
+          emptyWorktreeCleanup()
+        ];
     setMeta(metaResult);
     setProjects(nextProjects);
     setSelectedProjectId(nextProjectId);
-    setTasks(tasksResult.tasks);
-    setProjectTasks(projectTasksResult.tasks);
+    setTasks(taskListsResult.filteredTasks);
+    setProjectTasks(taskListsResult.projectTasks);
     setTalks(talksResult.messages);
     setStaleWork(staleResult.tasks);
     setCapabilities(capabilitiesResult.capabilities);
@@ -298,15 +322,14 @@ export function App() {
       setFilters(nextFilters);
     }
     if (!selectedProjectId) return;
-    const [result, projectResult, staleResult] = await Promise.all([
-      api.tasks({ projectId: selectedProjectId, ...nextFilters }),
-      api.tasks({ projectId: selectedProjectId }),
+    const [taskListsResult, staleResult] = await Promise.all([
+      fetchTaskLists(selectedProjectId, nextFilters),
       api.staleInProgressTasks({ projectId: selectedProjectId })
     ]);
-    setTasks(result.tasks);
-    setProjectTasks(projectResult.tasks);
+    setTasks(taskListsResult.filteredTasks);
+    setProjectTasks(taskListsResult.projectTasks);
     setStaleWork(staleResult.tasks);
-    return result.tasks;
+    return taskListsResult.filteredTasks;
   }
 
   async function refreshTalks(overrides = {}, projectId = selectedProjectId) {
@@ -331,37 +354,32 @@ export function App() {
     if (!selectedProjectId) return;
 
     const checkedAt = new Date().toISOString();
-    try {
-      const result = await api.boardState({ projectId: selectedProjectId });
-      const previousVersion = boardVersionRef.current;
-      const changed = Boolean(previousVersion && previousVersion !== result.state.version);
+    const result = await api.boardState({ projectId: selectedProjectId });
+    const previousVersion = boardVersionRef.current;
+    const changed = Boolean(previousVersion && previousVersion !== result.state.version);
 
-      if (changed && refreshOnChange) {
-        setRefreshState({
-          status: "updating",
-          lastCheckedAt: checkedAt,
-          lastUpdatedAt: result.state.latestUpdatedAt || "",
-          error: ""
-        });
-        await Promise.all([refreshTasks(), refreshActivity()]);
-      }
-
-      boardVersionRef.current = result.state.version;
+    if (changed && refreshOnChange) {
       setRefreshState({
-        status: changed && refreshOnChange ? "updated" : "live",
-        lastCheckedAt: new Date().toISOString(),
+        status: "updating",
+        lastCheckedAt: checkedAt,
         lastUpdatedAt: result.state.latestUpdatedAt || "",
+        nextRetryAt: "",
         error: ""
       });
-    } catch (nextError) {
-      setRefreshState((current) => ({
-        ...current,
-        status: "disconnected",
-        lastCheckedAt: checkedAt,
-        error: nextError.message
-      }));
+      await Promise.all([refreshTasks(), refreshActivity()]);
     }
+
+    boardVersionRef.current = result.state.version;
+    setRefreshState({
+      status: changed && refreshOnChange ? "updated" : "live",
+      lastCheckedAt: new Date().toISOString(),
+      lastUpdatedAt: result.state.latestUpdatedAt || "",
+      nextRetryAt: "",
+      error: ""
+    });
   }
+
+  pollBoardStateRef.current = pollBoardState;
 
   async function refreshCapabilities(overrides = {}) {
     const nextFilters = { ...capabilityFilters, ...overrides };
@@ -542,30 +560,29 @@ export function App() {
         status: "connecting",
         lastCheckedAt: "",
         lastUpdatedAt: "",
+        nextRetryAt: "",
         error: ""
       });
     }
 
-    let stopped = false;
-    const poll = (options) =>
-      pollBoardState(options).catch((nextError) => {
-        if (!stopped) {
-          setRefreshState((current) => ({
-            ...current,
-            status: "disconnected",
-            lastCheckedAt: new Date().toISOString(),
-            error: nextError.message
-          }));
-        }
-      });
+    const scheduler = createPollingScheduler({
+      poll: (options) => pollBoardStateRef.current(options),
+      intervalMs: LIVE_POLL_INTERVAL_MS,
+      maxBackoffMs: LIVE_POLL_MAX_BACKOFF_MS,
+      onError: (nextError, { nextDelayMs }) => {
+        setRefreshState((current) => ({
+          ...current,
+          status: "reconnecting",
+          lastCheckedAt: new Date().toISOString(),
+          nextRetryAt: new Date(Date.now() + nextDelayMs).toISOString(),
+          error: nextError.message
+        }));
+      }
+    });
 
-    poll({ refreshOnChange: false });
-    const intervalId = window.setInterval(() => poll(), LIVE_POLL_INTERVAL_MS);
-    return () => {
-      stopped = true;
-      window.clearInterval(intervalId);
-    };
-  }, [selectedProjectId, filters, loading]);
+    scheduler.start();
+    return () => scheduler.stop();
+  }, [selectedProjectId, loading]);
 
   const boardStats = useMemo(() => {
     const open = projectTasks.filter((task) => task.status !== "done").length;
@@ -574,7 +591,7 @@ export function App() {
     const approvals = projectTasks.filter(isPendingOperatorApproval).length;
     return { open, blocked, review, approvals };
   }, [projectTasks]);
-  const taskFiltersActive = Boolean(filters.q || filters.role || filters.assignee || filters.workItemType);
+  const taskFiltersActive = hasTaskFilters(filters);
   const capabilityStats = useMemo(() => {
     const live = capabilities.filter((capability) => capability.status === "live").length;
     const attention = capabilities.filter((capability) => ["broken", "planned", "in_progress", "review"].includes(capability.status)).length;
@@ -2527,26 +2544,35 @@ function CapabilityFilters({ filters, statuses, onChange }) {
 }
 
 function BoardRefreshStatus({ state }) {
-  const disconnected = state.status === "disconnected";
-  const Icon = disconnected ? WifiOff : RefreshCw;
+  const reconnecting = state.status === "reconnecting" || state.status === "disconnected";
+  const Icon = reconnecting ? WifiOff : RefreshCw;
   const label =
     state.status === "updated"
       ? "Updated"
       : state.status === "updating"
         ? "Updating"
-        : disconnected
-          ? "Disconnected"
+        : reconnecting
+          ? "Reconnecting…"
           : state.status === "connecting"
             ? "Connecting"
             : "Live";
   const checkedAt = formatClock(state.lastCheckedAt);
   const updatedAt = formatClock(state.lastUpdatedAt);
+  const nextRetryAt = formatClock(state.nextRetryAt);
 
   return (
     <div className={`refreshStatus ${state.status}`} aria-live="polite" title={state.error || "Board refresh status"}>
       <Icon size={15} />
       <span>{label}</span>
-      <time>{checkedAt ? `Checked ${checkedAt}` : updatedAt ? `Updated ${updatedAt}` : "Checking"}</time>
+      <time>
+        {reconnecting && nextRetryAt
+          ? `Retry at ${nextRetryAt}`
+          : checkedAt
+            ? `Checked ${checkedAt}`
+            : updatedAt
+              ? `Updated ${updatedAt}`
+              : "Checking"}
+      </time>
     </div>
   );
 }
