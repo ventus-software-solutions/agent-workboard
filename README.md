@@ -64,6 +64,8 @@ Add the MCP server to your agent's config:
 }
 ```
 
+The HTTP daemon and standalone stdio MCP process use an exclusive writer lease for `WORKBOARD_DATA_DIR`. Do not run both against the same directory: while the daemon owns it, stdio MCP exits with `WORKBOARD_WRITER_ACTIVE` instead of opening a stale second store that could overwrite newer board state. Use the running HTTP API for mutations, or stop the daemon before starting standalone MCP.
+
 Then start an agent. The board tells it what to do, so the prompt stays short:
 
 ```text

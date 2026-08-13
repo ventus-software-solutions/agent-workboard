@@ -7,6 +7,7 @@ import { buildAgentDoc, renderAgentDocMarkdown } from "./agentDocs.js";
 import { getIntegrationStatus } from "./integrationStatus.js";
 import { MCP_TOOL_NAMES, buildUpdateTaskStatusPatch } from "./mcpToolHandlers.js";
 import { WorkboardStore } from "./storage/workboardStore.js";
+import { acquireWriterLease } from "./storage/writerLease.js";
 
 function asText(value) {
   return {
@@ -553,10 +554,23 @@ export function createWorkboardMcpServer({ store, baseUrl = "http://localhost:80
 async function main() {
   const dataDir = process.env.WORKBOARD_DATA_DIR || path.resolve(".workboard-data");
   const storageMode = process.env.WORKBOARD_STORAGE || "sqlite";
+  const writerLease = await acquireWriterLease(dataDir, { owner: "mcp-stdio" });
   const store = new WorkboardStore({ dataDir, storageMode });
-  await store.init();
-  const server = createWorkboardMcpServer({ store });
-  await server.connect(new StdioServerTransport());
+  try {
+    await store.init();
+    const server = createWorkboardMcpServer({ store });
+    await server.connect(new StdioServerTransport());
+  } catch (error) {
+    await writerLease.release();
+    throw error;
+  }
+
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, async () => {
+      await writerLease.release();
+      process.exit(0);
+    });
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

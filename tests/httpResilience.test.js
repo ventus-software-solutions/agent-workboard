@@ -123,6 +123,63 @@ describe("HTTP disconnect resilience", () => {
   });
 });
 
+describe("HTTP persisted-write error boundaries", () => {
+  it("returns a persisted task with a warning when post-write decoration fails", async () => {
+    const persisted = { id: "task_persisted", title: "Before", revision: 1 };
+    const logger = { debug: vi.fn(), error: vi.fn() };
+    const store = {
+      updateTask: vi.fn(async (_taskId, patch) => {
+        persisted.title = patch.title;
+        persisted.revision += 1;
+        return persisted;
+      }),
+      describeTask: vi.fn(() => {
+        throw new Error("derived attention failed");
+      })
+    };
+    const app = createApp({ store, logger, staticDir: path.join(os.tmpdir(), "missing-workboard-static") });
+
+    const response = await request(app)
+      .patch("/api/tasks/task_persisted")
+      .send({ title: "Persisted" })
+      .expect(200);
+
+    expect(response.body).toMatchObject({
+      task: { id: "task_persisted", title: "Persisted", revision: 2 },
+      warning: { code: "POST_PERSIST_RESPONSE_DEGRADED" }
+    });
+    expect(persisted).toMatchObject({ title: "Persisted", revision: 2 });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("Post-persist"),
+      expect.objectContaining({ taskId: "task_persisted", stack: expect.stringContaining("derived attention failed") })
+    );
+  });
+
+  it("logs every ordinary HTTP 500 with request context and stack", async () => {
+    const logger = { debug: vi.fn(), error: vi.fn() };
+    const store = {
+      updateTask: vi.fn(async () => {
+        throw new Error("write exploded");
+      })
+    };
+    const app = createApp({ store, logger, staticDir: path.join(os.tmpdir(), "missing-workboard-static") });
+
+    await request(app).patch("/api/tasks/task_failure").send({ title: "Nope" }).expect(500, {
+      error: { message: "Internal server error." }
+    });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "Unhandled HTTP request error.",
+      expect.objectContaining({
+        method: "PATCH",
+        path: "/api/tasks/task_failure",
+        message: "write exploded",
+        stack: expect.stringContaining("write exploded")
+      })
+    );
+  });
+});
+
 describe("process error policy", () => {
   it("continues for disconnects and ordinary rejections, but terminates when integrity is uncertain", () => {
     const processTarget = new EventEmitter();

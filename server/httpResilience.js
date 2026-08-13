@@ -52,6 +52,7 @@ export function finishHttpError(error, req, res, next, { logger = console } = {}
   }
 
   if (res.headersSent) {
+    logAt(logger, "error", "HTTP request failed after response headers were sent.", error, requestContext(req));
     next(error);
     return true;
   }
@@ -72,7 +73,8 @@ function logAt(logger, level, message, error, context) {
   logger?.[level]?.(message, {
     ...context,
     code: error?.code,
-    error: error?.message || String(error)
+    error: error?.message || String(error),
+    stack: error?.stack
   });
 }
 

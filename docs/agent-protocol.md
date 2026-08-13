@@ -83,6 +83,8 @@ npm run mcp
 
 The stdio MCP server exposes project and task listing, task creation, slot acquisition, next-task selection, presence updates, idle reporting, claiming, status updates, and comments.
 
+Run standalone MCP only when the HTTP daemon is stopped or uses a different `WORKBOARD_DATA_DIR`. Both entrypoints acquire the same exclusive writer lease; a second process exits with `WORKBOARD_WRITER_ACTIVE` rather than risking a stale whole-state overwrite. When the daemon is running, use its HTTP endpoints for mutations.
+
 The agent-facing subset maps to `get_agent_instructions`, `acquire_agent_slot`, `get_next_task`, `update_presence`, `report_no_eligible_work`, and `claim_task`.
 
 ## HTTP Endpoints

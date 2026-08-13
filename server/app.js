@@ -487,7 +487,7 @@ export function createApp({
   app.patch("/api/tasks/:taskId", async (req, res, next) => {
     try {
       const task = await store.updateTask(req.params.taskId, req.body, req.body.actor);
-      res.json({ task: store.describeTask(task) });
+      sendPersistedTaskResponse(res, { store, task, logger, req });
     } catch (error) {
       next(error);
     }
@@ -604,6 +604,15 @@ export function createApp({
       return;
     }
     const status = error.status || (error.code === "LIMIT_FILE_SIZE" ? 413 : 500);
+    if (status >= 500) {
+      logger.error?.("Unhandled HTTP request error.", {
+        method: req.method,
+        path: req.originalUrl || req.url,
+        code: error.code,
+        message: error.message || String(error),
+        stack: error.stack
+      });
+    }
     res.status(status).json({
       error: {
         message: status === 500 ? "Internal server error." : error.message,
@@ -613,6 +622,39 @@ export function createApp({
   });
 
   return app;
+}
+
+function sendPersistedTaskResponse(res, { store, task, logger, req }) {
+  let payload;
+  try {
+    payload = JSON.stringify({ task: store.describeTask(task) });
+  } catch (error) {
+    logger.error?.("Post-persist task response decoration failed; returning the persisted task.", {
+      method: req.method,
+      path: req.originalUrl || req.url,
+      taskId: task?.id,
+      code: error.code,
+      message: error.message || String(error),
+      stack: error.stack
+    });
+    const warning = {
+      code: "POST_PERSIST_RESPONSE_DEGRADED",
+      message: "The task was persisted, but derived response fields could not be computed. Refresh the task for a complete view."
+    };
+    try {
+      payload = JSON.stringify({ task, warning });
+    } catch (serializationError) {
+      logger.error?.("Persisted task fallback serialization failed; returning task identity only.", {
+        method: req.method,
+        path: req.originalUrl || req.url,
+        taskId: task?.id,
+        message: serializationError.message || String(serializationError),
+        stack: serializationError.stack
+      });
+      payload = JSON.stringify({ task: { id: task?.id, revision: task?.revision }, warning });
+    }
+  }
+  res.status(200).type("application/json").send(payload);
 }
 
 function decorateTalkMessage(store, message) {
