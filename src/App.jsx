@@ -43,6 +43,7 @@ import { createPollingScheduler } from "./lib/polling.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
 import { describeSystemStatus } from "./lib/systemStatus.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
+import { HelpPopover } from "./components/HelpPopover.jsx";
 import { LinkifiedText } from "./components/LinkifiedText.jsx";
 import { TaskDeliveryLinks } from "./components/TaskDeliveryLinks.jsx";
 
@@ -659,6 +660,7 @@ export function App() {
         : view === "settings"
           ? "Settings"
           : selectedProject?.name || "No project";
+  const viewHelpTopic = view === "agents" || view === "capabilities" || view === "settings" ? view : null;
 
   async function runMutation(action) {
     setError("");
@@ -756,16 +758,19 @@ export function App() {
           </button>
         </div>
 
-        <button
-          className="railAction"
-          onClick={() => {
-            setIsCreatingProject(true);
-            closeSidebarOverlay();
-          }}
-        >
-          <Plus size={16} />
-          <span>Project</span>
-        </button>
+        <div className="railProjectActions">
+          <button
+            className="railAction"
+            onClick={() => {
+              setIsCreatingProject(true);
+              closeSidebarOverlay();
+            }}
+          >
+            <Plus size={16} />
+            <span>Project</span>
+          </button>
+          <HelpPopover topic="projects" />
+        </div>
 
         <div className="viewSwitch">
           <button
@@ -866,7 +871,10 @@ export function App() {
             </button>
             <div>
               <div className="eyebrow">Project</div>
-              <h2>{viewTitle}</h2>
+              <div className="topTitleLine">
+                <h2>{viewTitle}</h2>
+                {viewHelpTopic && <HelpPopover topic={viewHelpTopic} />}
+              </div>
             </div>
           </div>
           <div className="topStats">
@@ -1265,10 +1273,13 @@ function IntegrationStatusPill({ status }) {
     .join("\n");
 
   return (
-    <div className={`integrationStatus ${needsReconcile ? "needsReconcile" : status.pushDebt ? "pushDebt" : ""}`} title={title}>
-      <Link2 size={15} />
-      <span>{label}</span>
-      <strong>{detail}</strong>
+    <div className="integrationStatusGroup">
+      <div className={`integrationStatus ${needsReconcile ? "needsReconcile" : status.pushDebt ? "pushDebt" : ""}`} title={title}>
+        <Link2 size={15} />
+        <span>{label}</span>
+        <strong>{detail}</strong>
+      </div>
+      <HelpPopover topic="integration" />
     </div>
   );
 }
@@ -1281,23 +1292,26 @@ function WorkspaceTabs({ activeTab, taskCount, coordinationCount, activityCount,
   ];
 
   return (
-    <div className="workspaceTabs" role="tablist" aria-label="Workspace sections">
-      {tabs.map((tab) => {
-        const Icon = tab.icon;
-        return (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={activeTab === tab.id ? "selected" : ""}
-            onClick={() => onChange(tab.id)}
-          >
-            <Icon size={16} />
-            <span>{tab.label}</span>
-            <strong>{tab.count}</strong>
-          </button>
-        );
-      })}
+    <div className="workspaceTabsRow">
+      <div className="workspaceTabs" role="tablist" aria-label="Workspace sections">
+        {tabs.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={activeTab === tab.id ? "selected" : ""}
+              onClick={() => onChange(tab.id)}
+            >
+              <Icon size={16} />
+              <span>{tab.label}</span>
+              <strong>{tab.count}</strong>
+            </button>
+          );
+        })}
+      </div>
+      <HelpPopover topic={activeTab} />
     </div>
   );
 }
@@ -1559,15 +1573,18 @@ function WorktreeCleanupPanel({ id, report, onRefresh, onSelectTask, onCleanup, 
           <div className="sectionLabel">Repository</div>
           <h3>Worktree Cleanup</h3>
         </div>
-        <button
-          className="iconButton"
-          onClick={onRefresh}
-          title="Refresh cleanup report"
-          aria-label="Refresh cleanup report"
-          disabled={report.loading}
-        >
-          <RefreshCw size={15} />
-        </button>
+        <div className="sectionHeaderActions">
+          <HelpPopover topic="cleanup" />
+          <button
+            className="iconButton"
+            onClick={onRefresh}
+            title="Refresh cleanup report"
+            aria-label="Refresh cleanup report"
+            disabled={report.loading}
+          >
+            <RefreshCw size={15} />
+          </button>
+        </div>
       </div>
 
       <div className="cleanupSummary">
@@ -2315,7 +2332,10 @@ function OperatorAttentionPanel({
           <div className="sectionLabel">Operator inbox</div>
           <h3>Needs you</h3>
         </div>
-        <span>{attention.actions.length}</span>
+        <div className="sectionHeaderActions">
+          <HelpPopover topic="attention" />
+          <span className="operatorAttentionCount">{attention.actions.length}</span>
+        </div>
       </div>
 
       {attention.actions.length === 0 ? (
