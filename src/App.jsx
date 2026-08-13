@@ -42,6 +42,7 @@ import { getTaskDropMove } from "./lib/kanbanDrag.js";
 import { createPollingScheduler } from "./lib/polling.js";
 import { statusActionLabel, statusControlLabel, taskWorkflowCue } from "./lib/statusActions.js";
 import { describeSystemStatus } from "./lib/systemStatus.js";
+import { formatWorkboardRoute, parseWorkboardRoute } from "./lib/workboardRoute.js";
 import { AgentOnboarding } from "./components/AgentOnboarding.jsx";
 import { HelpPopover } from "./components/HelpPopover.jsx";
 import { LinkifiedText } from "./components/LinkifiedText.jsx";
@@ -147,6 +148,7 @@ async function fetchTaskLists(projectId, filters) {
 }
 
 export function App() {
+  const [initialRoute] = useState(() => parseWorkboardRoute(typeof window === "undefined" ? "/" : window.location));
   const [meta, setMeta] = useState({
     roles: [],
     statuses: [],
@@ -171,9 +173,9 @@ export function App() {
     updatedBy: ""
   });
   const [agentDocsOverview, setAgentDocsOverview] = useState({ usage: { promptTemplate: "" } });
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [selectedTaskId, setSelectedTaskId] = useState("");
-  const [filters, setFilters] = useState({ q: "", role: "", assignee: "", workItemType: "" });
+  const [selectedProjectId, setSelectedProjectId] = useState(initialRoute.projectId);
+  const [selectedTaskId, setSelectedTaskId] = useState(initialRoute.taskId);
+  const [filters, setFilters] = useState(initialRoute.filters);
   const [talkFilters, setTalkFilters] = useState({ kind: "", agentId: "", taskId: "" });
   const [activityFilters, setActivityFilters] = useState({ q: "", type: "" });
   const [staleWork, setStaleWork] = useState([]);
@@ -182,8 +184,9 @@ export function App() {
   const [cleanupActionKey, setCleanupActionKey] = useState("");
   const [agentControlPending, setAgentControlPending] = useState("");
   const [capabilityFilters, setCapabilityFilters] = useState({ q: "", status: "" });
-  const [view, setView] = useState("board");
-  const [workspaceTab, setWorkspaceTab] = useState("tasks");
+  const [view, setView] = useState(initialRoute.view);
+  const [workspaceTab, setWorkspaceTab] = useState(initialRoute.workspaceTab);
+  const [routeProjectHydrating, setRouteProjectHydrating] = useState(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [isCreatingProject, setIsCreatingProject] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
@@ -214,6 +217,7 @@ export function App() {
   const pollBoardStateRef = useRef(null);
   const pollingNeedsMetaRefreshRef = useRef(false);
   const initialLoadStartedRef = useRef(false);
+  const routeWriteModeRef = useRef("replace");
 
   const selectedTask = projectTasks.find((task) => task.id === selectedTaskId);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
@@ -226,6 +230,32 @@ export function App() {
   ]
     .filter(Boolean)
     .join(" ");
+
+  function markRouteChange(mode = "push") {
+    routeWriteModeRef.current = mode;
+  }
+
+  function navigateView(nextView, nextWorkspaceTab = workspaceTab) {
+    markRouteChange();
+    setView(nextView);
+    if (nextView === "board") setWorkspaceTab(nextWorkspaceTab);
+  }
+
+  function navigateWorkspaceTab(nextWorkspaceTab) {
+    markRouteChange();
+    setWorkspaceTab(nextWorkspaceTab);
+  }
+
+  function selectTask(nextTaskId, mode = "push") {
+    markRouteChange(mode);
+    setSelectedTaskId(nextTaskId);
+  }
+
+  function selectProject(nextProjectId) {
+    markRouteChange();
+    setSelectedTaskId("");
+    setSelectedProjectId(nextProjectId);
+  }
 
   function persistSidebarCollapsed(nextCollapsed) {
     setIsSidebarCollapsed(nextCollapsed);
@@ -277,7 +307,10 @@ export function App() {
       api.agentDocs()
     ]);
     const nextProjects = projectsResult.projects;
-    const nextProjectId = projectId || nextProjects[0]?.id || "";
+    const requestedProjectId = projectId || nextProjects[0]?.id || "";
+    const nextProjectId = nextProjects.some((project) => project.id === requestedProjectId)
+      ? requestedProjectId
+      : nextProjects[0]?.id || "";
     const [taskListsResult, talksResult, staleResult, capabilitiesResult, activityResult, cleanupResult, integrationResult] = nextProjectId
       ? await Promise.all([
           fetchTaskLists(nextProjectId, {
@@ -318,9 +351,10 @@ export function App() {
     setLoading(false);
   }
 
-  async function refreshTasks(overrides = null) {
+  async function refreshTasks(overrides = null, { routeMode = "" } = {}) {
     const nextFilters = overrides ? { ...filters, ...overrides } : filters;
     if (overrides) {
+      if (routeMode) markRouteChange(routeMode);
       setFilters(nextFilters);
     }
     if (!selectedProjectId) return;
@@ -486,9 +520,10 @@ export function App() {
   async function openLinkedTask(taskId) {
     try {
       setError("");
+      markRouteChange();
       if (!projectTasks.some((task) => task.id === taskId)) {
         const result = await api.tasks({ projectId: selectedProjectId });
-        setFilters({ q: "", role: "", assignee: "" });
+        setFilters({ q: "", role: "", assignee: "", workItemType: "" });
         setTasks(result.tasks);
         setProjectTasks(result.tasks);
       }
@@ -501,6 +536,7 @@ export function App() {
   }
 
   async function filterBoardByAgent(agentId) {
+    markRouteChange();
     setView("board");
     setWorkspaceTab("tasks");
     setSelectedTaskId("");
@@ -515,6 +551,51 @@ export function App() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (loading || typeof window === "undefined") return;
+    const nextUrl = formatWorkboardRoute({
+      view,
+      workspaceTab,
+      projectId: selectedProjectId,
+      taskId: selectedTaskId,
+      filters
+    });
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    const mode = routeWriteModeRef.current;
+    routeWriteModeRef.current = "replace";
+    if (currentUrl === nextUrl) return;
+    window.history[mode === "push" ? "pushState" : "replaceState"]({}, "", nextUrl);
+  }, [filters, loading, selectedProjectId, selectedTaskId, view, workspaceTab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handlePopState = () => {
+      const route = parseWorkboardRoute(window.location);
+      const nextProjectId = projects.some((project) => project.id === route.projectId)
+        ? route.projectId
+        : projects[0]?.id || "";
+      routeWriteModeRef.current = "replace";
+      setView(route.view);
+      setWorkspaceTab(route.workspaceTab);
+      setSelectedTaskId(route.taskId);
+      setFilters(route.filters);
+      if (nextProjectId !== selectedProjectId) {
+        setRouteProjectHydrating(true);
+        setSelectedProjectId(nextProjectId);
+      } else if (!loading && nextProjectId) {
+        refreshTasks(route.filters).catch((nextError) => setError(nextError.message));
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [loading, projects, selectedProjectId]);
+
+  useEffect(() => {
+    if (loading || routeProjectHydrating || !selectedTaskId) return;
+    if (projectTasks.some((task) => task.id === selectedTaskId)) return;
+    selectTask("", "replace");
+  }, [loading, projectTasks, routeProjectHydrating, selectedTaskId]);
 
   useEffect(() => {
     if (!window.matchMedia) return undefined;
@@ -550,6 +631,7 @@ export function App() {
 
   useEffect(() => {
     if (!selectedProjectId || loading) return;
+    let cancelled = false;
     Promise.all([
       refreshTasks(),
       refreshTalks(),
@@ -557,7 +639,14 @@ export function App() {
       refreshCapabilities(),
       refreshAgentSlots(),
       refreshIntegrationStatus()
-    ]).catch((nextError) => setError(nextError.message));
+    ])
+      .catch((nextError) => setError(nextError.message))
+      .finally(() => {
+        if (!cancelled) setRouteProjectHydrating(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProjectId]);
 
   useEffect(() => {
@@ -790,8 +879,7 @@ export function App() {
           <button
             className={view === "board" ? "selected" : ""}
             onClick={() => {
-              setView("board");
-              setWorkspaceTab("tasks");
+              navigateView("board", "tasks");
               closeSidebarOverlay();
             }}
           >
@@ -801,7 +889,7 @@ export function App() {
           <button
             className={view === "agents" ? "selected" : ""}
             onClick={() => {
-              setView("agents");
+              navigateView("agents");
               closeSidebarOverlay();
             }}
           >
@@ -811,7 +899,7 @@ export function App() {
           <button
             className={view === "capabilities" ? "selected" : ""}
             onClick={() => {
-              setView("capabilities");
+              navigateView("capabilities");
               closeSidebarOverlay();
             }}
           >
@@ -821,7 +909,7 @@ export function App() {
           <button
             className={view === "settings" ? "selected" : ""}
             onClick={() => {
-              setView("settings");
+              navigateView("settings");
               closeSidebarOverlay();
             }}
           >
@@ -836,7 +924,7 @@ export function App() {
               key={project.id}
               className={`projectButton ${project.id === selectedProjectId ? "selected" : ""}`}
               onClick={() => {
-                setSelectedProjectId(project.id);
+                selectProject(project.id);
                 closeSidebarOverlay();
               }}
             >
@@ -857,7 +945,7 @@ export function App() {
                 key={role.id}
                 className={`roleChip ${filters.role === role.id ? "selected" : ""} ${warningCount ? "warning" : ""}`}
                 onClick={() => {
-                  refreshTasks({ role: filters.role === role.id ? "" : role.id });
+                  refreshTasks({ role: filters.role === role.id ? "" : role.id }, { routeMode: "push" });
                   closeSidebarOverlay();
                 }}
                 title={warningCount ? `${role.summary} ${warningCount} claim warning${warningCount === 1 ? "" : "s"}.` : role.summary}
@@ -974,7 +1062,7 @@ export function App() {
             taskCount={taskFiltersActive ? `${tasks.length} of ${projectTasks.length}` : tasks.length}
             coordinationCount={coordinationAttention.count}
             activityCount={activityEvents.length}
-            onChange={setWorkspaceTab}
+            onChange={navigateWorkspaceTab}
           />
         )}
 
@@ -1008,8 +1096,7 @@ export function App() {
             attention={operatorAttention}
             onSelectTask={openLinkedTask}
             onOpenCoordination={() => {
-              setView("board");
-              setWorkspaceTab("coordination");
+              navigateView("board", "coordination");
             }}
             onDecideApproval={(task, payload) => mutate(() => api.decideOperatorApproval(task.id, payload))}
             onCleanup={runWorktreeCleanup}
@@ -1084,23 +1171,23 @@ export function App() {
         ) : (
           <TasksWorkspace
             filters={filters}
-            onFilterChange={refreshTasks}
+            onFilterChange={(overrides) => refreshTasks(overrides, { routeMode: "replace" })}
             statuses={meta.statuses}
             roles={meta.roles}
             workItemTypes={meta.workItemTypes}
             tasks={tasks}
             claimWarningsByTask={claimWarningsByTask}
             selectedTaskId={selectedTaskId}
-            onSelectTask={setSelectedTaskId}
+            onSelectTask={selectTask}
             onRecoverClaim={(item) => recoverStaleWork(item, "requeue")}
             onMoveTask={(task, status) => {
               if (status === "done" && task.status !== "done") {
-                setSelectedTaskId(task.id);
+                selectTask(task.id);
                 setError("Add a completion record in the task details before marking done.");
                 return;
               }
               if (status === "testing" && task.status !== "testing") {
-                setSelectedTaskId(task.id);
+                selectTask(task.id);
                 setError("Add a verification target in the task details before moving to testing.");
                 return;
               }
@@ -1129,7 +1216,7 @@ export function App() {
           completionTypes={meta.completionTypes}
           capabilities={capabilities}
           agentSlots={agentSlots.slots}
-          onClose={() => setSelectedTaskId("")}
+          onClose={() => selectTask("")}
           onMutate={runMutation}
           onReload={() => refreshTasks()}
         />
@@ -1145,7 +1232,7 @@ export function App() {
           onCreate={(payload) =>
             mutate(async () => {
               const result = await api.createTask(taskPayloadFromDraft(payload));
-              setSelectedTaskId(result.task.id);
+              selectTask(result.task.id);
               setIsCreatingTask(false);
             })
           }

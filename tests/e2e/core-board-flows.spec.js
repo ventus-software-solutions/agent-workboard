@@ -1183,6 +1183,92 @@ test("splits tasks and coordination while preserving board state", async ({ page
   expect(talksOverflow).toBe(false);
 });
 
+test("round-trips workspace, task, agent, and filter state through deep links and browser history", async ({ page }) => {
+  const projectName = uniqueName("E2E Deep Link Project");
+  const projectKey = uniqueKey("URL");
+  const taskTitle = uniqueName("Open this task from a deep link");
+  const secondProjectName = uniqueName("E2E Deep Link Second Project");
+  const secondProjectKey = uniqueKey("URB");
+  const secondTaskTitle = uniqueName("Open the second project task");
+  const projectResult = await postJson(page, "/api/projects", { name: projectName, key: projectKey });
+  const taskResult = await postJson(page, "/api/tasks", {
+    projectId: projectResult.project.id,
+    title: taskTitle,
+    description: "Deep-link browser coverage.",
+    status: "ready",
+    role: "implementer",
+    priority: "normal",
+    assignee: "implementer-frontend-1"
+  });
+  const secondProjectResult = await postJson(page, "/api/projects", { name: secondProjectName, key: secondProjectKey });
+  const secondTaskResult = await postJson(page, "/api/tasks", {
+    projectId: secondProjectResult.project.id,
+    title: secondTaskTitle,
+    description: "Cross-project deep-link browser coverage.",
+    status: "ready",
+    role: "implementer",
+    priority: "normal"
+  });
+
+  await page.goto(baseURL);
+  await page.getByRole("button", { name: new RegExp(projectName) }).click();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/board/tasks");
+  await expect.poll(() => new URL(page.url()).searchParams.get("project")).toBe(projectResult.project.id);
+
+  await page.getByRole("tab", { name: /Coordination/ }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/board/coordination");
+  await page.getByRole("tab", { name: /Tasks/ }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/board/tasks");
+
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/agents");
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/capabilities");
+  await page.goBack();
+  await expect(page.getByRole("button", { name: "Agents", exact: true })).toHaveClass(/selected/);
+  await page.goBack();
+  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("aria-selected", "true");
+
+  await page.getByPlaceholder("Agent").fill("implementer-frontend-1");
+  await page.getByPlaceholder("Search tasks").fill(taskTitle);
+  await expect.poll(() => new URL(page.url()).searchParams.get("agent")).toBe("implementer-frontend-1");
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(taskTitle);
+  await taskCard(page, taskTitle).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(taskResult.task.id);
+  const directUrl = page.url();
+
+  await page.getByPlaceholder("Agent").fill("");
+  await page.getByPlaceholder("Search tasks").fill("");
+  await page.getByRole("button", { name: new RegExp(secondProjectName) }).click();
+  await expect(page.getByRole("heading", { name: secondProjectName })).toBeVisible();
+  await taskCard(page, secondTaskTitle).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(secondTaskResult.task.id);
+  await page.goBack();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("project")).toBe(projectResult.project.id);
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(taskResult.task.id);
+  await expect(page.locator(".drawer").getByRole("heading", { name: taskTitle })).toBeVisible();
+  await page.goForward();
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: secondProjectName })).toBeVisible();
+  await expect.poll(() => new URL(page.url()).searchParams.get("project")).toBe(secondProjectResult.project.id);
+  await expect.poll(() => new URL(page.url()).searchParams.get("task")).toBe(secondTaskResult.task.id);
+  await expect(page.locator(".drawer").getByRole("heading", { name: secondTaskTitle })).toBeVisible();
+
+  const directPage = await page.context().newPage();
+  await directPage.goto(directUrl);
+  await expect(directPage.getByRole("heading", { name: projectName })).toBeVisible();
+  await expect(directPage.locator(".drawer").getByRole("heading", { name: taskTitle })).toBeVisible();
+  await directPage.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(directPage.locator(".drawer")).toHaveCount(0);
+  await expect.poll(() => new URL(directPage.url()).searchParams.get("task")).toBeNull();
+  await directPage.goBack();
+  await expect(directPage.locator(".drawer").getByRole("heading", { name: taskTitle })).toBeVisible();
+  await directPage.close();
+});
+
 test("paginates Agent Talks newest first and loads the remaining boundary", async ({ page }) => {
   const projectName = uniqueName("E2E Paginated Talks Project");
   const projectKey = uniqueKey("PGT");
